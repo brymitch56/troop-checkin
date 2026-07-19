@@ -1,0 +1,57 @@
+/* Admin area — desktop-leaning, reuses the kiosk palette from styles.css */
+.admin-screen { max-width: 1000px; }
+.admin-login { max-width: 340px; margin: 0 auto; display: grid; gap: 10px; }
+.admin-login select, .admin-login input {
+  font-size: 17px; padding: 12px; border: 1.5px solid var(--line);
+  border-radius: var(--radius); background: var(--card);
+}
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tabs button {
+  border: none; background: transparent; color: var(--pine); font-weight: 700;
+  font-size: 15px; padding: 8px 12px; border-radius: 999px; cursor: pointer;
+}
+.tabs button.active { background: var(--pine); color: #fff; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; text-align: center;
+}
+.card b { display: block; font-size: 26px; }
+.card span { color: var(--muted); font-size: 13px; }
+
+.panel {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin: 12px 0;
+}
+.panel h3 { margin: 2px 0 10px; }
+.hint.left { text-align: left; }
+.row.wrap { flex-wrap: wrap; gap: 8px; display: flex; }
+
+.filters { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.filters input[type="search"] {
+  flex: 1; min-width: 180px; font-size: 16px; padding: 10px 12px;
+  border: 1.5px solid var(--line); border-radius: var(--radius); background: var(--card);
+}
+.filters select { font-size: 15px; padding: 8px; border-radius: var(--radius); border: 1.5px solid var(--line); background: var(--card); }
+
+.tbl table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: var(--radius); overflow: hidden; }
+.tbl th, .tbl td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.tbl th { background: var(--pine); color: #fff; font-size: 13px; }
+.tbl tr[data-id] { cursor: pointer; }
+.tbl tr[data-id]:hover { background: #EEF2EA; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.tag.youth { background: #E3EFE7; color: var(--in); }
+.tag.adult { background: #ECECEC; color: #555; }
+.tag.warn { background: #FBE6D9; color: var(--blaze); }
+.tag.off { background: #EEE; color: #999; }
+
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 14px; margin: 8px 0; }
+.kv label { display: block; font-size: 12px; color: var(--muted); }
+.kv input, .kv select, .kv textarea {
+  width: 100%; font-size: 15px; padding: 8px; border: 1.5px solid var(--line);
+  border-radius: 8px; background: #fff;
+}
+.sig-view { max-width: 420px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.error { color: #B3261E; }

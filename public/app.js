@@ -11,6 +11,7 @@ const state = {
   signerOther: null,
   pendingLink: null,     // {code, person}
   patrol: null,
+  station: localStorage.getItem('station-patrol') || null, // per-device patrol scope
 };
 
 // ---------------------------------------------------------------- utils ----
@@ -41,6 +42,12 @@ const displayName = (p) => `${p.nickname || p.first_name} ${p.last_name}`;
 
 // ---------------------------------------------------------------- login ----
 async function boot() {
+  // branding comes from server config (.env) — nothing troop-specific in source
+  api('/config').then((cfg) => {
+    document.querySelectorAll('[data-brand-id]').forEach((el) => (el.textContent = cfg.troop_id));
+    document.querySelectorAll('[data-brand-name]').forEach((el) => (el.textContent = cfg.troop_name));
+    document.title = `${cfg.troop_id} Check-In`;
+  }).catch(() => {});
   try {
     state.me = await api('/me');
     await enterKiosk();
@@ -91,10 +98,32 @@ $('staff-pill').onclick = async () => {
 async function enterKiosk() {
   show('screen-main');
   $('staff-pill').textContent = state.me.name;
+  renderStationPill();
   renderCart();
   refreshOnsiteCount();
   await pickEventAuto();
 }
+
+// ------------------------------------------------------- station mode ----
+// Per-device patrol scope (persists on this device): the roster view and
+// on-site list narrow to one patrol; scanned badges are ALWAYS accepted.
+function renderStationPill() {
+  $('station-pill').textContent = state.station ? `Station: ${state.station}` : 'All patrols';
+  $('station-pill').classList.toggle('active', !!state.station);
+}
+$('station-pill').onclick = async () => {
+  const patrols = await api('/patrols').catch(() => []);
+  const cycle = [null, ...patrols];
+  const next = cycle[(cycle.indexOf(state.station) + 1) % cycle.length];
+  state.station = next;
+  if (next) localStorage.setItem('station-patrol', next);
+  else localStorage.removeItem('station-patrol');
+  renderStationPill();
+  refreshOnsiteCount();
+  toast(next ? `This station now shows ${next} only (scans still accept anyone).` : 'Showing all patrols.');
+};
+const stationFilter = (rows) =>
+  state.station ? rows.filter((p) => !p.is_youth || (p.patrol || '') === state.station) : rows;
 
 async function pickEventAuto() {
   const { matching } = await api('/events/current');
@@ -131,6 +160,7 @@ $('ev-create').onclick = async () => {
       title: $('ev-title').value.trim(),
       start_at: new Date($('ev-start').value).toISOString(),
       end_at: new Date($('ev-end').value).toISOString(),
+      track_adults: $('ev-adults').checked,
     });
     setEvent(ev); closeModal(); toast('Event created');
   } catch (e) { toast(e.message, true); }
@@ -260,7 +290,7 @@ $('search-input').addEventListener('input', () => {
   const q = $('search-input').value.trim();
   if (q.length < 2) { $('search-results').hidden = true; return; }
   searchTimer = setTimeout(async () => {
-    const rows = await api('/search?q=' + encodeURIComponent(q)).catch(() => []);
+    const rows = stationFilter(await api('/search?q=' + encodeURIComponent(q)).catch(() => []));
     const box = $('search-results'); box.innerHTML = '';
     for (const p of rows) {
       const b = document.createElement('button');
@@ -277,6 +307,10 @@ $('search-input').addEventListener('input', () => {
 async function addToCart(person) {
   if (state.cart.some((c) => c.person.id === person.id)) return toast(`${displayName(person)} is already in the cart.`);
   const dir = person.open ? 'out' : 'in';
+  // FR-12: adults are only tracked at designated events (server enforces too)
+  if (!person.is_youth && dir === 'in' && state.event && !state.event.track_adults) {
+    return toast(`${displayName(person)}: this event doesn't track adult attendance.`, true);
+  }
   if (!state.cart.length) state.direction = dir;
   else if (dir !== state.direction) {
     return toast(
@@ -422,6 +456,8 @@ async function submitTxn(extra, force) {
       const ok = confirm(`Signer is not on the authorized list for: ${e.body.unauthorized.join(', ')}.\n\nStaff override — record anyway?`);
       if (ok) return submitTxn(extra, true);
       $('sign-error').textContent = 'Choose a different signer.';
+    } else if (e.status === 422 && e.body.adults) {
+      toast(`${e.body.error} Remove: ${e.body.adults.join(', ')}.`, true);
     } else if (e.status === 409 && e.body.conflicts) {
       toast(`${e.body.error} ${e.body.conflicts.join(', ')} — refresh the cart.`, true);
       state.cart = []; state.direction = null; renderCart(); closeModal(); refreshOnsiteCount();
@@ -478,10 +514,15 @@ $('vis-save').onclick = async () => {
 
 // ------------------------------------------------------------- on site ----
 async function refreshOnsiteCount() {
-  const rows = await api('/onsite').catch(() => []);
+  const q = state.station ? '?patrol=' + encodeURIComponent(state.station) : '';
+  const rows = await api('/onsite' + q).catch(() => []);
   $('onsite-pill').textContent = `On site: ${rows.length}`;
 }
-$('onsite-pill').onclick = async () => { show('screen-onsite'); await renderOnsite(); };
+$('onsite-pill').onclick = async () => {
+  if (state.station && state.patrol == null) state.patrol = state.station; // station scope is the default view
+  show('screen-onsite');
+  await renderOnsite();
+};
 $('onsite-back').onclick = () => { show('screen-main'); refreshOnsiteCount(); };
 
 async function renderOnsite() {

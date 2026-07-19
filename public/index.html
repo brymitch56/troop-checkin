@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#17402C">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>NY-2911 Check-In</title>
+<title>Troop Check-In</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -15,8 +15,8 @@
 <!-- ============ LOGIN ============ -->
 <section id="screen-login" class="screen">
   <header class="brand">
-    <div class="brand-mark">NY-2911</div>
-    <h1>Troop Check-In</h1>
+    <div class="brand-mark" data-brand-id>TROOP</div>
+    <h1 data-brand-name>Troop Check-In</h1>
   </header>
   <p class="hint">Tap your name, then enter your PIN.</p>
   <div id="staff-list" class="staff-grid"></div>
@@ -36,6 +36,7 @@
   <header class="topbar">
     <button id="event-pill" class="pill event-pill" title="Change event">No event</button>
     <div class="topbar-right">
+      <button id="station-pill" class="pill ghost-pill" title="Station patrol scope">All patrols</button>
       <button id="onsite-pill" class="pill onsite-pill">On site: 0</button>
       <button id="staff-pill" class="pill ghost-pill"></button>
     </div>
@@ -102,6 +103,7 @@
         <input id="ev-title" type="text" placeholder="Event title">
         <label>Starts <input id="ev-start" type="datetime-local"></label>
         <label>Ends <input id="ev-end" type="datetime-local"></label>
+        <label class="check"><input id="ev-adults" type="checkbox"> Track adult attendance</label>
         <button id="ev-create" class="btn primary small">Create</button>
       </details>
       <button id="events-close" class="btn ghost">Close</button>

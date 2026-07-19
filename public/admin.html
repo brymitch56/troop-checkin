@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17402C">
+<title>Admin · Troop Check-In</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="screen-login" class="screen">
+  <header class="brand">
+    <div class="brand-mark" data-brand-id>TROOP</div>
+    <h1>Admin</h1>
+  </header>
+  <form id="login-form" class="admin-login">
+    <select id="login-staff"></select>
+    <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn primary" type="submit">Sign in</button>
+    <div id="login-error" class="error" role="alert"></div>
+  </form>
+</section>
+
+<!-- ============ APP ============ -->
+<section id="screen-app" class="screen admin-screen" hidden>
+  <header class="topbar">
+    <div class="brand-mark" data-brand-id>TROOP</div>
+    <nav id="tabs" class="tabs">
+      <button data-tab="dash" class="active">Dashboard</button>
+      <button data-tab="people">People</button>
+      <button data-tab="events">Events</button>
+      <button data-tab="txns">Transactions</button>
+      <button data-tab="import">Roster import</button>
+    </nav>
+    <button id="logout" class="pill ghost-pill"></button>
+  </header>
+
+  <!-- ---- dashboard ---- -->
+  <div id="tab-dash" class="tab">
+    <div id="dash-cards" class="cards"></div>
+    <div class="panel">
+      <h3>Tools</h3>
+      <div class="row wrap">
+        <button id="tool-backup" class="btn ghost">Back up now</button>
+        <button id="tool-ical" class="btn ghost">Sync iCal now</button>
+        <a class="btn ghost" href="/api/admin/export/open.csv">Open sign-ins CSV</a>
+        <a class="btn ghost" href="/api/admin/export/overrides.csv">Overrides CSV</a>
+        <a class="btn ghost" href="/api/admin/export/visitors.csv">Visitors CSV</a>
+      </div>
+      <p id="tool-status" class="hint left"></p>
+    </div>
+    <div class="panel">
+      <h3>Still on site</h3>
+      <div id="dash-open"></div>
+    </div>
+  </div>
+
+  <!-- ---- people ---- -->
+  <div id="tab-people" class="tab" hidden>
+    <div class="filters">
+      <input id="pp-q" type="search" placeholder="Search name or member #…">
+      <select id="pp-type"><option value="">Youth + adults</option><option value="youth">Youth</option><option value="adult">Adults</option></select>
+      <select id="pp-status"><option value="">Any status</option><option>active</option><option>inactive</option><option>visitor</option></select>
+    </div>
+    <div id="pp-list" class="tbl"></div>
+    <div id="pp-detail" class="panel" hidden></div>
+  </div>
+
+  <!-- ---- events ---- -->
+  <div id="tab-events" class="tab" hidden>
+    <div class="row wrap">
+      <button id="ev-new" class="btn ghost small">+ New event</button>
+    </div>
+    <div id="ev-list" class="tbl"></div>
+    <div id="ev-detail" class="panel" hidden></div>
+  </div>
+
+  <!-- ---- transactions ---- -->
+  <div id="tab-txns" class="tab" hidden>
+    <div class="filters">
+      <select id="tx-event"><option value="">All events</option></select>
+      <a id="tx-csv" class="btn ghost small" href="/api/admin/export/attendance.csv">Attendance CSV</a>
+    </div>
+    <div id="tx-list" class="tbl"></div>
+    <div id="tx-detail" class="panel" hidden></div>
+  </div>
+
+  <!-- ---- roster import ---- -->
+  <div id="tab-import" class="tab" hidden>
+    <div class="panel">
+      <h3>Upload Trail Life Connect export (.xlsx)</h3>
+      <p class="hint left">Preview first — nothing is written until you commit. Every committed file is archived under the data directory.</p>
+      <input id="imp-file" type="file" accept=".xlsx,.xls">
+      <div class="row">
+        <button id="imp-preview" class="btn ghost">Preview</button>
+        <button id="imp-commit" class="btn primary" disabled>Commit import</button>
+      </div>
+      <div id="imp-result"></div>
+    </div>
+    <div class="panel">
+      <h3>Import history</h3>
+      <div id="imp-log" class="tbl"></div>
+    </div>
+  </div>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+<script src="admin.js"></script>
+</body>
+</html>

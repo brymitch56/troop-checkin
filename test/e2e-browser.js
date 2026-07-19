@@ -21,6 +21,8 @@ async function main() {
   require('../server/migrate');
   db.prepare(`INSERT INTO staff (name, role, pin_hash) VALUES ('Door Tester', 'door', ?)`)
     .run(auth.hashSecret('1234'));
+  db.prepare(`INSERT INTO staff (name, role, password_hash) VALUES ('Admin Tester', 'admin', ?)`)
+    .run(auth.hashSecret('adminpass'));
   const people = roster.parseWorkbook(buildWorkbookBuffer());
   roster.applyImport(people, roster.suggestLinks(people), null, 'e2e.xlsx', null);
   db.prepare(`UPDATE person SET badge_code = 'Y-2001 | tokE2E' WHERE member_id = 'Y-2001'`).run();
@@ -54,12 +56,17 @@ async function main() {
   };
 
   await page.goto(base, { waitUntil: 'networkidle0' });
-  assert.equal(await page.title(), 'NY-2911 Check-In');
-  step('page loads');
+  // branding is applied from /api/config after load (env-driven, no hardcoding)
+  await page.waitForFunction(() => document.title.endsWith('Check-In') &&
+    document.querySelector('[data-brand-id]').textContent !== 'TROOP');
+  step('page loads with env branding');
 
   // -- login ----------------------------------------------------------------
   await page.waitForSelector('#staff-list button');
-  await click('#staff-list button');
+  await page.evaluate(() => {
+    [...document.querySelectorAll('#staff-list button')]
+      .find((b) => b.textContent === 'Door Tester').click();
+  });
   await page.type('#pin-input', '1234', { delay: 60 }); // human speed — faster would look like a scanner burst
   await click('#pin-go');
   await page.waitForSelector('#screen-main:not([hidden])');
@@ -148,6 +155,49 @@ async function main() {
   await click('#sign-submit');
   await page.waitForFunction(() => document.getElementById('onsite-pill').textContent === 'On site: 2');
   step('sign-out closes open stay → 2 on site');
+
+  // -- station mode: scope roster view to one patrol -------------------------
+  await click('#station-pill');
+  await page.waitForFunction(() => document.getElementById('station-pill').textContent.startsWith('Station:'));
+  const station = await page.$eval('#station-pill', (el) => el.textContent);
+  await page.type('#search-input', 'mil', { delay: 60 }); // Frank Miller — Eagles
+  await new Promise((r) => setTimeout(r, 500));
+  const visible = await page.evaluate(() => {
+    const box = document.getElementById('search-results');
+    return box.hidden ? [] : [...box.querySelectorAll('button')].map((b) => b.textContent.trim());
+  });
+  if (station.includes('Eagles')) assert.ok(visible.some((v) => v.includes('Frank')));
+  else assert.equal(visible.length, 0, `station ${station} should hide Frank (Eagles): ${visible}`);
+  await page.$eval('#search-input', (el) => (el.value = ''));
+  // reset to all patrols for a clean state
+  await page.evaluate(() => localStorage.removeItem('station-patrol'));
+  step(`station mode scopes search (${station.trim()})`);
+
+  // -- admin UI smoke --------------------------------------------------------
+  const admin = await browser.newPage();
+  await admin.setViewport({ width: 1200, height: 1400 });
+  admin.on('pageerror', (e) => errors.push('admin: ' + e));
+  await admin.goto(base + '/admin.html', { waitUntil: 'networkidle0' });
+  await admin.waitForSelector('#login-staff option');
+  await admin.type('#login-pass', 'adminpass', { delay: 20 });
+  await admin.$eval('#login-form button', (el) => el.click());
+  await admin.waitForSelector('#screen-app:not([hidden])');
+  await admin.waitForFunction(() => document.querySelectorAll('#dash-cards .card').length >= 6);
+  step('admin login + dashboard');
+
+  await admin.$eval('[data-tab="people"]', (el) => el.click());
+  await admin.waitForFunction(() => document.querySelectorAll('#pp-list tr[data-id]').length >= 6);
+  await admin.$eval('#pp-list tr[data-id]', (el) => el.click());
+  await admin.waitForSelector('#pp-detail:not([hidden])');
+  step('admin people list + detail');
+
+  await admin.$eval('[data-tab="txns"]', (el) => el.click());
+  await admin.waitForFunction(() => document.querySelectorAll('#tx-list tr[data-id]').length >= 2);
+  await admin.$eval('#tx-list tr[data-id]', (el) => el.click());
+  await admin.waitForSelector('#tx-detail:not([hidden])');
+  const hasSig = await admin.$('#tx-detail img.sig-view');
+  assert.ok(hasSig, 'txn detail shows the signature image');
+  step('admin txn browser + signature view');
 
   assert.deepEqual(errors, [], `page errors: ${errors.join('; ')}`);
 
