@@ -142,9 +142,11 @@ test('events: create manual event, appears in current window', async () => {
       title: 'Test Meeting',
       start_at: new Date(now - 3600e3).toISOString(),
       end_at: new Date(now + 3600e3).toISOString(),
+      track_adults: true,
     },
   });
   assert.equal(ev.status, 200);
+  assert.equal(ev.json.track_adults, 1);
   eventId = ev.json.id;
   const cur = await req('GET', '/api/events/current', { cookie: doorCookie });
   assert.ok(cur.json.matching.some((e) => e.id === eventId));
@@ -230,7 +232,7 @@ test('txn: onsite reflects open state; sign-out closes it', async () => {
   assert.equal(after.json.length, 0);
 });
 
-test('txn: adult-only cart needs no signer or signature', async () => {
+test('txn: adult-only cart needs no signer or signature (event tracks adults)', async () => {
   const alice = person('Alice');
   const r = await req('POST', '/api/txn', {
     cookie: doorCookie,
@@ -242,6 +244,25 @@ test('txn: adult-only cart needs no signer or signature', async () => {
     body: { client_uuid: uuid(), direction: 'out', entries: [{ person_id: alice.id }] },
   });
   assert.equal(out.status, 200);
+});
+
+test('txn: adults rejected at events that do not track adults (FR-12)', async () => {
+  const now = Date.now();
+  const ev = await req('POST', '/api/events', {
+    cookie: doorCookie,
+    body: {
+      title: 'Youth-only Meeting',
+      start_at: new Date(now - 3600e3).toISOString(),
+      end_at: new Date(now + 3600e3).toISOString(),
+    },
+  });
+  assert.equal(ev.json.track_adults, 0);
+  const r = await req('POST', '/api/txn', {
+    cookie: doorCookie,
+    body: { client_uuid: uuid(), direction: 'in', event_id: ev.json.id, entries: [{ person_id: person('Carol').id }] },
+  });
+  assert.equal(r.status, 422);
+  assert.deepEqual(r.json.adults, ['Carol Clark']);
 });
 
 test('txn: bad signature data rejected and no PNG orphaned', async () => {

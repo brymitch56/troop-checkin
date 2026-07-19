@@ -1,0 +1,402 @@
+'use strict';
+// Admin API (Phase 2). Everything here requires an admin session; when the
+// tunnel goes live these routes get Cloudflare Access on top (see docs).
+const express = require('express');
+const { db } = require('../db');
+const auth = require('../auth');
+const icalSync = require('../lib/icalSync');
+
+const router = express.Router();
+router.use(auth.requireAuth('admin'));
+router.use(express.json());
+
+// ------------------------------------------------------------------ csv ----
+function sendCsv(res, filename, header, rows) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const body = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(body + '\r\n');
+}
+
+// --------------------------------------------------------------- people ----
+router.get('/people', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const type = req.query.type; // youth | adult
+  const status = req.query.status; // active | inactive | visitor
+  const like = `%${q}%`;
+  const rows = db.prepare(
+    `SELECT id, is_youth, member_id, first_name, last_name, nickname, patrol, level,
+            role, status, badge_code IS NOT NULL AS has_badge
+       FROM person
+      WHERE status != 'merged'
+        AND (? = '' OR first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ? OR member_id LIKE ?)
+        AND (? IS NULL OR (? = 'youth') = (is_youth = 1))
+        AND (? IS NULL OR status = ?)
+      ORDER BY is_youth DESC, last_name, first_name LIMIT 500`
+  ).all(q, like, like, like, like, type || null, type || null, status || null, status || null);
+  res.json(rows);
+});
+
+router.get('/people/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such person.' });
+  const guardians = p.is_youth ? db.prepare(
+    `SELECT g.id, g.first_name, g.last_name, g.phone_mobile, g.email,
+            pg.relationship, pg.authorized, pg.is_primary, pg.source
+       FROM person_guardian pg JOIN person g ON g.id = pg.guardian_id
+      WHERE pg.youth_id = ? AND g.status != 'merged'
+      ORDER BY pg.is_primary DESC, g.last_name`).all(p.id) : [];
+  const wards = !p.is_youth ? db.prepare(
+    `SELECT y.id, y.first_name, y.last_name, y.patrol, pg.authorized, pg.is_primary
+       FROM person_guardian pg JOIN person y ON y.id = pg.youth_id
+      WHERE pg.guardian_id = ? AND y.status != 'merged'
+      ORDER BY y.last_name`).all(p.id) : [];
+  res.json({ ...p, guardians, wards });
+});
+
+const PERSON_FIELDS = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
+  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'notes'];
+router.patch('/people/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such person.' });
+  const b = req.body || {};
+  const sets = [], vals = [];
+  for (const f of PERSON_FIELDS) {
+    if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] === '' ? null : b[f]); }
+  }
+  if ('status' in b) {
+    if (!['active', 'inactive', 'visitor'].includes(b.status)) {
+      return res.status(400).json({ error: 'Bad status.' });
+    }
+    sets.push('status = ?'); vals.push(b.status);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+  db.prepare(`UPDATE person SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`)
+    .run(...vals, p.id);
+  res.json(db.prepare('SELECT * FROM person WHERE id = ?').get(p.id));
+});
+
+// ------------------------------------------------- guardians / authorized ----
+// Admin edits are authoritative: imports never overwrite or duplicate them.
+router.post('/people/:youthId/guardians', (req, res) => {
+  const { guardian_id, relationship, authorized, is_primary } = req.body || {};
+  const youth = db.prepare('SELECT * FROM person WHERE id = ? AND is_youth = 1').get(req.params.youthId);
+  const adult = db.prepare('SELECT * FROM person WHERE id = ? AND is_youth = 0').get(guardian_id);
+  if (!youth || !adult) return res.status(400).json({ error: 'Youth and adult are required.' });
+  const existing = db.prepare(
+    'SELECT 1 FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(youth.id, adult.id);
+  if (existing) return res.status(409).json({ error: 'Already linked — edit the existing entry.' });
+  if (is_primary) {
+    db.prepare('UPDATE person_guardian SET is_primary = 0 WHERE youth_id = ?').run(youth.id);
+  }
+  db.prepare(
+    `INSERT INTO person_guardian (youth_id, guardian_id, relationship, authorized, is_primary, source)
+     VALUES (?, ?, ?, ?, ?, 'manual')`
+  ).run(youth.id, adult.id, relationship || null, authorized === false ? 0 : 1, is_primary ? 1 : 0);
+  res.json({ ok: true });
+});
+
+router.patch('/people/:youthId/guardians/:guardianId', (req, res) => {
+  const { youthId, guardianId } = req.params;
+  const link = db.prepare(
+    'SELECT * FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(youthId, guardianId);
+  if (!link) return res.status(404).json({ error: 'No such link.' });
+  const b = req.body || {};
+  const sets = [], vals = [];
+  if ('authorized' in b) { sets.push('authorized = ?'); vals.push(b.authorized ? 1 : 0); }
+  if ('relationship' in b) { sets.push('relationship = ?'); vals.push(b.relationship || null); }
+  if ('is_primary' in b) {
+    if (b.is_primary) db.prepare('UPDATE person_guardian SET is_primary = 0 WHERE youth_id = ?').run(youthId);
+    sets.push('is_primary = ?'); vals.push(b.is_primary ? 1 : 0);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+  // any admin edit becomes authoritative
+  sets.push(`source = 'manual'`);
+  db.prepare(`UPDATE person_guardian SET ${sets.join(', ')} WHERE youth_id = ? AND guardian_id = ?`)
+    .run(...vals, youthId, guardianId);
+  res.json({ ok: true });
+});
+
+router.delete('/people/:youthId/guardians/:guardianId', (req, res) => {
+  const { youthId, guardianId } = req.params;
+  const link = db.prepare(
+    'SELECT * FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(youthId, guardianId);
+  if (!link) return res.status(404).json({ error: 'No such link.' });
+  if (link.source !== 'manual') {
+    // deleting an import link would just come back on re-import; unauthorize instead
+    return res.status(409).json({
+      error: 'This link came from a roster import — mark it Not Authorized instead of deleting (deletions would reappear on the next import).',
+    });
+  }
+  db.prepare('DELETE FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').run(youthId, guardianId);
+  res.json({ ok: true });
+});
+
+// --------------------------------------------------------------- events ----
+router.get('/events', (req, res) => {
+  res.json(db.prepare(
+    `SELECT e.*, (SELECT COUNT(*) FROM txn t WHERE t.event_id = e.id) AS txn_count
+       FROM event e ORDER BY datetime(start_at) DESC LIMIT 500`).all());
+});
+
+router.patch('/events/:id', (req, res) => {
+  const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'No such event.' });
+  const b = req.body || {};
+  const sets = [], vals = [];
+  for (const f of ['title', 'location', 'description', 'start_at', 'end_at']) {
+    if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
+  }
+  for (const f of ['track_adults', 'all_day']) {
+    if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
+  }
+  if ('notify_after_min' in b) { sets.push('notify_after_min = ?'); vals.push(b.notify_after_min ?? null); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+  db.prepare(`UPDATE event SET ${sets.join(', ')} WHERE id = ?`).run(...vals, ev.id);
+  res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(ev.id));
+});
+
+router.delete('/events/:id', (req, res) => {
+  const used = db.prepare('SELECT 1 FROM txn WHERE event_id = ? LIMIT 1').get(req.params.id);
+  if (used) return res.status(409).json({ error: 'Event has transactions — it cannot be deleted.' });
+  const r = db.prepare('DELETE FROM event WHERE id = ?').run(req.params.id);
+  if (!r.changes) return res.status(404).json({ error: 'No such event.' });
+  res.json({ ok: true });
+});
+
+router.post('/sync-ical', async (req, res) => {
+  try { res.json(await icalSync.syncIcal()); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ----------------------------------------------------------------- txns ----
+router.get('/txns', (req, res) => {
+  const { event_id, person_id, from, to } = req.query;
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const rows = db.prepare(
+    `SELECT t.id, t.direction, t.signed_at, t.forced, t.close_method, t.signature_path,
+            t.voided_by_txn_id, t.signer_name_override,
+            e.title AS event_title, e.id AS event_id,
+            st.name AS staff_name,
+            sg.first_name || ' ' || sg.last_name AS signer_name,
+            (SELECT GROUP_CONCAT(p.first_name || ' ' || p.last_name, ' · ')
+               FROM txn_person tp JOIN person p ON p.id = tp.person_id
+              WHERE tp.txn_id = t.id) AS people
+       FROM txn t
+       JOIN event e ON e.id = t.event_id
+       JOIN staff st ON st.id = t.staff_id
+       LEFT JOIN person sg ON sg.id = t.signer_person_id
+      WHERE (? IS NULL OR t.event_id = ?)
+        AND (? IS NULL OR t.id IN (SELECT txn_id FROM txn_person WHERE person_id = ?))
+        AND (? IS NULL OR datetime(t.signed_at) >= datetime(?))
+        AND (? IS NULL OR datetime(t.signed_at) <= datetime(?))
+      ORDER BY datetime(t.signed_at) DESC LIMIT ?`
+  ).all(event_id || null, event_id || null, person_id || null, person_id || null,
+        from || null, from || null, to || null, to || null, limit);
+  res.json(rows);
+});
+
+router.get('/txns/:id', (req, res) => {
+  const t = db.prepare(
+    `SELECT t.*, e.title AS event_title, st.name AS staff_name,
+            sg.first_name || ' ' || sg.last_name AS signer_name
+       FROM txn t JOIN event e ON e.id = t.event_id JOIN staff st ON st.id = t.staff_id
+       LEFT JOIN person sg ON sg.id = t.signer_person_id
+      WHERE t.id = ?`).get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'No such transaction.' });
+  t.entries = db.prepare(
+    `SELECT tp.*, p.first_name, p.last_name, p.is_youth, p.patrol
+       FROM txn_person tp JOIN person p ON p.id = tp.person_id
+      WHERE tp.txn_id = ?`).all(t.id);
+  res.json(t);
+});
+
+// Void = append-only correction: a new marker txn reverses the state effect
+// of the original; the original row is never mutated beyond voided_by_txn_id.
+router.post('/txns/:id/void', (req, res) => {
+  const t = db.prepare('SELECT * FROM txn WHERE id = ?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'No such transaction.' });
+  if (t.voided_by_txn_id) return res.status(409).json({ error: 'Already voided.' });
+  if (t.close_method === 'admin_close' && !t.signature_path && t.direction === 'out') {
+    // fine — admin closes are voidable like any other txn
+  }
+  const entries = db.prepare('SELECT * FROM txn_person WHERE txn_id = ?').all(t.id);
+  const run = db.transaction(() => {
+    const v = db.prepare(
+      `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id, close_method)
+       VALUES (?, ?, ?, ?, ?, 'admin_close')`
+    ).run(`void-${t.id}-${Date.now()}`, t.event_id, t.direction, new Date().toISOString(), req.staff.staff_id);
+    const voidId = Number(v.lastInsertRowid);
+    for (const e of entries) {
+      db.prepare(`INSERT INTO txn_person (txn_id, person_id, open, in_txn_id) VALUES (?, ?, 0, ?)`)
+        .run(voidId, e.person_id, t.id);
+      if (t.direction === 'in') {
+        // voiding a sign-in closes its open rows
+        db.prepare('UPDATE txn_person SET open = 0 WHERE txn_id = ? AND person_id = ?').run(t.id, e.person_id);
+      } else if (e.in_txn_id) {
+        // voiding a sign-out re-opens the original sign-in (unless that one is voided)
+        const inTxn = db.prepare('SELECT voided_by_txn_id FROM txn WHERE id = ?').get(e.in_txn_id);
+        if (inTxn && !inTxn.voided_by_txn_id) {
+          db.prepare('UPDATE txn_person SET open = 1 WHERE txn_id = ? AND person_id = ?').run(e.in_txn_id, e.person_id);
+        }
+      }
+    }
+    db.prepare('UPDATE txn SET voided_by_txn_id = ? WHERE id = ?').run(voidId, t.id);
+    return voidId;
+  });
+  res.json({ ok: true, void_txn_id: run() });
+});
+
+// Close a lingering open sign-in without a guardian present (audited).
+router.post('/close-open', (req, res) => {
+  const { person_id } = req.body || {};
+  const open = db.prepare(
+    `SELECT tp.txn_id AS in_txn_id, t.event_id
+       FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
+      WHERE tp.person_id = ? AND tp.open = 1 AND t.voided_by_txn_id IS NULL LIMIT 1`
+  ).get(person_id);
+  if (!open) return res.status(404).json({ error: 'No open sign-in for that person.' });
+  const run = db.transaction(() => {
+    const r = db.prepare(
+      `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id, close_method)
+       VALUES (?, ?, 'out', ?, ?, 'admin_close')`
+    ).run(`admin-close-${person_id}-${Date.now()}`, open.event_id, new Date().toISOString(), req.staff.staff_id);
+    const txnId = Number(r.lastInsertRowid);
+    db.prepare(`INSERT INTO txn_person (txn_id, person_id, open, in_txn_id) VALUES (?, ?, 0, ?)`)
+      .run(txnId, person_id, open.in_txn_id);
+    db.prepare('UPDATE txn_person SET open = 0 WHERE txn_id = ? AND person_id = ?')
+      .run(open.in_txn_id, person_id);
+    return txnId;
+  });
+  res.json({ ok: true, txn_id: run() });
+});
+
+// -------------------------------------------------------- visitor merge ----
+router.post('/merge', (req, res) => {
+  const { from_id, into_id } = req.body || {};
+  const from = db.prepare('SELECT * FROM person WHERE id = ?').get(from_id);
+  const into = db.prepare('SELECT * FROM person WHERE id = ?').get(into_id);
+  if (!from || !into) return res.status(400).json({ error: 'from_id and into_id are required.' });
+  if (from.id === into.id) return res.status(400).json({ error: 'Cannot merge a person into themselves.' });
+  if (from.status === 'merged') return res.status(409).json({ error: 'Already merged.' });
+  if (from.member_id) return res.status(400).json({ error: 'Only visitor/unregistered records (no member number) can be merged.' });
+  if (from.is_youth !== into.is_youth) return res.status(400).json({ error: 'Youth records merge into youth; adults into adults.' });
+  const run = db.transaction(() => {
+    // attendance history transfers (guard against same-txn duplicates)
+    for (const tp of db.prepare('SELECT * FROM txn_person WHERE person_id = ?').all(from.id)) {
+      const clash = db.prepare('SELECT 1 FROM txn_person WHERE txn_id = ? AND person_id = ?').get(tp.txn_id, into.id);
+      if (clash) db.prepare('DELETE FROM txn_person WHERE txn_id = ? AND person_id = ?').run(tp.txn_id, from.id);
+      else db.prepare('UPDATE txn_person SET person_id = ? WHERE txn_id = ? AND person_id = ?').run(into.id, tp.txn_id, from.id);
+    }
+    db.prepare('UPDATE txn SET signer_person_id = ? WHERE signer_person_id = ?').run(into.id, from.id);
+    // guardian links move unless the target already has that link
+    for (const pg of db.prepare('SELECT * FROM person_guardian WHERE youth_id = ?').all(from.id)) {
+      const clash = db.prepare('SELECT 1 FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(into.id, pg.guardian_id);
+      if (!clash) db.prepare('UPDATE person_guardian SET youth_id = ? WHERE youth_id = ? AND guardian_id = ?').run(into.id, from.id, pg.guardian_id);
+      else db.prepare('DELETE FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').run(from.id, pg.guardian_id);
+    }
+    for (const pg of db.prepare('SELECT * FROM person_guardian WHERE guardian_id = ?').all(from.id)) {
+      const clash = db.prepare('SELECT 1 FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(pg.youth_id, into.id);
+      if (!clash) db.prepare('UPDATE person_guardian SET guardian_id = ? WHERE youth_id = ? AND guardian_id = ?').run(into.id, pg.youth_id, from.id);
+      else db.prepare('DELETE FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').run(pg.youth_id, from.id);
+    }
+    if (from.badge_code && !into.badge_code) {
+      db.prepare('UPDATE person SET badge_code = NULL WHERE id = ?').run(from.id);
+      db.prepare(`UPDATE person SET badge_code = ?, updated_at = datetime('now') WHERE id = ?`).run(from.badge_code, into.id);
+    }
+    db.prepare(`UPDATE person SET status = 'merged', merged_into_id = ?, badge_code = NULL,
+                                  updated_at = datetime('now') WHERE id = ?`).run(into.id, from.id);
+  });
+  run();
+  res.json({ ok: true });
+});
+
+// -------------------------------------------------------------- reports ----
+router.get('/imports', (req, res) => {
+  res.json(db.prepare(
+    `SELECT ri.*, s.name AS staff_name FROM roster_import ri
+       LEFT JOIN staff s ON s.id = ri.staff_id
+      ORDER BY ri.id DESC LIMIT 50`).all());
+});
+
+router.get('/export/attendance.csv', (req, res) => {
+  const eventId = req.query.event_id || null;
+  const rows = db.prepare(
+    `SELECT e.title, p.last_name, p.first_name, CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END,
+            p.patrol, t.direction, t.signed_at,
+            COALESCE(sg.first_name || ' ' || sg.last_name, t.signer_name_override, ''),
+            st.name, tp.emerg_phone_1, tp.emerg_phone_2,
+            CASE WHEN t.forced = 1 THEN 'yes' ELSE '' END,
+            COALESCE(t.close_method, ''), CASE WHEN t.voided_by_txn_id IS NOT NULL THEN 'yes' ELSE '' END
+       FROM txn_person tp
+       JOIN txn t ON t.id = tp.txn_id
+       JOIN person p ON p.id = tp.person_id
+       JOIN event e ON e.id = t.event_id
+       JOIN staff st ON st.id = t.staff_id
+       LEFT JOIN person sg ON sg.id = t.signer_person_id
+      WHERE (? IS NULL OR t.event_id = ?)
+      ORDER BY datetime(t.signed_at)`).raw().all(eventId, eventId);
+  sendCsv(res, 'attendance.csv',
+    ['event', 'last_name', 'first_name', 'type', 'patrol', 'direction', 'signed_at',
+     'signer', 'staff', 'emerg_phone_1', 'emerg_phone_2', 'override', 'close_method', 'voided'],
+    rows);
+});
+
+router.get('/export/open.csv', (req, res) => {
+  const rows = db.prepare(
+    `SELECT e.title, p.last_name, p.first_name, p.patrol, t.signed_at
+       FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
+       JOIN person p ON p.id = tp.person_id JOIN event e ON e.id = t.event_id
+      WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
+      ORDER BY datetime(t.signed_at)`).raw().all();
+  sendCsv(res, 'open-signins.csv', ['event', 'last_name', 'first_name', 'patrol', 'signed_in_at'], rows);
+});
+
+router.get('/export/overrides.csv', (req, res) => {
+  const rows = db.prepare(
+    `SELECT t.signed_at, e.title,
+            (SELECT GROUP_CONCAT(p.first_name || ' ' || p.last_name, ' · ')
+               FROM txn_person tp JOIN person p ON p.id = tp.person_id WHERE tp.txn_id = t.id),
+            COALESCE(sg.first_name || ' ' || sg.last_name, t.signer_name_override, ''), st.name
+       FROM txn t JOIN event e ON e.id = t.event_id JOIN staff st ON st.id = t.staff_id
+       LEFT JOIN person sg ON sg.id = t.signer_person_id
+      WHERE t.forced = 1 ORDER BY datetime(t.signed_at) DESC`).raw().all();
+  sendCsv(res, 'overrides.csv', ['signed_at', 'event', 'people', 'signer', 'staff'], rows);
+});
+
+router.get('/export/visitors.csv', (req, res) => {
+  const rows = db.prepare(
+    `SELECT p.last_name, p.first_name, CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END,
+            p.created_at, p.notes,
+            (SELECT COUNT(*) FROM txn_person tp WHERE tp.person_id = p.id)
+       FROM person p WHERE p.status = 'visitor' ORDER BY p.created_at DESC`).raw().all();
+  sendCsv(res, 'visitors.csv', ['last_name', 'first_name', 'type', 'first_seen', 'notes', 'txn_count'], rows);
+});
+
+router.post('/backup', (req, res) => {
+  try { res.json(require('../lib/backup').runBackup()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/status', (req, res) => {
+  const count = (sql) => db.prepare(sql).get().c;
+  let lastSync = null;
+  const m = db.prepare(`SELECT value FROM meta WHERE key = 'last_ical_sync'`).get();
+  if (m) { try { lastSync = JSON.parse(m.value); } catch { /* ignore */ } }
+  res.json({
+    youth_active: count(`SELECT COUNT(*) c FROM person WHERE is_youth = 1 AND status = 'active'`),
+    adults_active: count(`SELECT COUNT(*) c FROM person WHERE is_youth = 0 AND status = 'active'`),
+    visitors: count(`SELECT COUNT(*) c FROM person WHERE status = 'visitor'`),
+    open_signins: count(`SELECT COUNT(*) c FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
+                          WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL`),
+    events: count('SELECT COUNT(*) c FROM event'),
+    txns: count('SELECT COUNT(*) c FROM txn'),
+    last_ical_sync: lastSync,
+  });
+});
+
+module.exports = router;

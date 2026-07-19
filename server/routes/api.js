@@ -24,7 +24,7 @@ router.post('/login', express.json(), (req, res) => {
     return res.status(401).json({ error: 'Wrong PIN. Try again.' });
   }
   const token = auth.createSession(staff.id, staff.role);
-  auth.setSessionCookie(res, token);
+  auth.setSessionCookie(res, token, req.secure); // Secure when served over the tunnel (HTTPS)
   res.json({ id: staff.id, name: staff.name, role: staff.role });
 });
 
@@ -145,15 +145,19 @@ router.post('/visitor', express.json(), (req, res) => {
 
 // -------------------------------------------------------------- events ----
 router.get('/events/current', (req, res) => {
+  // datetime() normalizes both stored formats (ISO 'T'/'Z' and SQLite space
+  // form) — raw string compares are wrong across the two.
   const now = new Date().toISOString();
   const matching = db.prepare(
-    `SELECT * FROM event WHERE start_at <= ? AND end_at >= ? ORDER BY start_at`
+    `SELECT * FROM event
+      WHERE datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?)
+      ORDER BY datetime(start_at)`
   ).all(now, now);
   const nearby = db.prepare(
     `SELECT * FROM event
-      WHERE NOT (start_at <= ? AND end_at >= ?)
-        AND end_at >= datetime(?, '-6 hours') AND start_at <= datetime(?, '+24 hours')
-      ORDER BY start_at LIMIT 10`
+      WHERE NOT (datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?))
+        AND datetime(end_at) >= datetime(?, '-6 hours') AND datetime(start_at) <= datetime(?, '+24 hours')
+      ORDER BY datetime(start_at) LIMIT 10`
   ).all(now, now, now, now);
   res.json({ matching, nearby });
 });
@@ -203,8 +207,18 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
         conflicts: already.map((p) => `${p.first_name} ${p.last_name}`),
       });
     }
-    if (!b.event_id || !db.prepare('SELECT id FROM event WHERE id = ?').get(b.event_id)) {
+    const event = b.event_id && db.prepare('SELECT * FROM event WHERE id = ?').get(b.event_id);
+    if (!event) {
       return res.status(400).json({ error: 'A valid event is required for sign-in.' });
+    }
+    // FR-12: adults are only tracked at designated events
+    if (!event.track_adults) {
+      const adults = people.filter((p) => !p.is_youth).map((p) => `${p.first_name} ${p.last_name}`);
+      if (adults.length) {
+        return res.status(422).json({
+          error: 'This event does not track adult attendance.', adults,
+        });
+      }
     }
   } else {
     const opens = people.map((p) => ({ p, open: openOf(p.id) }));
@@ -251,13 +265,14 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
   const write = db.transaction(() => {
     const t = db.prepare(
       `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id,
-                        signer_person_id, signer_name_override, signature_path, close_method)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        signer_person_id, signer_name_override, signature_path, close_method, forced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       b.client_uuid, b.event_id, b.direction, b.signed_at || new Date().toISOString(),
       req.staff.staff_id, b.signer_person_id || null, b.signer_name_override || null,
       sigPath ? path.basename(sigPath) : null,
-      b.direction === 'out' && youthEntries.length ? 'signature' : null
+      b.direction === 'out' && youthEntries.length ? 'signature' : null,
+      b.force ? 1 : 0
     );
     const txnId = Number(t.lastInsertRowid);
 
@@ -310,7 +325,7 @@ router.get('/onsite', (req, res) => {
        JOIN event e ON e.id = t.event_id
       WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
         AND (? IS NULL OR p.patrol = ?)
-      ORDER BY e.start_at, p.patrol, p.last_name, p.first_name`
+      ORDER BY datetime(e.start_at), p.patrol, p.last_name, p.first_name`
   ).all(patrol, patrol);
   res.json(rows);
 });

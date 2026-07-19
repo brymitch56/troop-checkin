@@ -10,13 +10,16 @@
     "migrate": "node server/migrate.js",
     "create-staff": "node server/scripts/create-staff.js",
     "test": "node --test \"test/*.test.js\"",
-    "make-roster": "node server/scripts/make-synthetic-roster.js"
+    "make-roster": "node server/scripts/make-synthetic-roster.js",
+    "backup": "node server/lib/backup.js",
+    "sync-ical": "node -e \"require('./server/lib/icalSync').syncIcal().then(console.log, (e) => { console.error(e.message); process.exit(1); })\""
   },
   "engines": { "node": ">=18" },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
     "multer": "^2.0.1",
+    "node-ical": "^0.20.1",
     "xlsx": "^0.18.5"
   }
 }

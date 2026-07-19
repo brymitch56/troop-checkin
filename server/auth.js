@@ -64,10 +64,10 @@ function sessionFromRequest(req) {
   return row;
 }
 
-function setSessionCookie(res, token) {
+function setSessionCookie(res, token, secure) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`
+    `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`
   );
 }
 
