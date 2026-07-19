@@ -1,0 +1,25 @@
+# --- PII: never commit. Youth names, guardian phones, signatures, rosters. ---
+data/
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+*.xls
+*.csv
+signatures/
+*.sig.png
+signature-*.png
+
+# environment / secrets
+.env
+.env.*
+!.env.example
+
+# dependencies & build
+node_modules/
+npm-debug.log*
+
+# editor/OS noise
+.DS_Store
+Thumbs.db
+*.swp
