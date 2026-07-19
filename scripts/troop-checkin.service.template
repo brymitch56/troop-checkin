@@ -1,0 +1,20 @@
+[Unit]
+Description=Troop Check-In kiosk server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+# data dir holds the DB, signatures, uploads, backups
+Environment=NODE_ENV=production
+# hardening (keep light — better-sqlite3 needs rw in the app dir's data/)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
