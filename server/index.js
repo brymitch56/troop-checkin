@@ -24,6 +24,9 @@ app.get('/healthz', (req, res) => {
   res.json({ ok: true });
 });
 
-setInterval(auth.pruneSessions, 60 * 60 * 1000).unref();
+module.exports = app;
 
-app.listen(PORT, () => console.log(`troop-checkin listening on :${PORT}`));
+if (require.main === module) {
+  setInterval(auth.pruneSessions, 60 * 60 * 1000).unref();
+  app.listen(PORT, () => console.log(`troop-checkin listening on :${PORT}`));
+}

@@ -138,25 +138,37 @@ $('ev-create').onclick = async () => {
 
 // ------------------------------------------------------------ scanning ----
 // Bluetooth HID keyboard-wedge: rapid keystrokes ending in Enter.
-let wedgeBuf = '', wedgeLast = 0;
+// wedgeFast stays true only while every inter-key gap looks like a scanner
+// (<35ms); human typing (even fast) breaks it, so we never eat typed input.
+// Chars that leak into a focused field before the burst is recognized are
+// counted and scrubbed from the field when the scan completes.
+let wedgeBuf = '', wedgeLast = 0, wedgeFast = true, wedgeLeaked = 0;
 window.addEventListener('keydown', (e) => {
-  const typingInField = /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '') &&
-                        document.activeElement !== document.body;
+  const el = document.activeElement;
+  const typingInField = /INPUT|TEXTAREA/.test(el?.tagName || '');
   const now = Date.now();
-  if (now - wedgeLast > 120) wedgeBuf = '';
+  const gap = now - wedgeLast;
+  if (gap > 120) { wedgeBuf = ''; wedgeFast = true; wedgeLeaked = 0; }
   wedgeLast = now;
   if (e.key === 'Enter') {
-    if (wedgeBuf.length >= 6) {
+    if (wedgeBuf.length >= 6 && wedgeFast) {
       const code = wedgeBuf; wedgeBuf = '';
       e.preventDefault();
+      if (typingInField && wedgeLeaked && typeof el.value === 'string') {
+        el.value = el.value.slice(0, el.value.length - wedgeLeaked); // scrub leaked burst chars
+      }
+      wedgeLeaked = 0;
       handleScan(code);
     }
     return;
   }
   if (e.key.length === 1) {
+    if (wedgeBuf) wedgeFast = wedgeFast && gap < 35;
     wedgeBuf += e.key;
-    // scanner burst into a focused input: keep the field clean
-    if (typingInField && wedgeBuf.length === 8 && now - wedgeLast < 30) e.preventDefault();
+    if (typingInField) {
+      if (wedgeFast && wedgeBuf.length >= 4) e.preventDefault(); // burst confirmed: suppress
+      else wedgeLeaked++;
+    }
   }
 });
 
@@ -497,6 +509,7 @@ async function renderOnsite() {
     const div = document.createElement('div');
     div.className = 'group';
     div.innerHTML = `<h4>${g.title} · ${g.rows.length}</h4>`;
+    wrap.appendChild(div);
     for (const r of g.rows) {
       const el = document.createElement('div');
       el.className = 'person';
@@ -504,10 +517,8 @@ async function renderOnsite() {
       el.innerHTML = `<span>${r.nickname || r.first_name} ${r.last_name}
           ${r.is_youth ? '' : '<span class="adult-tag">adult</span>'}</span>
         <span class="since">${r.patrol || ''} · in ${since}</span>`;
-      wrap.lastChild === div || wrap.appendChild(div);
       div.appendChild(el);
     }
-    wrap.appendChild(div);
   }
 }
 

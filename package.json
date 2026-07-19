@@ -8,13 +8,15 @@
   "scripts": {
     "start": "node server/index.js",
     "migrate": "node server/migrate.js",
-    "create-staff": "node server/scripts/create-staff.js"
+    "create-staff": "node server/scripts/create-staff.js",
+    "test": "node --test \"test/*.test.js\"",
+    "make-roster": "node server/scripts/make-synthetic-roster.js"
   },
   "engines": { "node": ">=18" },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.1",
     "xlsx": "^0.18.5"
   }
 }

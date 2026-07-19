@@ -288,7 +288,14 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
     return txnId;
   });
 
-  res.json({ ok: true, txn_id: write() });
+  let txnId;
+  try {
+    txnId = write();
+  } catch (err) {
+    if (sigPath) fs.rmSync(sigPath, { force: true }); // don't orphan the signature PNG
+    throw err;
+  }
+  res.json({ ok: true, txn_id: txnId });
 });
 
 // who's still here
