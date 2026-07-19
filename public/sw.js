@@ -1,7 +1,14 @@
 'use strict';
-// App-shell cache. Full offline transaction queueing arrives in Phase 4.
-const VERSION = 'tc-v1';
-const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest'];
+// App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
+// guarantees the shell loads offline; /api stays network-only on purpose.
+// Bump VERSION on deploy so clients pick up new assets.
+const VERSION = 'tc-v2';
+const SHELL = [
+  '/', '/index.html', '/styles.css', '/app.js', '/offline.js',
+  '/manifest.webmanifest', '/vendor/jsqr.min.js',
+  '/icon-192.png', '/icon-512.png',
+  '/admin.html', '/admin.css', '/admin.js',
+];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

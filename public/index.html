@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Troop Check-In</title>
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -36,6 +37,7 @@
   <header class="topbar">
     <button id="event-pill" class="pill event-pill" title="Change event">No event</button>
     <div class="topbar-right">
+      <button id="queue-pill" class="pill ghost-pill" hidden></button>
       <button id="station-pill" class="pill ghost-pill" title="Station patrol scope">All patrols</button>
       <button id="onsite-pill" class="pill onsite-pill">On site: 0</button>
       <button id="staff-pill" class="pill ghost-pill"></button>
@@ -145,6 +147,7 @@
 
 <div id="toast" class="toast" hidden></div>
 
+<script src="offline.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

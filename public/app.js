@@ -51,7 +51,17 @@ async function boot() {
   try {
     state.me = await api('/me');
     await enterKiosk();
-  } catch { await renderLogin(); }
+  } catch (e) {
+    if (!e.status && localStorage.getItem('last-me')) {
+      // network down but we had a session — enter offline kiosk mode
+      state.me = JSON.parse(localStorage.getItem('last-me'));
+      state.offline = true;
+      toast('Offline — working from the saved roster. Records will sync when back online.', true);
+      await enterKiosk();
+      return;
+    }
+    await renderLogin();
+  }
 }
 
 async function renderLogin() {
@@ -97,12 +107,68 @@ $('staff-pill').onclick = async () => {
 // ---------------------------------------------------------------- kiosk ----
 async function enterKiosk() {
   show('screen-main');
+  if (!state.offline) localStorage.setItem('last-me', JSON.stringify(state.me));
   $('staff-pill').textContent = state.me.name;
   renderStationPill();
   renderCart();
   refreshOnsiteCount();
+  refreshSnapshot();
+  flushQueue();
+  updateQueuePill();
   await pickEventAuto();
 }
+
+// -------------------------------------------------------- offline sync ----
+async function refreshSnapshot() {
+  try { await Offline.saveSnapshot(await api('/roster-snapshot')); } catch { /* offline */ }
+}
+async function flushQueue() {
+  const r = await Offline.flush((payload) => jpost('/txn', payload)).catch(() => null);
+  if (r && r.sent) {
+    toast(`Synced ${r.sent} offline record${r.sent > 1 ? 's' : ''} ✓`);
+    refreshSnapshot(); refreshOnsiteCount();
+  }
+  if (r && r.conflicts) {
+    toast(`${r.conflicts} offline record(s) could not sync — tap the ⚠ pill.`, true);
+  }
+  updateQueuePill();
+}
+async function updateQueuePill() {
+  const q = await Offline.queueSize().catch(() => 0);
+  const c = await Offline.conflictCount().catch(() => 0);
+  const pill = $('queue-pill');
+  pill.hidden = !q && !c;
+  pill.textContent = c ? `⚠ ${c}${q ? ` · ⏳ ${q}` : ''}` : `⏳ ${q} queued`;
+}
+$('queue-pill').onclick = async () => {
+  const conflicts = await Offline.conflictList();
+  if (!conflicts.length) return toast('Queued records will sync automatically when back online.');
+  const lines = conflicts.map((c) =>
+    `${c.direction.toUpperCase()} — ${(c.entries || []).length} people — ${c._error}`).join('\n');
+  if (confirm(`These offline records were rejected when syncing (usually because another station already handled them):\n\n${lines}\n\nClear them? (The server state is authoritative.)`)) {
+    for (const c of conflicts) await Offline.clearConflict(c.client_uuid);
+    updateQueuePill();
+  }
+};
+window.addEventListener('online', flushQueue);
+setInterval(async () => { if (await Offline.queueSize().catch(() => 0)) flushQueue(); }, 20_000);
+
+// ------------------------------------------------------ idle auto-logout ----
+let idleTimer;
+function resetIdle() {
+  clearTimeout(idleTimer);
+  const mins = Number(localStorage.getItem('idle-minutes')) || 20;
+  idleTimer = setTimeout(async () => {
+    // never dump a half-finished cart or an offline session
+    if (!state.me || state.cart.length || state.offline) return resetIdle();
+    await jpost('/logout', {}).catch(() => {});
+    state.me = null;
+    renderLogin();
+    toast('Signed out after inactivity.');
+  }, mins * 60 * 1000);
+}
+for (const evt of ['pointerdown', 'keydown']) window.addEventListener(evt, resetIdle, { passive: true });
+resetIdle();
 
 // ------------------------------------------------------- station mode ----
 // Per-device patrol scope (persists on this device): the roster view and
@@ -125,8 +191,11 @@ $('station-pill').onclick = async () => {
 const stationFilter = (rows) =>
   state.station ? rows.filter((p) => !p.is_youth || (p.patrol || '') === state.station) : rows;
 
+const eventsCurrent = () =>
+  api('/events/current').catch((e) => { if (e.status) throw e; return Offline.currentEvents(); });
+
 async function pickEventAuto() {
-  const { matching } = await api('/events/current');
+  const { matching } = await eventsCurrent();
   if (matching.length === 1) setEvent(matching[0]);
   else if (state.event == null) openEventPicker();
 }
@@ -137,7 +206,7 @@ function setEvent(ev) {
 $('event-pill').onclick = openEventPicker;
 
 async function openEventPicker() {
-  const { matching, nearby } = await api('/events/current');
+  const { matching, nearby } = await eventsCurrent();
   const wrap = $('event-list'); wrap.innerHTML = '';
   const add = (ev, tag) => {
     const b = document.createElement('button');
@@ -206,7 +275,8 @@ async function handleScan(rawCode) {
   const code = rawCode.trim();
   if (!code) return;
   try {
-    const r = await api('/badge/' + encodeURIComponent(code));
+    const r = await api('/badge/' + encodeURIComponent(code))
+      .catch((e) => { if (e.status) throw e; return Offline.findByBadge(code); }); // offline: snapshot
     if (r.match === 'badge') return addToCart(r.person);
     if (r.match === 'member') {
       state.pendingLink = { code, person: r.person };
@@ -245,7 +315,7 @@ $('btn-camera').onclick = async () => {
         } catch { /* frame not ready */ }
       }, 250);
     } else {
-      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js');
+      await loadScript('/vendor/jsqr.min.js'); // vendored — works offline / on iOS
       const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
       camLoop = setInterval(() => {
         if (!video.videoWidth) return;
@@ -290,7 +360,9 @@ $('search-input').addEventListener('input', () => {
   const q = $('search-input').value.trim();
   if (q.length < 2) { $('search-results').hidden = true; return; }
   searchTimer = setTimeout(async () => {
-    const rows = stationFilter(await api('/search?q=' + encodeURIComponent(q)).catch(() => []));
+    const raw = await api('/search?q=' + encodeURIComponent(q))
+      .catch((e) => (e.status ? [] : Offline.searchPeople(q))); // offline: snapshot
+    const rows = stationFilter(await raw);
     const box = $('search-results'); box.innerHTML = '';
     for (const p of rows) {
       const b = document.createElement('button');
@@ -321,7 +393,10 @@ async function addToCart(person) {
     );
   }
   let guardians = [];
-  if (person.is_youth) guardians = await api(`/person/${person.id}/guardians`).catch(() => []);
+  if (person.is_youth) {
+    guardians = await api(`/person/${person.id}/guardians`)
+      .catch((e) => (e.status ? [] : Offline.guardiansOf(person.id))); // offline: snapshot
+  }
   const primary = guardians.find((g) => g.is_primary);
   state.cart.push({
     person, guardians,
@@ -451,7 +526,17 @@ async function submitTxn(extra, force) {
     toast(state.direction === 'in' ? 'Signed in ✓' : 'Signed out ✓');
     state.cart = []; state.direction = null;
     renderCart(); refreshOnsiteCount();
+    refreshSnapshot(); // keep the offline snapshot's open-state current
   } catch (e) {
+    if (!e.status) {
+      // network is down: queue locally, sync later (client_uuid dedupes retries)
+      await Offline.queueTxn(payload);
+      closeModal();
+      toast(`Saved offline — will sync when back online (${state.direction === 'in' ? 'IN' : 'OUT'} ✓)`);
+      state.cart = []; state.direction = null;
+      renderCart(); refreshOnsiteCount(); updateQueuePill();
+      return;
+    }
     if (e.status === 422 && e.body.unauthorized) {
       const ok = confirm(`Signer is not on the authorized list for: ${e.body.unauthorized.join(', ')}.\n\nStaff override — record anyway?`);
       if (ok) return submitTxn(extra, true);
@@ -515,7 +600,11 @@ $('vis-save').onclick = async () => {
 // ------------------------------------------------------------- on site ----
 async function refreshOnsiteCount() {
   const q = state.station ? '?patrol=' + encodeURIComponent(state.station) : '';
-  const rows = await api('/onsite' + q).catch(() => []);
+  const rows = await api('/onsite' + q).catch(async (e) => {
+    if (e.status) return [];
+    const local = await Offline.onsite().catch(() => []); // offline: snapshot + queued
+    return state.station ? local.filter((p) => (p.patrol || '') === state.station) : local;
+  });
   $('onsite-pill').textContent = `On site: ${rows.length}`;
 }
 $('onsite-pill').onclick = async () => {

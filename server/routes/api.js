@@ -313,6 +313,32 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
   res.json({ ok: true, txn_id: txnId });
 });
 
+// offline-first roster snapshot (Phase 4): everything a kiosk needs to keep
+// working without connectivity — people (with badge codes + open state),
+// guardian links, and the event window. Stored client-side in IndexedDB.
+router.get('/roster-snapshot', (req, res) => {
+  const people = db.prepare(
+    `SELECT * FROM person WHERE status IN ('active', 'visitor')`
+  ).all().map(personView);
+  const links = db.prepare(
+    `SELECT pg.youth_id, pg.guardian_id, pg.relationship, pg.authorized, pg.is_primary
+       FROM person_guardian pg
+       JOIN person y ON y.id = pg.youth_id AND y.status != 'merged'
+       JOIN person g ON g.id = pg.guardian_id AND g.status != 'merged'`
+  ).all();
+  const badges = db.prepare(
+    `SELECT id, badge_code FROM person WHERE badge_code IS NOT NULL AND status != 'merged'`
+  ).all();
+  const now = new Date().toISOString();
+  const events = db.prepare(
+    `SELECT * FROM event
+      WHERE datetime(end_at) >= datetime(?, '-12 hours')
+        AND datetime(start_at) <= datetime(?, '+7 days')
+      ORDER BY datetime(start_at)`
+  ).all(now, now);
+  res.json({ taken_at: now, people, links, badges, events });
+});
+
 // who's still here
 router.get('/onsite', (req, res) => {
   const patrol = req.query.patrol ? String(req.query.patrol) : null;

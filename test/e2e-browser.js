@@ -199,6 +199,59 @@ async function main() {
   assert.ok(hasSig, 'txn detail shows the signature image');
   step('admin txn browser + signature view');
 
+  // -- offline round-trip (Phase 4) -----------------------------------------
+  // wait for SW install + roster snapshot, then cut the network
+  await page.bringToFront();
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.waitForFunction(async () => window.Offline && !!(await window.Offline.takenAt()));
+  await page.setOfflineMode(true);
+
+  await page.reload({ waitUntil: 'load' }).catch(() => {});
+  await page.waitForSelector('#screen-main:not([hidden])', { timeout: 8000 });
+  step('offline: shell loads from SW, session restored from cache');
+
+  // event picker may open (events/current served from snapshot); pick the meeting
+  await page.evaluate(() => {
+    const modal = document.getElementById('modal-events');
+    if (modal && !modal.hidden) {
+      [...document.querySelectorAll('#event-list button')].find((b) => b.textContent.includes('E2E Meeting'))?.click();
+    }
+  });
+  await page.waitForFunction(() => document.getElementById('event-pill').textContent === 'E2E Meeting');
+
+  // offline name search from the snapshot, then a queued sign-in
+  // (Danny was signed out earlier, so this queues an IN)
+  await page.type('#search-input', 'Danny', { delay: 60 });
+  await searchHit(page, 'Dan');
+  await page.waitForFunction(() => document.querySelectorAll('#cart-list li').length === 1);
+  step('offline: snapshot search adds Danny');
+
+  await click('#btn-sign');
+  await page.waitForSelector('#modal-sign:not([hidden])');
+  await page.evaluate(() => {
+    [...document.querySelectorAll('#signer-list button')].find((b) => b.textContent.includes('Alice')).click();
+  });
+  const box3 = await (await page.$('#sig-canvas')).boundingBox();
+  await page.mouse.move(box3.x + 30, box3.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(box3.x + 250, box3.y + 100, { steps: 6 });
+  await page.mouse.up();
+  await click('#sign-submit');
+  await page.waitForFunction(() => !document.getElementById('queue-pill').hidden &&
+    document.getElementById('queue-pill').textContent.includes('1'));
+  step('offline: sign-in queued in IndexedDB, queue pill shows');
+
+  // back online: the queue flushes and the server records the txn
+  await page.setOfflineMode(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.waitForFunction(() => document.getElementById('queue-pill').hidden, { timeout: 25000 });
+  const dannyOpen = db.prepare(
+    `SELECT 1 FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
+      WHERE tp.person_id = (SELECT id FROM person WHERE member_id = 'Y-2001')
+        AND tp.open = 1 AND t.voided_by_txn_id IS NULL`).get();
+  assert.ok(dannyOpen, 'queued sign-in reached the server after reconnect');
+  step('offline: queue synced on reconnect, server has the record');
+
   assert.deepEqual(errors, [], `page errors: ${errors.join('; ')}`);
 
   await browser.close();

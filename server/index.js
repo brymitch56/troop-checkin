@@ -57,5 +57,6 @@ if (require.main === module) {
   setInterval(auth.pruneSessions, 60 * 60 * 1000).unref();
   icalSync.scheduleNightly();
   require('./lib/backup').scheduleNightly();
+  require('./lib/notifySweep').scheduleSweep(); // no-op unless SMS_ENABLED=true
   app.listen(PORT, () => console.log(`troop-checkin listening on :${PORT}`));
 }
