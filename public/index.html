@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17402C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NY-2911 Check-In</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="screen-login" class="screen">
+  <header class="brand">
+    <div class="brand-mark">NY-2911</div>
+    <h1>Troop Check-In</h1>
+  </header>
+  <p class="hint">Tap your name, then enter your PIN.</p>
+  <div id="staff-list" class="staff-grid"></div>
+  <div id="pin-panel" hidden>
+    <div class="pin-for">PIN for <b id="pin-staff-name"></b></div>
+    <input id="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN">
+    <div class="row">
+      <button id="pin-cancel" class="btn ghost">Back</button>
+      <button id="pin-go" class="btn primary">Sign in</button>
+    </div>
+    <div id="login-error" class="error" role="alert"></div>
+  </div>
+</section>
+
+<!-- ============ MAIN / KIOSK ============ -->
+<section id="screen-main" class="screen" hidden>
+  <header class="topbar">
+    <button id="event-pill" class="pill event-pill" title="Change event">No event</button>
+    <div class="topbar-right">
+      <button id="onsite-pill" class="pill onsite-pill">On site: 0</button>
+      <button id="staff-pill" class="pill ghost-pill"></button>
+    </div>
+  </header>
+
+  <div class="scan-row">
+    <button id="btn-camera" class="btn big">📷 Scan badge</button>
+    <input id="search-input" type="search" placeholder="Search name…" autocomplete="off">
+  </div>
+  <div id="search-results" class="results" hidden></div>
+  <div class="wedge-note">Bluetooth scanner ready — just scan.</div>
+
+  <div id="cart" class="cart">
+    <div id="cart-empty" class="cart-empty">Scan a badge or search a name to begin.</div>
+    <ul id="cart-list"></ul>
+  </div>
+
+  <footer class="actions">
+    <button id="btn-visitor" class="btn ghost">+ Visitor</button>
+    <button id="btn-clear" class="btn ghost" hidden>Clear</button>
+    <button id="btn-sign" class="btn primary big" disabled>Sign</button>
+  </footer>
+</section>
+
+<!-- ============ ON SITE ============ -->
+<section id="screen-onsite" class="screen" hidden>
+  <header class="topbar">
+    <button id="onsite-back" class="pill ghost-pill">‹ Back</button>
+    <h2>Still on site</h2>
+  </header>
+  <div id="patrol-filters" class="patrol-filters"></div>
+  <div id="onsite-list" class="onsite-list"></div>
+</section>
+
+<!-- ============ MODALS ============ -->
+<div id="modal-root" class="modal-root" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+
+    <div id="modal-sign" class="modal-page" hidden>
+      <h3 id="sign-title">Sign out</h3>
+      <div id="sign-names" class="sign-names"></div>
+      <div class="field">
+        <label>Who is signing?</label>
+        <div id="signer-list" class="signer-list"></div>
+        <input id="signer-other" type="text" placeholder="Other adult — full name (staff confirms)" hidden>
+      </div>
+      <div class="field">
+        <label>Signature</label>
+        <canvas id="sig-canvas" width="600" height="200"></canvas>
+        <button id="sig-clear" class="btn ghost small">Clear signature</button>
+      </div>
+      <div id="sign-error" class="error" role="alert"></div>
+      <div class="row">
+        <button id="sign-cancel" class="btn ghost">Cancel</button>
+        <button id="sign-submit" class="btn primary">Save</button>
+      </div>
+    </div>
+
+    <div id="modal-events" class="modal-page" hidden>
+      <h3>Choose event</h3>
+      <div id="event-list" class="event-list"></div>
+      <details class="new-event">
+        <summary>Create an event</summary>
+        <input id="ev-title" type="text" placeholder="Event title">
+        <label>Starts <input id="ev-start" type="datetime-local"></label>
+        <label>Ends <input id="ev-end" type="datetime-local"></label>
+        <button id="ev-create" class="btn primary small">Create</button>
+      </details>
+      <button id="events-close" class="btn ghost">Close</button>
+    </div>
+
+    <div id="modal-visitor" class="modal-page" hidden>
+      <h3>Add visitor</h3>
+      <label class="check"><input id="vis-youth" type="checkbox" checked> Youth visitor</label>
+      <input id="vis-first" type="text" placeholder="First name">
+      <input id="vis-last" type="text" placeholder="Last name">
+      <div id="vis-guardian-wrap">
+        <input id="vis-guardian" type="text" placeholder="Parent/guardian full name">
+        <input id="vis-phone" type="tel" placeholder="Guardian phone">
+      </div>
+      <div id="vis-error" class="error"></div>
+      <div class="row">
+        <button id="vis-cancel" class="btn ghost">Cancel</button>
+        <button id="vis-save" class="btn primary">Add to cart</button>
+      </div>
+    </div>
+
+    <div id="modal-link" class="modal-page" hidden>
+      <h3>New badge</h3>
+      <p id="link-text"></p>
+      <div class="row">
+        <button id="link-cancel" class="btn ghost">Cancel</button>
+        <button id="link-confirm" class="btn primary">Link badge</button>
+      </div>
+    </div>
+
+    <div id="modal-camera" class="modal-page" hidden>
+      <video id="cam-video" playsinline autoplay muted></video>
+      <div id="cam-status" class="hint">Point the camera at a badge QR…</div>
+      <button id="cam-close" class="btn ghost">Close camera</button>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

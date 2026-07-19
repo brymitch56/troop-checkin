@@ -1,0 +1,347 @@
+'use strict';
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const { db, SIG_DIR, UPLOAD_DIR } = require('../db');
+const auth = require('../auth');
+const roster = require('../lib/rosterImport');
+
+const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// ---------------------------------------------------------------- auth ----
+router.get('/staff-list', (req, res) => {
+  // kiosk login picker: names only
+  res.json(db.prepare(`SELECT id, name, role FROM staff WHERE active = 1 ORDER BY name`).all());
+});
+
+router.post('/login', express.json(), (req, res) => {
+  const { staff_id, pin } = req.body || {};
+  const staff = db.prepare('SELECT * FROM staff WHERE id = ? AND active = 1').get(staff_id);
+  const hash = staff && (staff.pin_hash || staff.password_hash);
+  if (!staff || !auth.verifySecret(pin, hash)) {
+    return res.status(401).json({ error: 'Wrong PIN. Try again.' });
+  }
+  const token = auth.createSession(staff.id, staff.role);
+  auth.setSessionCookie(res, token);
+  res.json({ id: staff.id, name: staff.name, role: staff.role });
+});
+
+router.post('/logout', (req, res) => {
+  const sess = auth.sessionFromRequest(req);
+  if (sess) auth.destroySession(sess.token);
+  auth.clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+router.get('/me', (req, res) => {
+  const sess = auth.sessionFromRequest(req);
+  if (!sess) return res.status(401).json({ error: 'Not signed in.' });
+  res.json({ id: sess.staff_id, name: sess.name, role: sess.role });
+});
+
+// everything below requires a door session
+router.use(auth.requireAuth('door'));
+
+// -------------------------------------------------------------- people ----
+const OPEN_INFO_SQL = `
+  SELECT tp.txn_id AS in_txn_id, t.event_id, e.title AS event_title
+    FROM txn_person tp
+    JOIN txn t ON t.id = tp.txn_id
+    JOIN event e ON e.id = t.event_id
+   WHERE tp.person_id = ? AND tp.open = 1 AND t.voided_by_txn_id IS NULL
+   LIMIT 1`;
+
+function personView(p) {
+  if (!p) return null;
+  const open = db.prepare(OPEN_INFO_SQL).get(p.id) || null;
+  return {
+    id: p.id, is_youth: !!p.is_youth, member_id: p.member_id,
+    first_name: p.first_name, last_name: p.last_name, nickname: p.nickname,
+    patrol: p.patrol, level: p.level, status: p.status,
+    last_emerg_phone_1: p.last_emerg_phone_1, last_emerg_phone_2: p.last_emerg_phone_2,
+    open, // null = not on site; else {in_txn_id, event_id, event_title}
+  };
+}
+
+router.get('/search', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  const like = `%${q}%`;
+  const rows = db.prepare(
+    `SELECT * FROM person
+      WHERE status IN ('active','visitor')
+        AND (first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ?)
+      ORDER BY is_youth DESC, last_name, first_name LIMIT 20`
+  ).all(like, like, like);
+  res.json(rows.map(personView));
+});
+
+router.get('/badge/:code', (req, res) => {
+  const code = String(req.params.code).trim();
+  const exact = db.prepare(`SELECT * FROM person WHERE badge_code = ? AND status != 'merged'`).get(code);
+  if (exact) return res.json({ match: 'badge', person: personView(exact) });
+  // payload format "<memberID> | <token>" — reprinted badge: same ID, new token
+  const memberId = code.split('|')[0].trim();
+  if (memberId) {
+    const byId = db.prepare(`SELECT * FROM person WHERE member_id = ? AND status != 'merged'`).get(memberId);
+    if (byId) return res.json({ match: 'member', person: personView(byId) });
+  }
+  res.json({ match: 'none' });
+});
+
+router.post('/badge/link', express.json(), (req, res) => {
+  const { person_id, code } = req.body || {};
+  if (!person_id || !code) return res.status(400).json({ error: 'person_id and code are required.' });
+  const taken = db.prepare('SELECT id FROM person WHERE badge_code = ?').get(code);
+  if (taken && taken.id !== person_id) {
+    return res.status(409).json({ error: 'That badge is already linked to someone else.' });
+  }
+  db.prepare(`UPDATE person SET badge_code = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(String(code).trim(), person_id);
+  res.json({ ok: true });
+});
+
+router.get('/person/:id/guardians', (req, res) => {
+  const rows = db.prepare(
+    `SELECT g.id, g.first_name, g.last_name, g.nickname, g.phone_mobile,
+            pg.relationship, pg.authorized, pg.is_primary
+       FROM person_guardian pg JOIN person g ON g.id = pg.guardian_id
+      WHERE pg.youth_id = ? AND g.status != 'merged'
+      ORDER BY pg.is_primary DESC, g.last_name, g.first_name`
+  ).all(req.params.id);
+  res.json(rows);
+});
+
+// quick-add: visitor youth (with guardian) or unregistered adult
+router.post('/visitor', express.json(), (req, res) => {
+  const { first_name, last_name, is_youth, guardian_name, guardian_phone, notes } = req.body || {};
+  if (!first_name || !last_name) return res.status(400).json({ error: 'First and last name are required.' });
+  const tx = db.transaction(() => {
+    const p = db.prepare(
+      `INSERT INTO person (is_youth, first_name, last_name, status, notes)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(is_youth ? 1 : 0, first_name.trim(), last_name.trim(), is_youth ? 'visitor' : 'active', notes || null);
+    const pid = Number(p.lastInsertRowid);
+    if (is_youth && guardian_name) {
+      const parts = String(guardian_name).trim().split(/\s+/);
+      const gfirst = parts.shift() || guardian_name;
+      const glast = parts.join(' ') || last_name.trim();
+      const g = db.prepare(
+        `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, status)
+         VALUES (0, ?, ?, ?, 'active')`
+      ).run(gfirst, glast, guardian_phone || null);
+      db.prepare(
+        `INSERT INTO person_guardian (youth_id, guardian_id, authorized, is_primary, source)
+         VALUES (?, ?, 1, 1, 'manual')`
+      ).run(pid, Number(g.lastInsertRowid));
+    }
+    return pid;
+  });
+  const pid = tx();
+  res.json({ person: personView(db.prepare('SELECT * FROM person WHERE id = ?').get(pid)) });
+});
+
+// -------------------------------------------------------------- events ----
+router.get('/events/current', (req, res) => {
+  const now = new Date().toISOString();
+  const matching = db.prepare(
+    `SELECT * FROM event WHERE start_at <= ? AND end_at >= ? ORDER BY start_at`
+  ).all(now, now);
+  const nearby = db.prepare(
+    `SELECT * FROM event
+      WHERE NOT (start_at <= ? AND end_at >= ?)
+        AND end_at >= datetime(?, '-6 hours') AND start_at <= datetime(?, '+24 hours')
+      ORDER BY start_at LIMIT 10`
+  ).all(now, now, now, now);
+  res.json({ matching, nearby });
+});
+
+router.post('/events', express.json(), (req, res) => {
+  const { title, start_at, end_at, location, track_adults } = req.body || {};
+  if (!title || !start_at || !end_at) {
+    return res.status(400).json({ error: 'Title, start, and end are required.' });
+  }
+  const r = db.prepare(
+    `INSERT INTO event (source, title, location, start_at, end_at, track_adults)
+     VALUES ('manual', ?, ?, ?, ?, ?)`
+  ).run(title.trim(), location || null, start_at, end_at, track_adults ? 1 : 0);
+  res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(Number(r.lastInsertRowid)));
+});
+
+// ---------------------------------------------------------------- txns ----
+// POST /api/txn
+// { client_uuid, direction: 'in'|'out', event_id (in only),
+//   entries: [{person_id, emerg_phone_1?, emerg_phone_2?}],
+//   signer_person_id? | signer_name_override?, force?,
+//   signature_data? (dataURL; required when entries include youth),
+//   signed_at }
+router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
+  const b = req.body || {};
+  const entries = Array.isArray(b.entries) ? b.entries : [];
+  if (!b.client_uuid || !entries.length || !['in', 'out'].includes(b.direction)) {
+    return res.status(400).json({ error: 'client_uuid, direction, and entries are required.' });
+  }
+
+  const existing = db.prepare('SELECT id FROM txn WHERE client_uuid = ?').get(b.client_uuid);
+  if (existing) return res.json({ ok: true, txn_id: existing.id, deduped: true });
+
+  const people = entries.map((e) =>
+    db.prepare('SELECT * FROM person WHERE id = ?').get(e.person_id)
+  );
+  if (people.some((p) => !p)) return res.status(400).json({ error: 'Unknown person in cart.' });
+  const youthEntries = people.filter((p) => p.is_youth);
+
+  // open-state validation (authoritative — protects against multi-station races)
+  const openOf = (pid) => db.prepare(OPEN_INFO_SQL).get(pid) || null;
+  if (b.direction === 'in') {
+    const already = people.filter((p) => openOf(p.id));
+    if (already.length) {
+      return res.status(409).json({
+        error: 'Already signed in.',
+        conflicts: already.map((p) => `${p.first_name} ${p.last_name}`),
+      });
+    }
+    if (!b.event_id || !db.prepare('SELECT id FROM event WHERE id = ?').get(b.event_id)) {
+      return res.status(400).json({ error: 'A valid event is required for sign-in.' });
+    }
+  } else {
+    const opens = people.map((p) => ({ p, open: openOf(p.id) }));
+    const closed = opens.filter((o) => !o.open);
+    if (closed.length) {
+      return res.status(409).json({
+        error: 'Already signed out.',
+        conflicts: closed.map((o) => `${o.p.first_name} ${o.p.last_name}`),
+      });
+    }
+    const eventIds = [...new Set(opens.map((o) => o.open.event_id))];
+    if (eventIds.length > 1) {
+      return res.status(409).json({ error: 'These youth are signed into different events — sign them out separately.' });
+    }
+    b.event_id = eventIds[0];
+  }
+
+  // signer requirements (youth only; adult-only carts need no signer/signature)
+  if (youthEntries.length) {
+    if (!b.signer_person_id && !b.signer_name_override) {
+      return res.status(400).json({ error: 'Select who is signing.' });
+    }
+    if (!b.signature_data) return res.status(400).json({ error: 'Signature is required.' });
+    if (b.signer_person_id && !b.force) {
+      const authorizedFor = db.prepare(
+        `SELECT 1 FROM person_guardian WHERE youth_id = ? AND guardian_id = ? AND authorized = 1`
+      );
+      const unauthorized = youthEntries
+        .filter((y) => !authorizedFor.get(y.id, b.signer_person_id))
+        .map((y) => `${y.first_name} ${y.last_name}`);
+      if (unauthorized.length) return res.status(422).json({ error: 'Signer not authorized.', unauthorized });
+    }
+  }
+
+  // persist signature
+  let sigPath = null;
+  if (b.signature_data) {
+    const m = /^data:image\/png;base64,(.+)$/.exec(b.signature_data);
+    if (!m) return res.status(400).json({ error: 'Bad signature data.' });
+    sigPath = path.join(SIG_DIR, `${b.client_uuid}.png`);
+    fs.writeFileSync(sigPath, Buffer.from(m[1], 'base64'));
+  }
+
+  const write = db.transaction(() => {
+    const t = db.prepare(
+      `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id,
+                        signer_person_id, signer_name_override, signature_path, close_method)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      b.client_uuid, b.event_id, b.direction, b.signed_at || new Date().toISOString(),
+      req.staff.staff_id, b.signer_person_id || null, b.signer_name_override || null,
+      sigPath ? path.basename(sigPath) : null,
+      b.direction === 'out' && youthEntries.length ? 'signature' : null
+    );
+    const txnId = Number(t.lastInsertRowid);
+
+    for (const e of entries) {
+      const open = b.direction === 'out' ? openOf(e.person_id) : null;
+      db.prepare(
+        `INSERT INTO txn_person (txn_id, person_id, open, in_txn_id, emerg_phone_1, emerg_phone_2)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        txnId, e.person_id,
+        b.direction === 'in' ? 1 : 0,
+        open ? open.in_txn_id : null,
+        e.emerg_phone_1 || null, e.emerg_phone_2 || null
+      );
+      if (b.direction === 'out' && open) {
+        db.prepare('UPDATE txn_person SET open = 0 WHERE txn_id = ? AND person_id = ?')
+          .run(open.in_txn_id, e.person_id);
+      }
+      if (b.direction === 'in' && (e.emerg_phone_1 || e.emerg_phone_2)) {
+        db.prepare(
+          `UPDATE person SET last_emerg_phone_1 = COALESCE(?, last_emerg_phone_1),
+                             last_emerg_phone_2 = COALESCE(?, last_emerg_phone_2),
+                             updated_at = datetime('now')
+           WHERE id = ?`
+        ).run(e.emerg_phone_1 || null, e.emerg_phone_2 || null, e.person_id);
+      }
+    }
+    return txnId;
+  });
+
+  res.json({ ok: true, txn_id: write() });
+});
+
+// who's still here
+router.get('/onsite', (req, res) => {
+  const patrol = req.query.patrol ? String(req.query.patrol) : null;
+  const rows = db.prepare(
+    `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol, p.is_youth,
+            e.id AS event_id, e.title AS event_title, t.signed_at
+       FROM txn_person tp
+       JOIN txn t ON t.id = tp.txn_id
+       JOIN person p ON p.id = tp.person_id
+       JOIN event e ON e.id = t.event_id
+      WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
+        AND (? IS NULL OR p.patrol = ?)
+      ORDER BY e.start_at, p.patrol, p.last_name, p.first_name`
+  ).all(patrol, patrol);
+  res.json(rows);
+});
+
+router.get('/patrols', (req, res) => {
+  res.json(db.prepare(
+    `SELECT DISTINCT patrol FROM person
+      WHERE is_youth = 1 AND status = 'active' AND patrol IS NOT NULL AND patrol != ''
+      ORDER BY patrol`
+  ).all().map((r) => r.patrol));
+});
+
+// -------------------------------------------------- roster import (admin) ----
+router.post('/roster/import', auth.requireAuth('admin'), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Attach the roster xlsx file.' });
+  let people;
+  try {
+    people = roster.parseWorkbook(req.file.buffer);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const mode = req.query.mode === 'commit' ? 'commit' : 'preview';
+  if (mode === 'preview') {
+    const p = roster.computePreview(people);
+    return res.json({
+      mode, total: people.length,
+      youth: people.filter((x) => x.is_youth).length,
+      adults: people.filter((x) => !x.is_youth).length,
+      added: p.adds.map((x) => `${x.first_name} ${x.last_name}`),
+      updated: p.updates.map((u) => ({ name: `${u.p.first_name} ${u.p.last_name}`, fields: Object.keys(u.ch) })),
+      deactivated: p.deactivate.map((d) => `${d.first_name} ${d.last_name}`),
+    });
+  }
+  const rawPath = path.join(UPLOAD_DIR, `${Date.now()}_${req.file.originalname}`);
+  fs.writeFileSync(rawPath, req.file.buffer);
+  const links = roster.suggestLinks(people);
+  const result = roster.applyImport(people, links, req.staff.staff_id, req.file.originalname, rawPath);
+  res.json({ mode, ...result });
+});
+
+module.exports = router;
