@@ -1,6 +1,6 @@
 # Troop Check-In
 
-Self-hosted youth sign-in/out kiosk for a Trail Life USA troop (or any similar youth program). Node + Express + SQLite on a Raspberry Pi; installable PWA on leaders' phones (Android + iOS). Youth PII never leaves your hardware except through authenticated access and your own backups.
+Self-hosted youth sign-in/out kiosk for a Trail Life troop (or any similar youth program). Node + Express + SQLite on a Raspberry Pi; installable PWA on leaders' phones (Android + iOS). Youth PII never leaves your hardware except through authenticated access and your own backups.
 
 Your troop's number and name live in `.env` — nothing troop-specific is hardcoded, so any troop can run this. See `docs/` (requirements, architecture, data model, build plan) for the full design.
 
