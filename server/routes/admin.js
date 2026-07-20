@@ -2,9 +2,16 @@
 // Admin API (Phase 2). Everything here requires an admin session; when the
 // tunnel goes live these routes get Cloudflare Access on top (see docs).
 const express = require('express');
-const { db } = require('../db');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const { db, DATA_DIR } = require('../db');
 const auth = require('../auth');
 const icalSync = require('../lib/icalSync');
+
+const PHOTO_DIR = path.join(DATA_DIR, 'photos');
+fs.mkdirSync(PHOTO_DIR, { recursive: true });
+const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const router = express.Router();
 router.use(auth.requireAuth('admin'));
@@ -60,13 +67,21 @@ router.get('/people/:id', (req, res) => {
 
 const PERSON_FIELDS = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
   'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'notes'];
+const IMPORT_FIELDS = new Set(require('../lib/rosterImport').UPDATABLE);
 router.patch('/people/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No such person.' });
   const b = req.body || {};
   const sets = [], vals = [];
+  let locked = [];
+  try { locked = JSON.parse(p.manual_fields || '[]'); } catch { /* ignore */ }
+  const lockedSet = new Set(locked);
   for (const f of PERSON_FIELDS) {
-    if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] === '' ? null : b[f]); }
+    if (!(f in b)) continue;
+    const nv = b[f] === '' ? null : b[f];
+    sets.push(`${f} = ?`); vals.push(nv);
+    // hand-edited import fields become locked: future imports won't touch them
+    if (IMPORT_FIELDS.has(f) && nv !== (p[f] == null ? null : p[f])) lockedSet.add(f);
   }
   if ('status' in b) {
     if (!['active', 'inactive', 'visitor'].includes(b.status)) {
@@ -74,10 +89,35 @@ router.patch('/people/:id', (req, res) => {
     }
     sets.push('status = ?'); vals.push(b.status);
   }
-  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+  if (b.clear_manual) lockedSet.clear(); // "let imports manage this person again"
+  if (!sets.length && !b.clear_manual) return res.status(400).json({ error: 'Nothing to update.' });
+  sets.push('manual_fields = ?'); vals.push(lockedSet.size ? JSON.stringify([...lockedSet]) : null);
   db.prepare(`UPDATE person SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`)
     .run(...vals, p.id);
   res.json(db.prepare('SELECT * FROM person WHERE id = ?').get(p.id));
+});
+
+// Youth photo for pickup confirmation (Phase 5). Stored under data/ with the
+// rest of the PII; served session-gated at /photos/<file>.
+router.post('/people/:id/photo', photoUpload.single('photo'), (req, res) => {
+  const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such person.' });
+  if (!req.file || !/^image\/(jpeg|png|webp)$/.test(req.file.mimetype)) {
+    return res.status(400).json({ error: 'Attach a JPEG/PNG/WebP photo.' });
+  }
+  const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
+  const name = `${p.id}.${ext}`;
+  if (p.photo_path) fs.rmSync(path.join(PHOTO_DIR, p.photo_path), { force: true });
+  fs.writeFileSync(path.join(PHOTO_DIR, name), req.file.buffer);
+  db.prepare(`UPDATE person SET photo_path = ?, updated_at = datetime('now') WHERE id = ?`).run(name, p.id);
+  res.json({ ok: true, photo_path: name });
+});
+router.delete('/people/:id/photo', (req, res) => {
+  const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such person.' });
+  if (p.photo_path) fs.rmSync(path.join(PHOTO_DIR, p.photo_path), { force: true });
+  db.prepare(`UPDATE person SET photo_path = NULL, updated_at = datetime('now') WHERE id = ?`).run(p.id);
+  res.json({ ok: true });
 });
 
 // ------------------------------------------------- guardians / authorized ----
@@ -98,6 +138,30 @@ router.post('/people/:youthId/guardians', (req, res) => {
      VALUES (?, ?, ?, ?, ?, 'manual')`
   ).run(youth.id, adult.id, relationship || null, authorized === false ? 0 : 1, is_primary ? 1 : 0);
   res.json({ ok: true });
+});
+
+// Consent-form designees: create a brand-new adult (not in any roster export)
+// and link them as an authorized pickup in one step. They'll never be touched
+// by imports (no member number) and the link is source='manual'.
+router.post('/people/:youthId/guardians/new', (req, res) => {
+  const { first_name, last_name, phone_mobile, relationship, is_primary } = req.body || {};
+  const youth = db.prepare('SELECT * FROM person WHERE id = ? AND is_youth = 1').get(req.params.youthId);
+  if (!youth) return res.status(404).json({ error: 'No such youth.' });
+  if (!first_name || !last_name) return res.status(400).json({ error: 'First and last name are required.' });
+  const run = db.transaction(() => {
+    const a = db.prepare(
+      `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, status, notes)
+       VALUES (0, ?, ?, ?, 'active', 'Added as authorized pickup (consent form)')`
+    ).run(String(first_name).trim(), String(last_name).trim(), phone_mobile || null);
+    const adultId = Number(a.lastInsertRowid);
+    if (is_primary) db.prepare('UPDATE person_guardian SET is_primary = 0 WHERE youth_id = ?').run(youth.id);
+    db.prepare(
+      `INSERT INTO person_guardian (youth_id, guardian_id, relationship, authorized, is_primary, source)
+       VALUES (?, ?, ?, 1, ?, 'manual')`
+    ).run(youth.id, adultId, relationship || null, is_primary ? 1 : 0);
+    return adultId;
+  });
+  res.json({ ok: true, guardian_id: run() });
 });
 
 router.patch('/people/:youthId/guardians/:guardianId', (req, res) => {
@@ -323,8 +387,21 @@ router.get('/imports', (req, res) => {
       ORDER BY ri.id DESC LIMIT 50`).all());
 });
 
+// Attendance detail — filterable by event, person, and date range (records
+// are kept forever; 3+ year lookback is just a wider from/to).
+const attendanceFilters = (q) => [
+  q.event_id || null, q.event_id || null,
+  q.person_id || null, q.person_id || null,
+  q.from || null, q.from || null,
+  q.to || null, q.to || null,
+];
+const ATTENDANCE_WHERE = `
+      WHERE (? IS NULL OR t.event_id = ?)
+        AND (? IS NULL OR tp.person_id = ?)
+        AND (? IS NULL OR datetime(t.signed_at) >= datetime(?))
+        AND (? IS NULL OR datetime(t.signed_at) <= datetime(?, '+1 day'))`;
+
 router.get('/export/attendance.csv', (req, res) => {
-  const eventId = req.query.event_id || null;
   const rows = db.prepare(
     `SELECT e.title, p.last_name, p.first_name, CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END,
             p.patrol, t.direction, t.signed_at,
@@ -338,12 +415,50 @@ router.get('/export/attendance.csv', (req, res) => {
        JOIN event e ON e.id = t.event_id
        JOIN staff st ON st.id = t.staff_id
        LEFT JOIN person sg ON sg.id = t.signer_person_id
-      WHERE (? IS NULL OR t.event_id = ?)
-      ORDER BY datetime(t.signed_at)`).raw().all(eventId, eventId);
+      ${ATTENDANCE_WHERE}
+      ORDER BY datetime(t.signed_at)`).raw().all(...attendanceFilters(req.query));
   sendCsv(res, 'attendance.csv',
     ['event', 'last_name', 'first_name', 'type', 'patrol', 'direction', 'signed_at',
      'signer', 'staff', 'emerg_phone_1', 'emerg_phone_2', 'override', 'close_method', 'voided'],
     rows);
+});
+
+// Per-person rollup over a date range: events attended, first/last seen.
+const SUMMARY_SQL = `
+  SELECT p.id, p.last_name, p.first_name,
+         CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END AS type, p.patrol,
+         COUNT(DISTINCT CASE WHEN t.direction = 'in' THEN t.event_id END) AS events_attended,
+         SUM(CASE WHEN t.direction = 'in' THEN 1 ELSE 0 END) AS sign_ins,
+         MIN(t.signed_at) AS first_seen, MAX(t.signed_at) AS last_seen
+    FROM txn_person tp
+    JOIN txn t ON t.id = tp.txn_id AND t.voided_by_txn_id IS NULL
+    JOIN person p ON p.id = tp.person_id
+    ${ATTENDANCE_WHERE}
+   GROUP BY p.id
+   ORDER BY p.is_youth DESC, p.last_name, p.first_name`;
+
+router.get('/report/summary', (req, res) => {
+  res.json(db.prepare(SUMMARY_SQL).all(...attendanceFilters(req.query)));
+});
+router.get('/export/summary.csv', (req, res) => {
+  const rows = db.prepare(SUMMARY_SQL).raw().all(...attendanceFilters(req.query))
+    .map((r) => r.slice(1)); // drop id column
+  sendCsv(res, 'attendance-summary.csv',
+    ['last_name', 'first_name', 'type', 'patrol', 'events_attended', 'sign_ins', 'first_seen', 'last_seen'],
+    rows);
+});
+
+// SMS notification log (Phase 3)
+router.get('/notifications', (req, res) => {
+  res.json(db.prepare(
+    `SELECT n.*, p.first_name || ' ' || p.last_name AS youth_name,
+            g.first_name || ' ' || g.last_name AS guardian_name,
+            e.title AS event_title
+       FROM notification n
+       JOIN person p ON p.id = n.person_id
+       JOIN person g ON g.id = n.guardian_id
+       JOIN event e ON e.id = n.event_id
+      ORDER BY n.id DESC LIMIT 200`).all());
 });
 
 router.get('/export/open.csv', (req, res) => {

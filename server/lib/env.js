@@ -12,10 +12,18 @@ try {
   }
 } catch { /* no .env — defaults apply */ }
 
+// Live getters (not a snapshot) so late changes to process.env — tests,
+// systemd drop-ins — are always honored.
 module.exports = {
-  PORT: Number(process.env.PORT) || 3000,
-  TROOP_ID: process.env.TROOP_ID || 'NY-0000',
-  TROOP_NAME: process.env.TROOP_NAME || 'Troop Check-In',
-  ICAL_URL: process.env.ICAL_URL || '',
-  SMS_ENABLED: process.env.SMS_ENABLED === 'true',
+  get PORT() { return Number(process.env.PORT) || 3000; },
+  get TROOP_ID() { return process.env.TROOP_ID || 'NY-0000'; },
+  get TROOP_NAME() { return process.env.TROOP_NAME || 'Troop Check-In'; },
+  get ICAL_URL() { return process.env.ICAL_URL || ''; },
+  get SMS_ENABLED() { return process.env.SMS_ENABLED === 'true'; },
+  get TWILIO_ACCOUNT_SID() { return process.env.TWILIO_ACCOUNT_SID || ''; },
+  get TWILIO_AUTH_TOKEN() { return process.env.TWILIO_AUTH_TOKEN || ''; },
+  get TWILIO_FROM_NUMBER() { return process.env.TWILIO_FROM_NUMBER || ''; },
+  // public HTTPS origin (Cloudflare tunnel) — required to validate Twilio
+  // webhook signatures, e.g. https://checkin.example.org
+  get PUBLIC_URL() { return (process.env.PUBLIC_URL || '').replace(/\/$/, ''); },
 };

@@ -33,6 +33,7 @@
       <button data-tab="people">People</button>
       <button data-tab="events">Events</button>
       <button data-tab="txns">Transactions</button>
+      <button data-tab="reports">Reports</button>
       <button data-tab="import">Roster import</button>
     </nav>
     <button id="logout" class="pill ghost-pill"></button>
@@ -86,6 +87,32 @@
     </div>
     <div id="tx-list" class="tbl"></div>
     <div id="tx-detail" class="panel" hidden></div>
+  </div>
+
+  <!-- ---- reports ---- -->
+  <div id="tab-reports" class="tab" hidden>
+    <div class="panel">
+      <h3>Attendance reports</h3>
+      <p class="hint left">Records are kept forever — set any date range (3+ years back is fine). Leave filters blank for everything.</p>
+      <div class="filters">
+        <label>From <input id="rp-from" type="date"></label>
+        <label>To <input id="rp-to" type="date"></label>
+        <select id="rp-event"><option value="">All events</option></select>
+        <input id="rp-person" type="search" placeholder="One person (optional)…">
+        <span id="rp-person-pick" class="tag off" hidden></span>
+      </div>
+      <div id="rp-person-results" class="signer-list"></div>
+      <div class="row wrap">
+        <button id="rp-run" class="btn primary small">Run summary</button>
+        <a id="rp-csv-detail" class="btn ghost small" href="#">Detail CSV</a>
+        <a id="rp-csv-summary" class="btn ghost small" href="#">Summary CSV</a>
+      </div>
+      <div id="rp-result" class="tbl"></div>
+    </div>
+    <div class="panel">
+      <h3>SMS notification log</h3>
+      <div id="rp-notifications" class="tbl"></div>
+    </div>
   </div>
 
   <!-- ---- roster import ---- -->

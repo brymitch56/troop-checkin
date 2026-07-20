@@ -112,8 +112,12 @@ const UPDATABLE = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'lev
   'email', 'tlc_username', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate'];
 
 function diffFields(existing, p) {
+  // fields the admin edited by hand are locked against imports (person.manual_fields)
+  let locked = new Set();
+  try { locked = new Set(JSON.parse(existing.manual_fields || '[]')); } catch { /* ignore */ }
   const changes = {};
   for (const f of UPDATABLE) {
+    if (locked.has(f)) continue; // manual revision wins over the file, always
     const nv = p[f] == null ? null : p[f];
     const ov = existing[f] == null ? null : existing[f];
     if (nv !== null && nv !== ov) changes[f] = nv; // never blank out data with empty cells
@@ -214,4 +218,4 @@ const applyImport = (people, links, staffId, filename, rawPath) => {
   return run();
 };
 
-module.exports = { parseWorkbook, suggestLinks, computePreview, applyImport };
+module.exports = { parseWorkbook, suggestLinks, computePreview, applyImport, UPDATABLE };

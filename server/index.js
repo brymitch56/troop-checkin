@@ -35,14 +35,17 @@ app.get('/manifest.webmanifest', (req, res) => {
   });
 });
 
+app.use('/api/sms', require('./routes/sms')); // Twilio webhook — signature-authed, no session
 app.use('/api/admin', admin);
 app.use('/api', api);
 
-// signature images require a session
-app.use('/signatures', (req, res, next) => {
+// signature images and photos require a session
+const sessionGate = (req, res, next) => {
   if (!auth.sessionFromRequest(req)) return res.status(401).send('Not signed in.');
   next();
-}, express.static(SIG_DIR));
+};
+app.use('/signatures', sessionGate, express.static(SIG_DIR));
+app.use('/photos', sessionGate, express.static(require('path').join(require('./db').DATA_DIR, 'photos')));
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 

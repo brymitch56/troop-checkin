@@ -6,9 +6,9 @@ Your troop's number and name live in `.env` — nothing troop-specific is hardco
 
 ## Status
 
-**Working (Phases 1, 2 & 4):** staff PIN login (door/admin roles) · roster xlsx import from the Trail Life Connect member export (preview + commit, archived originals) · guardian auto-linking (cc-email match, name/address fallback) with an authoritative admin-edited authorized list · badge scan via camera (BarcodeDetector, jsQR fallback) and Bluetooth HID scanners (keyboard wedge) · badge→member enrollment for new/reprinted badges · name search · multi-youth cart with one signature · authorized-signer check with audited staff override · emergency-contact capture with prefill · visitor quick-add and later merge into the roster · direction auto-detect with server-side race protection · manual events + iCal feed sync (nightly + on demand) · multi-day events (sign-out attaches through the open sign-in) · per-event adult attendance · per-device station mode (patrol-scoped views) · "still on site" view · admin UI (people, guardians, events, transaction browser with signatures, append-only void/close corrections, CSV reports, roster import) · nightly on-Pi backups · **offline-first**: the roster snapshots into IndexedDB and transactions queue locally when connectivity drops (campouts, basements), syncing automatically on reconnect with server-side dedupe and conflict flagging · vendored QR library (no CDN dependency on iOS) · kiosk idle auto-logout (20 min default; `localStorage['idle-minutes']` to change).
+**Working (all phases):** staff PIN login (door/admin roles) · roster xlsx import from the Trail Life Connect member export (preview + commit, archived originals) · guardian auto-linking (cc-email match, name/address fallback) with an authoritative admin-edited authorized list · badge scan via camera (BarcodeDetector, jsQR fallback) and Bluetooth HID scanners (keyboard wedge) · badge→member enrollment for new/reprinted badges · name search · multi-youth cart with one signature · authorized-signer check with audited staff override · emergency-contact capture with prefill · visitor quick-add and later merge into the roster · direction auto-detect with server-side race protection · manual events + iCal feed sync (nightly + on demand) · multi-day events (sign-out attaches through the open sign-in) · per-event adult attendance · per-device station mode (patrol-scoped views) · "still on site" view · admin UI (people, guardians, events, transaction browser with signatures, append-only void/close corrections, CSV reports, roster import) · nightly on-Pi backups · **offline-first**: the roster snapshots into IndexedDB and transactions queue locally when connectivity drops (campouts, basements), syncing automatically on reconnect with server-side dedupe and conflict flagging · vendored QR library (no CDN dependency on iOS) · kiosk idle auto-logout (20 min default; `localStorage['idle-minutes']` to change) · **SMS notifications** (Twilio; guardians of lingering youth get a text after the event ends and can reply Y to confirm pickup, STOP to opt out — off until `SMS_ENABLED=true`) · **consent-form authorized adults** (designees who aren't in Trail Life Connect, any name, added per youth in admin) · **field-level import locks** (hand-edited roster fields are never overwritten by re-imports; unlockable per person) · **reports** over the full history (date range / event / person; on-screen summary + detail & summary CSVs; records are never deleted) · optional **youth photos** shown at signature time for pickup confirmation.
 
-**Not built yet:** SMS notifications (Phase 3 — requires Twilio A2P 10DLC registration; the notification sweep exists behind `SMS_ENABLED=false` and records who *would* be notified, but sends nothing).
+**Remaining for production SMS:** complete Twilio A2P 10DLC registration, then fill the `TWILIO_*`/`PUBLIC_URL` values in `.env` and set `SMS_ENABLED=true` (see "SMS setup" below).
 
 ## Setup: fresh Pi to first meeting
 
@@ -53,6 +53,18 @@ sudo apt install -y rclone && rclone config   # e.g. an encrypted Google Drive r
 ```
 
 **Restore:** stop the service, copy the snapshot over `data/troop.db` (remove `troop.db-wal`/`-shm` if present), untar signatures into `data/signatures/`, start the service. Test this once before you need it.
+
+## SMS setup (Twilio)
+
+One-time, all in the [Twilio Console](https://console.twilio.com):
+
+1. **Buy a phone number** (Phone Numbers → Buy a Number, ~$1.15/mo, SMS-capable, any US number).
+2. **Register for A2P 10DLC** (required for US SMS delivery; Messaging → Regulatory Compliance). As an individual/troop use **Sole Proprietor** registration: one-time + small monthly fees, approval typically days. Create a "Messaging Service", attach your number, describe the use case as parent pickup notifications with an opt-in of "parents provide their number on a signed consent form"; sample message: "NY-2911: Alex S is still checked in after Troop Meeting ended. Reply Y once picked up. Reply STOP to opt out."
+3. **Copy credentials** from the Console home page: Account SID (`AC…`) and Auth Token.
+4. On the Pi, edit `.env`: set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` (the number you bought, `+1…` format), `PUBLIC_URL` (your Cloudflare tunnel origin, e.g. `https://checkin.example.org`), and `SMS_ENABLED=true`. Restart: `sudo systemctl restart troop-checkin`.
+5. **Point the webhook at the app**: Phone Numbers → your number → Messaging → "A message comes in" → Webhook, `POST`, URL `<PUBLIC_URL>/api/sms/inbound`. (Requires the tunnel to be up; inbound requests are verified with Twilio's signature.)
+
+Behavior: 30 min after an event ends (per-event override in the admin event editor), the primary authorized guardian of each youth still checked in gets one text. Reply **Y** closes the sign-in (recorded as `sms_confirm`); **STOP**/**START** manage opt-out. Everything is logged under Admin → Reports.
 
 ## Remote access (optional)
 

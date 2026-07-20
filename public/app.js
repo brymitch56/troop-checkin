@@ -459,7 +459,11 @@ $('btn-sign').onclick = () => {
 function openSignModal() {
   state.signerId = null; state.signerOther = null;
   $('sign-title').textContent = state.direction === 'in' ? 'Sign in' : 'Sign out';
-  $('sign-names').textContent = state.cart.map((c) => displayName(c.person)).join(' · ');
+  // photos (when on file) give visual confirmation at pickup
+  $('sign-names').innerHTML = state.cart.map((c) => {
+    const p = c.person;
+    return `<span class="sign-person">${p.photo_path ? `<img src="/photos/${p.photo_path}" alt="">` : ''}<span>${displayName(p)}</span></span>`;
+  }).join('');
   $('sign-error').textContent = '';
   $('signer-other').hidden = true; $('signer-other').value = '';
 

@@ -55,3 +55,15 @@
 }
 .sig-view { max-width: 420px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .error { color: #B3261E; }
+
+.photo-row { display: flex; gap: 10px; align-items: center; margin: 6px 0 10px; }
+.person-photo {
+  width: 84px; height: 84px; object-fit: cover; border-radius: 10px;
+  border: 1px solid var(--line); background: #fff;
+}
+.person-photo.empty { display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+.gadd-forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+.gadd-forms h4 { margin: 0 0 8px; }
+.gadd-forms input { font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px; }
+.filters label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
+.filters input[type="date"] { font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px; background: var(--card); }

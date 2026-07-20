@@ -70,13 +70,15 @@ test('notification sweep: finds lingering youth after grace, dedupes per event',
   assert.equal(lingering.length, 1);
   assert.equal(lingering[0].person_id, danny.id);
 
-  const r1 = sweep();
+  const r1 = await sweep();
   assert.equal(r1.recorded, 1);
+  assert.equal(r1.sent, 0); // Twilio not configured -> recorded as failed, nothing sent
   const n = db.prepare('SELECT * FROM notification').all();
   assert.equal(n.length, 1);
   assert.equal(n[0].guardian_id, alice.id); // primary authorized guardian
+  assert.equal(n[0].status, 'failed');
   // second sweep: no duplicate notification
-  assert.equal(sweep().recorded, 0);
+  assert.equal((await sweep()).recorded, 0);
   // grace period respected: event ending 10 min ago with default 30-min grace is NOT lingering
   const ev2 = db.prepare(`INSERT INTO event (source, title, start_at, end_at)
     VALUES ('manual', 'Just Ended', datetime('now', '-2 hours'), datetime('now', '-10 minutes'))`).run();

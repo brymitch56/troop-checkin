@@ -59,7 +59,7 @@ function personView(p) {
   return {
     id: p.id, is_youth: !!p.is_youth, member_id: p.member_id,
     first_name: p.first_name, last_name: p.last_name, nickname: p.nickname,
-    patrol: p.patrol, level: p.level, status: p.status,
+    patrol: p.patrol, level: p.level, status: p.status, photo_path: p.photo_path,
     last_emerg_phone_1: p.last_emerg_phone_1, last_emerg_phone_2: p.last_emerg_phone_2,
     open, // null = not on site; else {in_txn_id, event_id, event_title}
   };

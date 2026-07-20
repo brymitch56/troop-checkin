@@ -64,7 +64,7 @@ function enterApp() {
 }
 
 // ----------------------------------------------------------------- tabs ----
-const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, import: loadImport };
+const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, reports: loadReports, import: loadImport };
 $('tabs').onclick = (e) => {
   const b = e.target.closest('button[data-tab]');
   if (b) showTab(b.dataset.tab);
@@ -140,23 +140,37 @@ async function loadPeople() {
 async function openPerson(id) {
   const p = await api(`/admin/people/${id}`);
   const d = $('pp-detail'); d.hidden = false;
-  const f = (label, field, val) => `<div><label>${label}</label><input data-f="${field}" value="${esc(val || '')}"></div>`;
+  let locked = [];
+  try { locked = JSON.parse(p.manual_fields || '[]'); } catch { /* ignore */ }
+  const lockTag = (field) => locked.includes(field) ? ' <span class="tag off" title="Hand-edited — roster imports will not change this field">🔒</span>' : '';
+  const f = (label, field, val) => `<div><label>${label}${lockTag(field)}</label><input data-f="${field}" value="${esc(val || '')}"></div>`;
   d.innerHTML = `
     <h3>${esc(p.first_name)} ${esc(p.last_name)}
       <span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span>
       ${p.member_id ? `<span class="tag off">#${esc(p.member_id)}</span>` : '<span class="tag warn">no member #</span>'}
     </h3>
+    ${p.is_youth ? `<div class="photo-row">
+      ${p.photo_path ? `<img class="person-photo" src="/photos/${esc(p.photo_path)}" alt="photo">` : '<div class="person-photo empty">no photo</div>'}
+      <input id="pp-photo-file" type="file" accept="image/*" hidden>
+      <button class="btn ghost small" id="pp-photo-up">${p.photo_path ? 'Replace photo' : 'Add photo'}</button>
+      ${p.photo_path ? '<button class="btn ghost small" id="pp-photo-del">Remove</button>' : ''}
+    </div>` : ''}
     <div class="kv">
       ${f('First name', 'first_name', p.first_name)}${f('Last name', 'last_name', p.last_name)}
       ${f('Nickname', 'nickname', p.nickname)}
       ${p.is_youth ? f('Patrol', 'patrol', p.patrol) + f('Level', 'level', p.level) : f('Role', 'role', p.role)}
-      ${f('Mobile', 'phone_mobile', p.phone_mobile)}${f('Email', 'email', p.email)}
+      ${f('Mobile', 'phone_mobile', p.phone_mobile)}${f('Home phone', 'phone_home', p.phone_home)}
+      ${f('Work phone', 'phone_work', p.phone_work)}${f('Birthdate', 'birthdate', p.birthdate)}
+      ${f('Email', 'email', p.email)}
       <div><label>Status</label>
         <select data-f="status">
           ${['active', 'inactive', 'visitor'].map((s) => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}
         </select></div>
       <div><label>Notes</label><input data-f="notes" value="${esc(p.notes || '')}"></div>
     </div>
+    <p class="hint left">${locked.length
+      ? `🔒 Locked against imports: ${locked.join(', ')} <button class="btn ghost small" id="pp-unlock">let imports manage these again</button>`
+      : 'Fields you edit here are locked so roster re-imports never overwrite them.'}</p>
     <div class="row wrap">
       <button class="btn primary small" id="pp-save">Save</button>
       ${p.is_youth && !p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into roster member…</button>' : ''}
@@ -167,10 +181,32 @@ async function openPerson(id) {
   $('pp-save').onclick = async () => {
     const body = {};
     d.querySelectorAll('[data-f]').forEach((el) => (body[el.dataset.f] = el.value));
-    try { await jpatch(`/admin/people/${id}`, body); toast('Saved'); loadPeople(); }
+    try { await jpatch(`/admin/people/${id}`, body); toast('Saved'); loadPeople(); openPerson(id); }
     catch (e) { toast(e.message, true); }
   };
   $('pp-close').onclick = () => (d.hidden = true);
+  if ($('pp-unlock')) $('pp-unlock').onclick = async () => {
+    if (!confirm('Unlock all fields on this person? The next roster import may overwrite them with file values.')) return;
+    try { await jpatch(`/admin/people/${id}`, { clear_manual: true }); openPerson(id); }
+    catch (e) { toast(e.message, true); }
+  };
+
+  if ($('pp-photo-up')) {
+    $('pp-photo-up').onclick = () => $('pp-photo-file').click();
+    $('pp-photo-file').onchange = async () => {
+      const file = $('pp-photo-file').files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append('photo', file);
+      const r = await fetch(`/api/admin/people/${id}/photo`, { method: 'POST', body: form, credentials: 'same-origin' });
+      if (!r.ok) return toast((await r.json()).error || 'Upload failed', true);
+      openPerson(id);
+    };
+  }
+  if ($('pp-photo-del')) $('pp-photo-del').onclick = async () => {
+    await api(`/admin/people/${id}/photo`, { method: 'DELETE' }).catch((e) => toast(e.message, true));
+    openPerson(id);
+  };
 
   if ($('pp-merge')) $('pp-merge').onclick = async () => {
     const q = prompt('Merge this visitor into which roster member? Type part of their name:');
@@ -185,31 +221,86 @@ async function openPerson(id) {
   };
 
   d.querySelectorAll('[data-gact]').forEach((b) => (b.onclick = () => guardianAction(p, b)));
-  if ($('pp-gadd')) $('pp-gadd').onclick = async () => {
-    const q = prompt('Add which adult as guardian? Type part of their name:');
-    if (!q) return;
-    const hits = (await api('/admin/people?type=adult&q=' + encodeURIComponent(q))).filter((x) => x.status !== 'merged');
-    if (!hits.length) return toast('No matching adult.', true);
-    const rel = prompt(`Adding ${hits[0].first_name} ${hits[0].last_name}. Relationship (optional):`) || null;
-    try { await jpost(`/admin/people/${p.id}/guardians`, { guardian_id: hits[0].id, relationship: rel }); openPerson(p.id); }
-    catch (e) { toast(e.message, true); }
-  };
+  wireGuardianForms(p);
 }
 
 function guardianBlock(p) {
   return `<h3>Guardians &amp; authorized pickup</h3>
-  <p class="hint left">Your edits here are authoritative — roster imports never change them.</p>
+  <p class="hint left">Your edits here are authoritative — roster imports never change them. Consent-form
+  designees who aren't in Trail Life Connect can be added below; they don't need to share a last name or email.</p>
   <div class="tbl"><table><tr><th>Name</th><th>Relationship</th><th>Phone</th><th>Authorized</th><th>Primary</th><th>Source</th><th></th></tr>
   ${p.guardians.map((g) => `<tr>
     <td>${esc(g.first_name)} ${esc(g.last_name)}</td><td>${esc(g.relationship || '')}</td>
     <td>${esc(g.phone_mobile || '')}</td>
     <td><button class="btn ghost small" data-gact="auth" data-gid="${g.id}" data-val="${g.authorized ? 0 : 1}">
       ${g.authorized ? '✓ yes — revoke' : '✗ no — authorize'}</button></td>
-    <td>${g.is_primary ? '★' : `<button class="btn ghost small" data-gact="primary" data-gid="${g.id}">make primary</button>`}</td>
+    <td>${g.is_primary ? '★ primary' : `<button class="btn ghost small" data-gact="primary" data-gid="${g.id}">make primary</button>`}</td>
     <td>${esc(g.source)}</td>
     <td>${g.source === 'manual' ? `<button class="btn ghost small" data-gact="del" data-gid="${g.id}">remove</button>` : ''}</td>
   </tr>`).join('')}</table></div>
-  <button class="btn ghost small" id="pp-gadd">+ Add guardian</button>`;
+
+  <div class="gadd-forms">
+    <div class="panel">
+      <h4>Link an adult already in the system</h4>
+      <div class="row wrap">
+        <input id="ga-search" type="search" placeholder="Search adults…">
+        <input id="ga-rel" type="text" placeholder="Relationship (optional)">
+      </div>
+      <div id="ga-results" class="signer-list"></div>
+    </div>
+    <div class="panel">
+      <h4>Add a new authorized adult (consent form)</h4>
+      <div class="row wrap">
+        <input id="gn-first" type="text" placeholder="First name">
+        <input id="gn-last" type="text" placeholder="Last name">
+        <input id="gn-phone" type="tel" placeholder="Mobile (for SMS alerts)">
+        <input id="gn-rel" type="text" placeholder="Relationship, e.g. grandmother">
+      </div>
+      <label class="check"><input id="gn-primary" type="checkbox"> Make primary guardian</label>
+      <button class="btn primary small" id="gn-add">Add authorized adult</button>
+    </div>
+  </div>`;
+}
+
+function wireGuardianForms(p) {
+  if (!$('ga-search')) return;
+  let t;
+  $('ga-search').oninput = () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const q = $('ga-search').value.trim();
+      const box = $('ga-results'); box.innerHTML = '';
+      if (q.length < 2) return;
+      const hits = (await api('/admin/people?type=adult&q=' + encodeURIComponent(q)))
+        .filter((a) => !p.guardians.some((g) => g.id === a.id));
+      for (const a of hits.slice(0, 6)) {
+        const b = document.createElement('button');
+        b.textContent = `${a.first_name} ${a.last_name}${a.member_id ? ` (#${a.member_id})` : ''} — link`;
+        b.onclick = async () => {
+          try {
+            await jpost(`/admin/people/${p.id}/guardians`, {
+              guardian_id: a.id, relationship: $('ga-rel').value.trim() || null,
+            });
+            toast('Linked'); openPerson(p.id);
+          } catch (e) { toast(e.message, true); }
+        };
+        box.appendChild(b);
+      }
+      if (!hits.length) box.innerHTML = '<p class="hint left">No matching adults — use the consent-form box instead.</p>';
+    }, 250);
+  };
+  $('gn-add').onclick = async () => {
+    try {
+      await jpost(`/admin/people/${p.id}/guardians/new`, {
+        first_name: $('gn-first').value.trim(),
+        last_name: $('gn-last').value.trim(),
+        phone_mobile: $('gn-phone').value.trim() || null,
+        relationship: $('gn-rel').value.trim() || null,
+        is_primary: $('gn-primary').checked,
+      });
+      toast('Authorized adult added'); openPerson(p.id);
+    } catch (e) { toast(e.message, true); }
+  };
 }
 function wardBlock(p) {
   if (!p.wards.length) return '';
@@ -266,6 +357,8 @@ function openEvent(e) {
       <div><label>Adult attendance</label><select id="evf-adults">
         <option value="0" ${!e?.track_adults ? 'selected' : ''}>Not tracked</option>
         <option value="1" ${e?.track_adults ? 'selected' : ''}>Tracked (headcount)</option></select></div>
+      <div><label>SMS reminder delay (min after end; blank = default 30)</label>
+        <input id="evf-notify" type="number" min="0" value="${e?.notify_after_min ?? ''}"></div>
     </div>
     <div class="row wrap">
       <button class="btn primary small" id="evf-save">Save</button>
@@ -278,6 +371,7 @@ function openEvent(e) {
       start_at: new Date($('evf-start').value).toISOString(),
       end_at: new Date($('evf-end').value).toISOString(),
       track_adults: $('evf-adults').value === '1',
+      notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
     try {
       if (e) await jpatch(`/admin/events/${e.id}`, body);
@@ -342,6 +436,77 @@ async function openTxn(id) {
     try { await jpost(`/admin/txns/${id}/void`, {}); toast('Voided'); d.hidden = true; renderTxns(); }
     catch (e) { toast(e.message, true); }
   };
+}
+
+// -------------------------------------------------------------- reports ----
+let rpPersonId = null;
+async function loadReports() {
+  const events = await api('/admin/events');
+  $('rp-event').innerHTML = '<option value="">All events</option>' +
+    events.map((e) => `<option value="${e.id}">${esc(e.title)} · ${fmtDT(e.start_at)}</option>`).join('');
+  renderReportLinks();
+  const log = await api('/admin/notifications');
+  $('rp-notifications').innerHTML = log.length
+    ? `<table><tr><th>When</th><th>Youth</th><th>Guardian</th><th>Event</th><th>Status</th></tr>` +
+      log.map((n) => `<tr><td>${fmtDT(n.sent_at)}</td><td>${esc(n.youth_name)}</td>
+        <td>${esc(n.guardian_name)}</td><td>${esc(n.event_title)}</td>
+        <td><span class="tag ${n.status === 'failed' ? 'warn' : n.status === 'replied_y' ? 'youth' : 'off'}">${esc(n.status)}</span></td></tr>`).join('') + '</table>'
+    : '<p class="hint left">No notifications yet (SMS is off until Twilio is configured).</p>';
+}
+function reportQuery() {
+  const q = new URLSearchParams();
+  if ($('rp-from').value) q.set('from', $('rp-from').value);
+  if ($('rp-to').value) q.set('to', $('rp-to').value);
+  if ($('rp-event').value) q.set('event_id', $('rp-event').value);
+  if (rpPersonId) q.set('person_id', rpPersonId);
+  return q.toString();
+}
+function renderReportLinks() {
+  const q = reportQuery();
+  $('rp-csv-detail').href = '/api/admin/export/attendance.csv' + (q ? `?${q}` : '');
+  $('rp-csv-summary').href = '/api/admin/export/summary.csv' + (q ? `?${q}` : '');
+}
+let rpTimer;
+document.addEventListener('input', (e) => {
+  if (['rp-from', 'rp-to', 'rp-event'].includes(e.target.id)) renderReportLinks();
+  if (e.target.id === 'rp-person') {
+    clearTimeout(rpTimer);
+    rpPersonId = null; $('rp-person-pick').hidden = true; renderReportLinks();
+    rpTimer = setTimeout(async () => {
+      const q = $('rp-person').value.trim();
+      const box = $('rp-person-results'); box.innerHTML = '';
+      if (q.length < 2) return;
+      for (const a of (await api('/admin/people?q=' + encodeURIComponent(q))).slice(0, 6)) {
+        const b = document.createElement('button');
+        b.textContent = `${a.first_name} ${a.last_name}${a.member_id ? ` (#${a.member_id})` : ''}`;
+        b.onclick = () => {
+          rpPersonId = a.id;
+          $('rp-person-pick').textContent = `filtering: ${a.first_name} ${a.last_name} ✕`;
+          $('rp-person-pick').hidden = false;
+          $('rp-person').value = ''; box.innerHTML = '';
+          renderReportLinks();
+        };
+        box.appendChild(b);
+      }
+    }, 250);
+  }
+});
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'rp-person-pick') {
+    rpPersonId = null; e.target.hidden = true; renderReportLinks();
+  }
+  if (e.target.id === 'rp-run') runReport();
+});
+async function runReport() {
+  const q = reportQuery();
+  const rows = await api('/admin/report/summary' + (q ? `?${q}` : ''));
+  $('rp-result').innerHTML = rows.length
+    ? `<table><tr><th>Name</th><th>Type</th><th>Patrol</th><th>Events</th><th>Sign-ins</th><th>First seen</th><th>Last seen</th></tr>` +
+      rows.map((r) => `<tr><td>${esc(r.last_name)}, ${esc(r.first_name)}</td>
+        <td><span class="tag ${r.type}">${r.type}</span></td><td>${esc(r.patrol || '')}</td>
+        <td>${r.events_attended}</td><td>${r.sign_ins}</td>
+        <td>${fmtDT(r.first_seen)}</td><td>${fmtDT(r.last_seen)}</td></tr>`).join('') + '</table>'
+    : '<p class="hint left">No attendance in that range.</p>';
 }
 
 // --------------------------------------------------------------- import ----

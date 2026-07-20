@@ -168,7 +168,12 @@ input[type="password"], input[type="datetime-local"] {
 .modal h3 { margin: 0 0 12px; }
 .field { margin: 12px 0; }
 .field > label { font-weight: 700; font-size: 14px; letter-spacing: .04em; }
-.sign-names { font-size: 17px; margin-bottom: 4px; }
+.sign-names { font-size: 17px; margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 10px; }
+.sign-person { display: inline-flex; align-items: center; gap: 6px; }
+.sign-person img {
+  width: 44px; height: 44px; object-fit: cover; border-radius: 8px;
+  border: 1px solid var(--line);
+}
 .signer-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .signer-list button {
   text-align: left; padding: 13px; font-size: 17px; border-radius: 10px;
