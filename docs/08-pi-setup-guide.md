@@ -1,0 +1,103 @@
+# Pi Setup Guide — Troop Check-In
+
+Single-purpose guide: from an empty Raspberry Pi to the check-in app running at a troop meeting. Nothing else is in scope here (SMS activation, tunnel, and testing have their own docs). Everything below is copy-paste-able in order.
+
+**You need:** Raspberry Pi 3B+ or newer · 16 GB+ microSD (or SSD) · power supply · your Wi-Fi name/password · a computer with the Raspberry Pi Imager · your GitHub login (the app repo is private).
+
+## 1. Flash the operating system
+
+1. Install **Raspberry Pi Imager** on your computer (raspberrypi.com/software).
+2. Choose Device: your Pi model. Choose OS: **Raspberry Pi OS Lite (64-bit)** — under "Raspberry Pi OS (other)". Choose Storage: the SD card.
+3. Click **Next → Edit Settings** and set: hostname `checkin` · enable SSH (password) · username `pi` + a password you'll remember · your Wi-Fi SSID/password and country `US` · locale/timezone.
+4. Write, then put the card in the Pi and power it on. Give it two minutes.
+
+## 2. Connect to the Pi
+
+From your computer (same network):
+
+```bash
+ssh pi@checkin.local
+```
+
+If `checkin.local` doesn't resolve (some Windows/Android networks), find the Pi's IP in your router's device list and `ssh pi@<that-ip>` instead. Note the IP — phones will use it too.
+
+## 3. Get the code (private repo — needs GitHub sign-in)
+
+```bash
+sudo apt update && sudo apt install -y git
+# GitHub CLI to authenticate the private clone:
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt update && sudo apt install -y gh
+gh auth login        # GitHub.com → HTTPS → Login with a web browser → follow the code
+gh repo clone brymitch56/troop-checkin
+cd troop-checkin
+```
+
+## 4. Run the installer
+
+```bash
+sudo bash scripts/install-pi.sh
+```
+
+This installs Node 20, builds dependencies, creates `.env` from the example, sets up the database, and installs + starts the `troop-checkin` service (auto-starts on every boot). It ends by printing the next steps.
+
+## 5. Configure `.env`
+
+```bash
+nano .env
+```
+
+Set at minimum:
+
+```
+TROOP_ID=NY-2911
+TROOP_NAME=Trail Life Troop NY-2911
+ICAL_URL=<your Trail Life Connect calendar feed URL>
+```
+
+Leave the `SMS_*`/`TWILIO_*`/`PUBLIC_URL` lines alone until the Twilio campaign is approved (see PROJECT-STATUS.md). Then:
+
+```bash
+sudo systemctl restart troop-checkin
+```
+
+## 6. Create staff accounts
+
+```bash
+npm run create-staff -- "Door Volunteer" door 1234
+npm run create-staff -- "Bryan" admin "a-strong-password"
+```
+
+Door staff get a short PIN for the kiosk; admins get a real password for `/admin.html`. Repeat per person — everyone should have their own login (actions are recorded by name).
+
+## 7. Verify and set up phones
+
+1. On the Pi: `curl http://localhost:3000/healthz` → should print `{"ok":true}`.
+2. On a phone (same Wi-Fi): open `http://checkin.local:3000` (or `http://<pi-ip>:3000`). Sign in with a door account.
+3. Install as an app: iPhone Safari → Share → **Add to Home Screen**; Android Chrome → menu → **Add to Home screen**. Do this on every leader phone that will run check-in — installing also enables offline mode.
+4. Admin area: `http://checkin.local:3000/admin.html`.
+
+## 8. Load the roster
+
+Admin → **Roster import** → upload the Trail Life Connect member export (.xlsx) → check the preview (adds/updates/deactivations) → **Commit**. Then in Admin → People, add authorized pickup adults from the signed consent forms.
+
+## Day-to-day service commands
+
+```bash
+sudo systemctl status troop-checkin     # is it running?
+sudo systemctl restart troop-checkin    # after any .env change
+journalctl -u troop-checkin -f          # live logs (Ctrl-C to exit)
+cd ~/troop-checkin && git pull && npm ci --omit=dev && npm run migrate && sudo systemctl restart troop-checkin   # update to latest code
+```
+
+Backups write themselves nightly to `~/troop-checkin/data/backups/` (kept: 14). Getting them off the Pi with rclone, and remote access via Cloudflare Tunnel, are covered in the README ("Backups", "Remote access").
+
+## If something goes wrong
+
+- **Installer fails building `better-sqlite3`:** usually low memory on a 3B+ — `sudo systemctl stop troop-checkin` isn't needed; just re-run the installer; if it persists: `sudo apt install -y build-essential python3` and run it again.
+- **Phone can't reach `checkin.local`:** use the IP address; consider reserving a fixed IP for the Pi in your router.
+- **Service won't start:** `journalctl -u troop-checkin -n 50` shows why — most often a typo in `.env`.
+- **Fresh start:** stop the service, delete `~/troop-checkin/data/` (this erases all records — only before go-live!), then `npm run migrate` and re-create staff.
+
+Once this page is done, the app is meeting-ready: run testing-guide walkthrough #1 (docs/06-testing-guide.md) alongside the paper sheet at the first live night.
