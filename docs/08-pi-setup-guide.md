@@ -107,7 +107,31 @@ journalctl -u troop-checkin -f          # live logs (Ctrl-C to exit)
 cd ~/troop-checkin && git pull && npm ci --omit=dev && npm run migrate && sudo systemctl restart troop-checkin   # update to latest code
 ```
 
-Backups write themselves nightly to `~/troop-checkin/data/backups/` (kept: 14). Getting them off the Pi with rclone, and remote access via Cloudflare Tunnel, are covered in the README ("Backups", "Remote access").
+Backups write themselves nightly to `~/troop-checkin/data/backups/` (kept: 14). Remote access via Cloudflare Tunnel is covered in the README ("Remote access").
+
+## Push backups to Google Drive (encrypted)
+
+One-time setup on the Pi. Backups contain youth PII, so they go up encrypted — Google only ever sees scrambled files that rclone (with your password) can decrypt.
+
+```bash
+sudo apt install -y rclone
+rclone config
+```
+
+Walk through the prompts twice, creating two remotes:
+
+1. **The Drive connection** — `n` (new remote) · name: `gdrive` · storage: `drive` (Google Drive) · leave client_id/secret/scope blank (defaults) · "Use web browser to automatically authenticate?" → **No** (the Pi is headless). It prints an `rclone authorize "drive" ...` command: run that on your Windows PC (install rclone there from rclone.org/downloads), sign in to your Google account in the browser that opens, and paste the resulting token back into the Pi prompt. Not a shared/team drive → `n`.
+2. **The encryption layer** — `n` again · name: `gdrive-crypt` · storage: `crypt` · remote to encrypt: `gdrive:troop-checkin-backups` · encrypt filenames: standard · directory names: yes · then set a password (and optional salt). **Write this password down somewhere safe outside the Pi — without it, backups are unrecoverable.**
+
+Test it, then schedule it right after the 03:15 nightly backup:
+
+```bash
+rclone copy ~/troop-checkin/data/backups gdrive-crypt: --min-age 1m && rclone ls gdrive-crypt: | head
+crontab -e    # add this line:
+# 45 3 * * * rclone copy /home/pi/troop-checkin/data/backups gdrive-crypt: --min-age 1m --log-file /home/pi/rclone-backup.log
+```
+
+In Drive you'll see a `troop-checkin-backups` folder full of gibberish names — that's correct; it's the encryption. **Restore test (do once now):** on the Pi, `rclone copy gdrive-crypt:troop-<latest-stamp>.db /tmp/` and confirm the file opens (`sqlite3 /tmp/troop-*.db "SELECT COUNT(*) FROM person;"` or just check its size matches). Recovery on a brand-new Pi = install rclone, recreate the two remotes with the same password, pull the files, follow README "Restore".
 
 ## If something goes wrong
 
