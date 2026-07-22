@@ -11,6 +11,15 @@ Single-purpose guide: from an empty Raspberry Pi to the check-in app running at 
 > sudo systemctl restart dphys-swapfile
 > ```
 
+## 0. Using an existing Pi (e.g., the DerbyNet Pi 4)
+
+Already-running Pi with Raspberry Pi OS? Skip steps 1–2 entirely — SSH in and start at step 3. Coexistence notes:
+
+- The app uses port **3000** and its own systemd service; it does not touch Apache/DerbyNet or ports 80/443. Confirm 3000 is free first: `ss -tln | grep 3000` (no output = free).
+- Keep your existing IP reservation and DerbyNet port forwarding as-is. Do **not** forward port 3000 for remote access — use a Cloudflare Tunnel instead (outbound-only, HTTPS, no router changes; see README "Remote access").
+- Plan for the tunnel before the first full meeting: phone browsers require HTTPS for camera scanning, PWA install, and offline mode. On plain `http://<pi-ip>:3000` everything else works (PIN login, name search, Bluetooth wedge scanning, signatures, admin).
+- Shared device = push backups off the Pi (README "Backups", rclone) since the SD card now serves two jobs.
+
 ## 1. Flash the operating system
 
 1. Install **Raspberry Pi Imager** on your computer (raspberrypi.com/software).
