@@ -13,7 +13,7 @@ Single-purpose guide: from an empty Raspberry Pi to the check-in app running at 
 
 ## 0. Using an existing Pi (e.g., the DerbyNet Pi 4)
 
-Already-running Pi with Raspberry Pi OS? Skip steps 1–2 entirely — SSH in and start at step 3. Coexistence notes:
+Already-running Pi with Raspberry Pi OS? Check the OS first: `cat /etc/os-release`. It must be **Bookworm (or newer), 64-bit**. Buster/Bullseye or 32-bit installs won't run Node 20 — and Buster's package servers are shut down entirely. In that case, don't upgrade in place: flash a **new** SD card fresh (steps 1–2), keep the old card intact as an instant-rollback copy of the old setup, and reinstall the other services (e.g., DerbyNet from its Debian repo, restoring its exported data) on the new card. If the OS is current, skip steps 1–2 — SSH in and start at step 3. Coexistence notes:
 
 - The app uses port **3000** and its own systemd service; it does not touch Apache/DerbyNet or ports 80/443. Confirm 3000 is free first: `ss -tln | grep 3000` (no output = free).
 - Keep your existing IP reservation and DerbyNet port forwarding as-is. Do **not** forward port 3000 for remote access — use a Cloudflare Tunnel instead (outbound-only, HTTPS, no router changes; see README "Remote access").
