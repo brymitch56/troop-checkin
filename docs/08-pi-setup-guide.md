@@ -2,7 +2,14 @@
 
 Single-purpose guide: from an empty Raspberry Pi to the check-in app running at a troop meeting. Nothing else is in scope here (SMS activation, tunnel, and testing have their own docs). Everything below is copy-paste-able in order.
 
-**You need:** Raspberry Pi 3B+ or newer · 16 GB+ microSD (or SSD) · power supply · your Wi-Fi name/password · a computer with the Raspberry Pi Imager · your GitHub login (the app repo is private).
+**You need:** Raspberry Pi 3 (A+ or B+) or newer · 16 GB+ microSD (or SSD) · power supply · your Wi-Fi name/password · a computer with the Raspberry Pi Imager · your GitHub login (the app repo is private).
+
+> **Pi 3 Model A+ note:** works fine headless (no USB peripherals needed; Wi-Fi only). It has 512 MB RAM, so **before step 4** enlarge swap so the install can't run out of memory:
+>
+> ```bash
+> sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile
+> sudo systemctl restart dphys-swapfile
+> ```
 
 ## 1. Flash the operating system
 
