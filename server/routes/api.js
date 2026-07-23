@@ -367,6 +367,35 @@ router.get('/onsite', (req, res) => {
   res.json(rows);
 });
 
+// Kiosk "text guardians" button: notify every youth still on site (optionally
+// one patrol). Strictly opt-in — the response tells the leader exactly who was
+// NOT contacted and why, so they can phone those families instead.
+router.post('/notify-onsite', express.json(), async (req, res) => {
+  const sms = require('../lib/sms');
+  const { notifyYouth } = require('../lib/notifySweep');
+  if (!sms.configured()) {
+    return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
+  }
+  const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
+  const rows = db.prepare(
+    `SELECT p.id AS person_id, p.first_name, p.last_name, p.nickname,
+            e.id AS event_id, e.title
+       FROM txn_person tp
+       JOIN txn t ON t.id = tp.txn_id
+       JOIN person p ON p.id = tp.person_id
+       JOIN event e ON e.id = t.event_id
+      WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL AND p.is_youth = 1
+        AND (? IS NULL OR p.patrol = ?)`
+  ).all(patrol, patrol);
+  const sent = [], skipped = [];
+  for (const row of rows) {
+    const r = await notifyYouth(row);
+    if (r.status === 'sent') sent.push({ youth: r.youth, guardian: r.guardian });
+    else skipped.push({ youth: r.youth, reason: r.reason });
+  }
+  res.json({ onsite_youth: rows.length, sent, skipped });
+});
+
 router.get('/patrols', (req, res) => {
   res.json(db.prepare(
     `SELECT DISTINCT patrol FROM person

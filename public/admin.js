@@ -139,6 +139,7 @@ async function loadPeople() {
 
 async function openPerson(id) {
   const p = await api(`/admin/people/${id}`);
+  const forms = p.is_youth ? await api('/admin/consent-forms').catch(() => []) : [];
   const d = $('pp-detail'); d.hidden = false;
   let locked = [];
   try { locked = JSON.parse(p.manual_fields || '[]'); } catch { /* ignore */ }
@@ -176,7 +177,7 @@ async function openPerson(id) {
       ${p.is_youth && !p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into roster member…</button>' : ''}
       <button class="btn ghost small" id="pp-close">Close</button>
     </div>
-    ${p.is_youth ? guardianBlock(p) : wardBlock(p)}`;
+    ${p.is_youth ? guardianBlock(p, forms) : wardBlock(p)}`;
 
   $('pp-save').onclick = async () => {
     const body = {};
@@ -224,20 +225,51 @@ async function openPerson(id) {
   wireGuardianForms(p);
 }
 
-function guardianBlock(p) {
+function smsCell(g, forms) {
+  const tag = g.sms_opt_in === 'yes'
+    ? `<span class="tag youth">✓ opted in</span>`
+    : g.sms_opt_in === 'stop' ? `<span class="tag warn">STOP</span>` : `<span class="tag off">no consent</span>`;
+  const formRef = g.consent_form_id
+    ? ` <a href="/consent-forms/${esc(g.consent_file)}" target="_blank" title="signed by ${esc(g.consent_signed_by || '?')}">form #${g.consent_form_id}</a>` : '';
+  const sel = `<select data-gform="${g.id}">
+      <option value="">— consent form —</option>
+      ${forms.map((f) => `<option value="${f.id}" ${f.id === g.consent_form_id ? 'selected' : ''}>#${f.id} ${esc(f.signed_by || f.file_path)}${f.signed_on ? ` (${esc(f.signed_on)})` : ''}</option>`).join('')}
+    </select>`;
+  const btn = g.sms_opt_in === 'yes'
+    ? `<button class="btn ghost small" data-gact="smsoff" data-gid="${g.id}">revoke opt-in</button>`
+    : `<button class="btn ghost small" data-gact="smson" data-gid="${g.id}">opt in</button>`;
+  return `${tag}${formRef}<br>${sel} ${btn}`;
+}
+
+function guardianBlock(p, forms) {
   return `<h3>Guardians &amp; authorized pickup</h3>
   <p class="hint left">Your edits here are authoritative — roster imports never change them. Consent-form
-  designees who aren't in Trail Life Connect can be added below; they don't need to share a last name or email.</p>
-  <div class="tbl"><table><tr><th>Name</th><th>Relationship</th><th>Phone</th><th>Authorized</th><th>Primary</th><th>Source</th><th></th></tr>
+  designees who aren't in Trail Life Connect can be added below; they don't need to share a last name or email.
+  <b>SMS is strictly opt-in per youth/guardian pair</b> — opting in requires attaching the signed consent form
+  (one uploaded form can cover several pairs and several youth).</p>
+  <div class="tbl"><table><tr><th>Name</th><th>Relationship</th><th>Phone</th><th>Authorized</th><th>Primary</th><th>SMS consent</th><th>Source</th><th></th></tr>
   ${p.guardians.map((g) => `<tr>
     <td>${esc(g.first_name)} ${esc(g.last_name)}</td><td>${esc(g.relationship || '')}</td>
     <td>${esc(g.phone_mobile || '')}</td>
     <td><button class="btn ghost small" data-gact="auth" data-gid="${g.id}" data-val="${g.authorized ? 0 : 1}">
       ${g.authorized ? '✓ yes — revoke' : '✗ no — authorize'}</button></td>
     <td>${g.is_primary ? '★ primary' : `<button class="btn ghost small" data-gact="primary" data-gid="${g.id}">make primary</button>`}</td>
+    <td>${smsCell(g, forms)}</td>
     <td>${esc(g.source)}</td>
     <td>${g.source === 'manual' ? `<button class="btn ghost small" data-gact="del" data-gid="${g.id}">remove</button>` : ''}</td>
   </tr>`).join('')}</table></div>
+
+  <div class="panel">
+    <h4>Upload a signed consent form</h4>
+    <div class="row wrap">
+      <input id="cf-file" type="file" accept=".pdf,image/*">
+      <input id="cf-signed-by" type="text" placeholder="Signed by (parent name)">
+      <input id="cf-signed-on" type="date">
+      <button id="cf-upload" class="btn ghost small">Upload</button>
+    </div>
+    <p class="hint left">After uploading, pick the form in a guardian's row above and press "opt in".
+    Do the same on each of that family's other youth — the same form can be attached everywhere it applies.</p>
+  </div>
 
   <div class="gadd-forms">
     <div class="panel">
@@ -263,6 +295,19 @@ function guardianBlock(p) {
 }
 
 function wireGuardianForms(p) {
+  if ($('cf-upload')) $('cf-upload').onclick = async () => {
+    const file = $('cf-file').files[0];
+    if (!file) return toast('Choose the scanned form file first.', true);
+    const form = new FormData();
+    form.append('file', file);
+    form.append('signed_by', $('cf-signed-by').value.trim());
+    form.append('signed_on', $('cf-signed-on').value);
+    const r = await fetch('/api/admin/consent-forms', { method: 'POST', body: form, credentials: 'same-origin' });
+    const body = await r.json();
+    if (!r.ok) return toast(body.error || 'Upload failed', true);
+    toast(`Consent form #${body.id} stored`);
+    openPerson(p.id); // reload so the new form appears in the dropdowns
+  };
   if (!$('ga-search')) return;
   let t;
   $('ga-search').oninput = () => {
@@ -313,6 +358,16 @@ async function guardianAction(p, btn) {
   try {
     if (btn.dataset.gact === 'auth') await jpatch(`/admin/people/${p.id}/guardians/${gid}`, { authorized: btn.dataset.val === '1' });
     if (btn.dataset.gact === 'primary') await jpatch(`/admin/people/${p.id}/guardians/${gid}`, { is_primary: true });
+    if (btn.dataset.gact === 'smson') {
+      const sel = document.querySelector(`select[data-gform="${gid}"]`);
+      const formId = sel && sel.value ? Number(sel.value) : null;
+      if (!formId) return toast('Pick the signed consent form first (upload it below if needed).', true);
+      await jpatch(`/admin/people/${p.id}/guardians/${gid}`, { sms_opt_in: 'yes', consent_form_id: formId });
+    }
+    if (btn.dataset.gact === 'smsoff') {
+      if (!confirm('Revoke SMS opt-in for this guardian on this youth?')) return;
+      await jpatch(`/admin/people/${p.id}/guardians/${gid}`, { sms_opt_in: 'unknown' });
+    }
     if (btn.dataset.gact === 'del') {
       if (!confirm('Remove this manually-added guardian link?')) return;
       await jdel(`/admin/people/${p.id}/guardians/${gid}`);

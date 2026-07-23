@@ -172,6 +172,10 @@ input[type="password"], input[type="datetime-local"] {
 .modal h3 { margin: 0 0 12px; }
 .field { margin: 12px 0; }
 .field > label { font-weight: 700; font-size: 14px; letter-spacing: .04em; }
+.notify-row { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.warn-text { color: var(--blaze); }
+#modal-notify h4 { margin: 12px 0 4px; }
+
 .foot-links { text-align: center; margin: 18px 0 0; }
 .foot-links a { color: var(--muted); font-size: 13px; text-decoration: none; }
 .foot-links a:hover { text-decoration: underline; }

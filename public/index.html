@@ -69,6 +69,7 @@
   <header class="topbar">
     <button id="onsite-back" class="pill ghost-pill">‹ Back</button>
     <h2>Still on site</h2>
+    <button id="onsite-notify" class="pill ghost-pill">🔔 Text guardians</button>
   </header>
   <div id="patrol-filters" class="patrol-filters"></div>
   <div id="onsite-list" class="onsite-list"></div>
@@ -135,6 +136,12 @@
         <button id="link-cancel" class="btn ghost">Cancel</button>
         <button id="link-confirm" class="btn primary">Link badge</button>
       </div>
+    </div>
+
+    <div id="modal-notify" class="modal-page" hidden>
+      <h3>Guardian texts</h3>
+      <div id="notify-results"></div>
+      <button id="notify-close" class="btn primary">Done</button>
     </div>
 
     <div id="modal-camera" class="modal-page" hidden>

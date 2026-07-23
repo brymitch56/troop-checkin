@@ -70,6 +70,15 @@ test('notification sweep: finds lingering youth after grace, dedupes per event',
   assert.equal(lingering.length, 1);
   assert.equal(lingering[0].person_id, danny.id);
 
+  // OPT-IN GATE: sms_opt_in is 'unknown' -> nobody is texted or recorded
+  const r0 = await sweep();
+  assert.equal(r0.lingering, 1);
+  assert.equal(r0.recorded, 0, 'unknown consent must never be notified');
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM notification').get().c, 0);
+
+  // opt the guardian in, then the sweep engages
+  db.prepare(`UPDATE person_guardian SET sms_opt_in = 'yes' WHERE youth_id = ? AND guardian_id = ?`)
+    .run(danny.id, alice.id);
   const r1 = await sweep();
   assert.equal(r1.recorded, 1);
   assert.equal(r1.sent, 0); // Twilio not configured -> recorded as failed, nothing sent

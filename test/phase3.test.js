@@ -99,6 +99,11 @@ test('webhook rejects unsigned requests', async () => {
 test('webhook: Y from a notified guardian closes the open sign-in (sms_confirm)', async () => {
   const danny = person('Danny'), alice = person('Alice');
   db.prepare('UPDATE person SET phone_mobile = ? WHERE id = ?').run('555-0101', alice.id);
+  // consent recorded: form on file + opt-in (sends are gated on this)
+  const cf = db.prepare(`INSERT INTO consent_form (file_path, signed_by) VALUES ('t.pdf', 'Alice Anderson')`).run();
+  db.prepare(`UPDATE person_guardian SET sms_opt_in = 'yes', consent_form_id = ?
+               WHERE guardian_id = ? AND youth_id = ?`)
+    .run(Number(cf.lastInsertRowid), alice.id, danny.id);
   // sign Danny in at an event that has ended, then simulate the sweep notification
   const ev = db.prepare(`INSERT INTO event (source, title, start_at, end_at)
     VALUES ('manual', 'Ended', datetime('now', '-4 hours'), datetime('now', '-2 hours'))`).run();
@@ -132,17 +137,26 @@ test('webhook: Y from a notified guardian closes the open sign-in (sms_confirm)'
   assert.equal(db.prepare(`SELECT status FROM notification WHERE person_id = ?`).get(danny.id).status, 'replied_y');
 });
 
-test('webhook: STOP sets opt-out and the sweep skips stopped guardians', async () => {
+test('webhook: STOP sets opt-out; START only restores pairs with recorded consent', async () => {
   const alice = person('Alice');
   const stop = await twilioPost('/api/sms/inbound', { From: '5550101', Body: 'STOP' });
   assert.equal(stop.status, 200);
   const optIns = db.prepare(
     `SELECT sms_opt_in FROM person_guardian WHERE guardian_id = ?`).all(alice.id);
   assert.ok(optIns.every((r) => r.sms_opt_in === 'stop'));
+  // one of Alice's links has a consent form (set in the previous test); strip
+  // it from any others to prove START never manufactures consent
+  const links = db.prepare(
+    `SELECT youth_id, consent_form_id FROM person_guardian WHERE guardian_id = ?`).all(alice.id);
   const start = await twilioPost('/api/sms/inbound', { From: '5550101', Body: 'START' });
   assert.equal(start.status, 200);
-  assert.ok(db.prepare(`SELECT sms_opt_in FROM person_guardian WHERE guardian_id = ?`).all(alice.id)
-    .every((r) => r.sms_opt_in === 'yes'));
+  for (const l of links) {
+    const after = db.prepare(
+      `SELECT sms_opt_in FROM person_guardian WHERE guardian_id = ? AND youth_id = ?`)
+      .get(alice.id, l.youth_id);
+    assert.equal(after.sms_opt_in, l.consent_form_id ? 'yes' : 'stop',
+      'START restores only consented pairs');
+  }
 });
 
 // -------------------------------------------------- import-lock protection ----
@@ -196,6 +210,77 @@ test('consent form: brand-new adult becomes an authorized pickup, can be primary
   assert.equal(db.prepare(
     'SELECT COUNT(*) c FROM person_guardian WHERE youth_id = ? AND guardian_id = ?')
     .get(emma.id, r.json.guardian_id).c, 1);
+});
+
+// ------------------------------------------------------- SMS consent gate ----
+test('consent forms: upload, opt-in requires a form, CSV export', async () => {
+  const emma = person('Emma'), bob = person('Bob');
+  // opting in without a consent form is refused
+  const bare = await req('PATCH', `/api/admin/people/${emma.id}/guardians/${bob.id}`, {
+    cookie: adminCookie, body: { sms_opt_in: 'yes' },
+  });
+  assert.equal(bare.status, 422);
+  // upload a scanned form
+  const form = new FormData();
+  form.append('file', new Blob([Buffer.from('%PDF-1.4 test')], { type: 'application/pdf' }), 'brown-family.pdf');
+  form.append('signed_by', 'Bob Brown');
+  form.append('signed_on', '2026-07-20');
+  const up = await req('POST', '/api/admin/consent-forms', { form, cookie: adminCookie });
+  assert.equal(up.status, 200);
+  const formId = up.json.id;
+  // now opt-in works, and the same form can cover another pair (cross-link)
+  const ok = await req('PATCH', `/api/admin/people/${emma.id}/guardians/${bob.id}`, {
+    cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: formId },
+  });
+  assert.equal(ok.status, 200);
+  // form is served session-gated
+  assert.equal((await fetch(`${base}/consent-forms/${up.json.file_path}`, { headers: { cookie: doorCookie } })).status, 200);
+  assert.equal((await fetch(`${base}/consent-forms/${up.json.file_path}`)).status, 401);
+  // listed with link count
+  const list = await req('GET', '/api/admin/consent-forms', { cookie: adminCookie });
+  assert.ok(list.json.find((f) => f.id === formId).linked_pairs >= 1);
+  // compliance CSV
+  const csv = await req('GET', '/api/admin/export/sms-consent.csv', { cookie: adminCookie });
+  assert.match(csv.text.split('\r\n')[0], /^youth_last,youth_first,guardian_last/);
+  assert.ok(csv.text.includes('Bob Brown'));
+});
+
+test('kiosk notify-onsite: opt-in gating with per-youth skip reasons and dedupe', async () => {
+  const emma = person('Emma'), frank = person('Frank'), bob = person('Bob'), carol = person('Carol');
+  db.prepare('UPDATE person SET phone_mobile = ? WHERE id = ?').run('555-0102', bob.id);
+  // fresh event, sign in Emma (Bob opted in above) and Frank (Carol: no consent)
+  const ev = db.prepare(`INSERT INTO event (source, title, start_at, end_at, track_adults)
+    VALUES ('manual', 'Notify Test', datetime('now', '-1 hour'), datetime('now', '+2 hours'), 0)`).run();
+  const evId = Number(ev.lastInsertRowid);
+  for (const [youth, signer] of [[emma, bob], [frank, carol]]) {
+    const r = await req('POST', '/api/txn', {
+      cookie: doorCookie,
+      body: {
+        client_uuid: uuid(), direction: 'in', event_id: evId,
+        entries: [{ person_id: youth.id }], signer_person_id: signer.id, signature_data: PNG_1x1,
+      },
+    });
+    assert.equal(r.status, 200);
+  }
+  const r = await req('POST', '/api/notify-onsite', { cookie: doorCookie, body: {} });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.onsite_youth, 2);
+  // Frank must be skipped for lack of consent; Emma's attempt goes to the send
+  // path (fake Twilio creds -> recorded as failed) — never silently dropped
+  const frankRow = r.json.skipped.find((s) => s.youth.includes('Frank'));
+  assert.ok(frankRow && /no opted-in guardian/.test(frankRow.reason));
+  const emmaAttempted = r.json.sent.some((s) => s.youth.includes('Emma')) ||
+    r.json.skipped.some((s) => s.youth.includes('Emma') && /send failed/.test(s.reason));
+  assert.ok(emmaAttempted, 'opted-in youth must be attempted');
+  assert.equal(db.prepare(
+    'SELECT COUNT(*) c FROM notification WHERE person_id = ? AND event_id = ?').get(emma.id, evId).c, 1);
+  // second press: dedupe — Emma reported as already notified
+  const r2 = await req('POST', '/api/notify-onsite', { cookie: doorCookie, body: {} });
+  assert.ok(r2.json.skipped.some((s) => s.youth.includes('Emma') && /already notified/.test(s.reason)));
+  // clean up open sign-ins for later tests
+  for (const youth of [emma, frank]) {
+    await req('POST', '/api/admin/close-open', { cookie: adminCookie, body: { person_id: youth.id } });
+  }
 });
 
 // ---------------------------------------------------------------- reports ----

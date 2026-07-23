@@ -48,8 +48,12 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
     return twiml(res); // Twilio sends its own STOP confirmation
   }
   if (['START', 'UNSTOP', 'SUBSCRIBE'].includes(text)) {
+    // START restores a previous opt-in after a STOP; it never creates consent
+    // out of thin air ('unknown' pairs stay unknown until the signed form is
+    // recorded in admin).
     for (const r of guardianRows) {
-      db.prepare(`UPDATE person_guardian SET sms_opt_in = 'yes' WHERE youth_id = ? AND guardian_id = ?`)
+      db.prepare(`UPDATE person_guardian SET sms_opt_in = 'yes'
+                   WHERE youth_id = ? AND guardian_id = ? AND sms_opt_in = 'stop' AND consent_form_id IS NOT NULL`)
         .run(r.youth_id, r.guardian_id);
     }
     return twiml(res);

@@ -46,6 +46,7 @@ const sessionGate = (req, res, next) => {
 };
 app.use('/signatures', sessionGate, express.static(SIG_DIR));
 app.use('/photos', sessionGate, express.static(require('path').join(require('./db').DATA_DIR, 'photos')));
+app.use('/consent-forms', sessionGate, express.static(require('path').join(require('./db').DATA_DIR, 'consent-forms')));
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 

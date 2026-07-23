@@ -12,6 +12,9 @@ const icalSync = require('../lib/icalSync');
 const PHOTO_DIR = path.join(DATA_DIR, 'photos');
 fs.mkdirSync(PHOTO_DIR, { recursive: true });
 const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const CONSENT_DIR = path.join(DATA_DIR, 'consent-forms');
+fs.mkdirSync(CONSENT_DIR, { recursive: true });
+const consentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 const router = express.Router();
 router.use(auth.requireAuth('admin'));
@@ -53,8 +56,12 @@ router.get('/people/:id', (req, res) => {
   if (!p) return res.status(404).json({ error: 'No such person.' });
   const guardians = p.is_youth ? db.prepare(
     `SELECT g.id, g.first_name, g.last_name, g.phone_mobile, g.email,
-            pg.relationship, pg.authorized, pg.is_primary, pg.source
-       FROM person_guardian pg JOIN person g ON g.id = pg.guardian_id
+            pg.relationship, pg.authorized, pg.is_primary, pg.source,
+            pg.sms_opt_in, pg.consent_form_id,
+            cf.signed_by AS consent_signed_by, cf.file_path AS consent_file
+       FROM person_guardian pg
+       JOIN person g ON g.id = pg.guardian_id
+       LEFT JOIN consent_form cf ON cf.id = pg.consent_form_id
       WHERE pg.youth_id = ? AND g.status != 'merged'
       ORDER BY pg.is_primary DESC, g.last_name`).all(p.id) : [];
   const wards = !p.is_youth ? db.prepare(
@@ -176,6 +183,23 @@ router.patch('/people/:youthId/guardians/:guardianId', (req, res) => {
   if ('is_primary' in b) {
     if (b.is_primary) db.prepare('UPDATE person_guardian SET is_primary = 0 WHERE youth_id = ?').run(youthId);
     sets.push('is_primary = ?'); vals.push(b.is_primary ? 1 : 0);
+  }
+  if ('consent_form_id' in b) {
+    if (b.consent_form_id && !db.prepare('SELECT 1 FROM consent_form WHERE id = ?').get(b.consent_form_id)) {
+      return res.status(400).json({ error: 'No such consent form.' });
+    }
+    sets.push('consent_form_id = ?'); vals.push(b.consent_form_id || null);
+  }
+  if ('sms_opt_in' in b) {
+    if (!['unknown', 'yes', 'stop'].includes(b.sms_opt_in)) {
+      return res.status(400).json({ error: 'Bad sms_opt_in value.' });
+    }
+    // opting in requires a stored signed consent form on this pair
+    const formAfter = 'consent_form_id' in b ? b.consent_form_id : link.consent_form_id;
+    if (b.sms_opt_in === 'yes' && !formAfter) {
+      return res.status(422).json({ error: 'Opt-in requires attaching the signed consent form first.' });
+    }
+    sets.push('sms_opt_in = ?'); vals.push(b.sms_opt_in);
   }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
   // any admin edit becomes authoritative
@@ -500,6 +524,52 @@ router.get('/export/visitors.csv', (req, res) => {
             (SELECT COUNT(*) FROM txn_person tp WHERE tp.person_id = p.id)
        FROM person p WHERE p.status = 'visitor' ORDER BY p.created_at DESC`).raw().all();
   sendCsv(res, 'visitors.csv', ['last_name', 'first_name', 'type', 'first_seen', 'notes', 'txn_count'], rows);
+});
+
+// -------------------------------------------------------- consent forms ----
+// One scanned form can cover many youth/guardian pairs; pairs link to it via
+// person_guardian.consent_form_id. Files live under data/ with the other PII,
+// served session-gated at /consent-forms/<file>.
+router.post('/consent-forms', consentUpload.single('file'), (req, res) => {
+  if (!req.file || !/^(application\/pdf|image\/(jpeg|png|webp))$/.test(req.file.mimetype)) {
+    return res.status(400).json({ error: 'Attach the scanned form as PDF, JPEG, PNG, or WebP.' });
+  }
+  const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[req.file.mimetype];
+  const r = db.prepare(
+    `INSERT INTO consent_form (file_path, signed_by, signed_on, notes, staff_id)
+     VALUES ('pending', ?, ?, ?, ?)`
+  ).run(req.body.signed_by || null, req.body.signed_on || null, req.body.notes || null, req.staff.staff_id);
+  const id = Number(r.lastInsertRowid);
+  const name = `${id}.${ext}`;
+  fs.writeFileSync(path.join(CONSENT_DIR, name), req.file.buffer);
+  db.prepare('UPDATE consent_form SET file_path = ? WHERE id = ?').run(name, id);
+  res.json({ ok: true, id, file_path: name });
+});
+
+router.get('/consent-forms', (req, res) => {
+  res.json(db.prepare(
+    `SELECT cf.*, s.name AS uploaded_by,
+            (SELECT COUNT(*) FROM person_guardian pg WHERE pg.consent_form_id = cf.id) AS linked_pairs
+       FROM consent_form cf LEFT JOIN staff s ON s.id = cf.staff_id
+      ORDER BY cf.id DESC`).all());
+});
+
+// Compliance export: every youth↔guardian pair with its SMS consent state.
+router.get('/export/sms-consent.csv', (req, res) => {
+  const rows = db.prepare(
+    `SELECT y.last_name, y.first_name, g.last_name, g.first_name, g.phone_mobile,
+            pg.relationship, CASE pg.authorized WHEN 1 THEN 'yes' ELSE 'no' END,
+            pg.sms_opt_in, COALESCE(cf.signed_by, ''), COALESCE(cf.signed_on, ''),
+            COALESCE(cf.file_path, '')
+       FROM person_guardian pg
+       JOIN person y ON y.id = pg.youth_id AND y.status != 'merged'
+       JOIN person g ON g.id = pg.guardian_id AND g.status != 'merged'
+       LEFT JOIN consent_form cf ON cf.id = pg.consent_form_id
+      ORDER BY y.last_name, y.first_name, pg.is_primary DESC`).raw().all();
+  sendCsv(res, 'sms-consent.csv',
+    ['youth_last', 'youth_first', 'guardian_last', 'guardian_first', 'guardian_mobile',
+     'relationship', 'authorized', 'sms_opt_in', 'consent_signed_by', 'consent_signed_on', 'consent_file'],
+    rows);
 });
 
 // ---------------------------------------------------------------- staff ----
