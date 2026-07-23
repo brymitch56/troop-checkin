@@ -263,6 +263,56 @@ async function main() {
   assert.ok(dannyOpen, 'queued sign-in reached the server after reconnect');
   step('offline: queue synced on reconnect, server has the record');
 
+  // -- plain LAN HTTP (insecure context) parity ------------------------------
+  // Phones at a meeting hit http://<pi-ip>:3000 — an INSECURE context where
+  // secure-context-only APIs (crypto.randomUUID, serviceWorker, camera) don't
+  // exist. This section proves the core sign path never depends on them.
+  const os = require('os');
+  const lanIp = Object.values(os.networkInterfaces()).flat()
+    .find((i) => i && !i.internal && i.family === 'IPv4')?.address;
+  if (lanIp) {
+    const lan = await browser.newPage();
+    await lan.setViewport({ width: 1024, height: 1400 });
+    lan.on('pageerror', (e) => errors.push('lan: ' + e));
+    lan.on('dialog', (d) => d.accept());
+    await lan.goto(`http://${lanIp}:${server.address().port}`, { waitUntil: 'networkidle0' });
+    const ctx = await lan.evaluate(() => ({ secure: window.isSecureContext, hasUUID: !!crypto.randomUUID }));
+    assert.equal(ctx.secure, false, 'LAN IP must be an insecure context for this test to mean anything');
+    assert.equal(ctx.hasUUID, false);
+    await lan.waitForSelector('#staff-list button');
+    await lan.evaluate(() => {
+      [...document.querySelectorAll('#staff-list button')].find((b) => b.textContent === 'Door Tester').click();
+    });
+    await lan.type('#pin-input', '1234', { delay: 60 });
+    await lan.$eval('#pin-go', (el) => el.click());
+    await lan.waitForSelector('#screen-main:not([hidden])');
+    await lan.type('#search-input', 'Frank', { delay: 60 });
+    await lan.waitForFunction(() => {
+      const box = document.getElementById('search-results');
+      return !box.hidden && [...box.querySelectorAll('button')].some((b) => b.textContent.includes('Frank'));
+    });
+    await lan.evaluate(() => {
+      [...document.querySelectorAll('#search-results button')].find((b) => b.textContent.includes('Frank')).click();
+    });
+    await lan.waitForFunction(() => document.querySelectorAll('#cart-list li').length === 1);
+    await lan.$eval('#btn-sign', (el) => el.click());
+    await lan.waitForSelector('#modal-sign:not([hidden])');
+    await lan.evaluate(() => {
+      [...document.querySelectorAll('#signer-list button')].find((b) => b.textContent.includes('Carol')).click();
+    });
+    const b4 = await (await lan.$('#sig-canvas')).boundingBox();
+    await lan.mouse.move(b4.x + 30, b4.y + 40);
+    await lan.mouse.down();
+    await lan.mouse.move(b4.x + 200, b4.y + 90, { steps: 6 });
+    await lan.mouse.up();
+    await lan.$eval('#sign-submit', (el) => el.click());
+    // save must complete: modal closes (this is what silently failed pre-fix)
+    await lan.waitForFunction(() => document.getElementById('modal-root').hidden === true, { timeout: 8000 });
+    step('plain LAN http (insecure context): signature save completes');
+  } else {
+    console.log('  - skipped LAN insecure-context test (no non-internal IPv4)');
+  }
+
   assert.deepEqual(errors, [], `page errors: ${errors.join('; ')}`);
 
   await browser.close();

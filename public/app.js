@@ -2,6 +2,18 @@
 /* NY-2911 Troop Check-In kiosk */
 
 const $ = (id) => document.getElementById(id);
+
+// crypto.randomUUID only exists in secure contexts (https / localhost); on
+// plain LAN http (http://<pi-ip>:3000) it's undefined. getRandomValues works
+// everywhere, so fall back to a manual v4 UUID.
+function newUuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 const state = {
   me: null,
   event: null,           // selected event
@@ -512,7 +524,7 @@ $('sign-submit').onclick = async () => {
 
 async function submitTxn(extra, force) {
   const payload = {
-    client_uuid: crypto.randomUUID(),
+    client_uuid: newUuid(),
     direction: state.direction,
     event_id: state.direction === 'in' ? state.event.id : undefined,
     signed_at: new Date().toISOString(),
@@ -655,6 +667,12 @@ async function renderOnsite() {
     }
   }
 }
+
+// ------------------------------------------------------ field debugging ----
+// A thrown error must never look like "the button does nothing" — surface it.
+window.addEventListener('error', (e) => toast(`App error: ${e.message}`, true));
+window.addEventListener('unhandledrejection', (e) =>
+  toast(`App error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`, true));
 
 // ---------------------------------------------------------------- PWA -----
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
