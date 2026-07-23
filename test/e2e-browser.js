@@ -63,10 +63,21 @@ async function main() {
 
   // -- login ----------------------------------------------------------------
   await page.waitForSelector('#staff-list button');
-  await page.evaluate(() => {
-    [...document.querySelectorAll('#staff-list button')]
-      .find((b) => b.textContent === 'Door Tester').click();
+  // Regression guard (modal-scrim bug): the element a real tap lands on at the
+  // staff tile's center must be the tile itself — no overlay intercepting.
+  const hitTest = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('#staff-list button')]
+      .find((b) => b.textContent === 'Door Tester');
+    const r = btn.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return { intercepted: hit !== btn, hitDesc: hit ? hit.id || hit.className || hit.tagName : 'none' };
   });
+  assert.equal(hitTest.intercepted, false, `an overlay intercepts taps on the login tiles: ${hitTest.hitDesc}`);
+  // real mouse click (NOT DOM .click()) so pointer interception would fail loudly
+  const tile = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('#staff-list button')].find((b) => b.textContent === 'Door Tester'));
+  const tileBox = await tile.asElement().boundingBox();
+  await page.mouse.click(tileBox.x + tileBox.width / 2, tileBox.y + tileBox.height / 2);
   await page.type('#pin-input', '1234', { delay: 60 }); // human speed — faster would look like a scanner burst
   await click('#pin-go');
   await page.waitForSelector('#screen-main:not([hidden])');
