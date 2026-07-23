@@ -92,9 +92,19 @@ async function renderLogin() {
     b.onclick = () => {
       $('pin-panel').hidden = false;
       $('pin-staff-name').textContent = s.name;
-      $('pin-input').value = ''; $('pin-input').dataset.staffId = s.id;
+      const inp = $('pin-input');
+      inp.value = ''; inp.dataset.staffId = s.id;
+      // door staff (and admins who set a PIN) get the numeric keypad;
+      // admins without a PIN type their full password
+      if (s.has_pin) {
+        inp.placeholder = 'PIN'; inp.maxLength = 8;
+        inp.setAttribute('inputmode', 'numeric');
+      } else {
+        inp.placeholder = 'Password'; inp.maxLength = 64;
+        inp.setAttribute('inputmode', 'text');
+      }
       $('login-error').textContent = '';
-      $('pin-input').focus();
+      inp.focus();
     };
     grid.appendChild(b);
   }
@@ -218,20 +228,30 @@ function setEvent(ev) {
 $('event-pill').onclick = openEventPicker;
 
 async function openEventPicker() {
-  const { matching, nearby } = await eventsCurrent();
+  // sorted now → furthest away; past events hidden behind a toggle
+  const { matching, upcoming, past } = await eventsCurrent();
   const wrap = $('event-list'); wrap.innerHTML = '';
-  const add = (ev, tag) => {
+  const add = (parent, ev, tag) => {
     const b = document.createElement('button');
     const start = new Date(ev.start_at), end = new Date(ev.end_at);
     b.innerHTML = `<b>${ev.title}</b>${tag ? ` <span class="when">· ${tag}</span>` : ''}<br>
       <span class="when">${start.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
       – ${end.toLocaleString([], { hour: 'numeric', minute: '2-digit' })}</span>`;
     b.onclick = () => { setEvent(ev); closeModal(); };
-    wrap.appendChild(b);
+    parent.appendChild(b);
   };
-  matching.forEach((ev) => add(ev, 'now'));
-  nearby.forEach((ev) => add(ev));
-  if (!matching.length && !nearby.length) wrap.innerHTML = '<p class="hint">Nothing on the calendar — create one below.</p>';
+  matching.forEach((ev) => add(wrap, ev, 'now'));
+  upcoming.forEach((ev) => add(wrap, ev));
+  if (!matching.length && !upcoming.length) {
+    wrap.innerHTML = '<p class="hint">Nothing current or upcoming — create one below.</p>';
+  }
+  if (past.length) {
+    const det = document.createElement('details');
+    det.className = 'past-events';
+    det.innerHTML = '<summary>Show past events</summary>';
+    past.forEach((ev) => add(det, ev, 'past'));
+    wrap.appendChild(det);
+  }
   openModal('modal-events');
 }
 $('events-close').onclick = closeModal;

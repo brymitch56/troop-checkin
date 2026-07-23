@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v4'; // v4: UUID fallback for insecure contexts; error surfacing
+const VERSION = 'tc-v5'; // v5: event-list sorting/past toggle, staff mgmt, cross-links
 const SHELL = [
   '/', '/index.html', '/styles.css', '/app.js', '/offline.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',

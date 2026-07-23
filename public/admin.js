@@ -64,7 +64,7 @@ function enterApp() {
 }
 
 // ----------------------------------------------------------------- tabs ----
-const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, reports: loadReports, import: loadImport };
+const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, reports: loadReports, import: loadImport, staff: loadStaff };
 $('tabs').onclick = (e) => {
   const b = e.target.closest('button[data-tab]');
   if (b) showTab(b.dataset.tab);
@@ -323,12 +323,13 @@ async function guardianAction(p, btn) {
 
 // --------------------------------------------------------------- events ----
 async function loadEvents() {
-  const rows = await api('/admin/events');
+  const rows = await api('/admin/events' + ($('ev-past').checked ? '?include_past=1' : ''));
   $('ev-list').innerHTML = `<table><tr><th>Title</th><th>Starts</th><th>Ends</th><th>Source</th><th>Adults</th><th>Txns</th><th></th></tr>` +
     rows.map((e) => `<tr data-id="${e.id}">
       <td>${esc(e.title)}${e.removed_from_feed ? ' <span class="tag warn">gone from feed</span>' : ''}</td>
       <td>${fmtDT(e.start_at)}</td><td>${fmtDT(e.end_at)}</td>
-      <td>${e.source}</td><td>${e.track_adults ? '✓ tracked' : '—'}</td><td>${e.txn_count}</td>
+      <td>${e.source}${e.is_past ? ' <span class="tag off">past</span>' : ''}</td>
+      <td>${e.track_adults ? '✓ tracked' : '—'}</td><td>${e.txn_count}</td>
       <td>${e.txn_count === 0 ? `<button class="btn ghost small" data-del="${e.id}">delete</button>` : ''}</td></tr>`).join('') + '</table>';
   $('ev-list').onclick = async (ev) => {
     const del = ev.target.closest('button[data-del]');
@@ -381,10 +382,79 @@ function openEvent(e) {
   };
 }
 $('ev-new').onclick = () => openEvent(null);
+$('ev-past').onchange = loadEvents;
+
+// ---------------------------------------------------------------- staff ----
+async function loadStaff() {
+  const rows = await api('/admin/staff');
+  $('st-list').innerHTML = `<table><tr><th>Name</th><th>Role</th><th>Signs in with</th><th>Status</th><th></th></tr>` +
+    rows.map((s) => `<tr>
+      <td>${esc(s.name)}</td>
+      <td><span class="tag ${s.role === 'admin' ? 'warn' : 'youth'}">${s.role}</span></td>
+      <td>${s.has_pin ? 'PIN' + (s.has_password ? ' <span class="tag off" title="PIN overrides the password">overrides password</span>' : '') : s.has_password ? 'password' : '<span class="tag warn">no credential!</span>'}</td>
+      <td>${s.active ? 'active' : '<span class="tag off">inactive</span>'}</td>
+      <td class="row wrap">
+        <button class="btn ghost small" data-sact="pin" data-sid="${s.id}">${s.has_pin ? 'Change PIN' : 'Set PIN'}</button>
+        ${s.has_pin ? `<button class="btn ghost small" data-sact="clearpin" data-sid="${s.id}">Clear PIN</button>` : ''}
+        ${s.role === 'admin' || s.has_password ? `<button class="btn ghost small" data-sact="password" data-sid="${s.id}">Set password</button>` : ''}
+        <button class="btn ghost small" data-sact="rename" data-sid="${s.id}">Rename</button>
+        <button class="btn ghost small" data-sact="active" data-sid="${s.id}" data-val="${s.active ? 0 : 1}">${s.active ? 'Deactivate' : 'Reactivate'}</button>
+      </td></tr>`).join('') + '</table>';
+  $('st-list').querySelectorAll('button[data-sact]').forEach((b) => (b.onclick = () => staffAction(b, rows)));
+}
+async function staffAction(btn, rows) {
+  const id = Number(btn.dataset.sid);
+  const s = rows.find((r) => r.id === id);
+  try {
+    if (btn.dataset.sact === 'pin') {
+      const pin = prompt(`New PIN for ${s.name} (4–8 digits):${s.role === 'admin' ? '\n\nNote: setting a PIN means it replaces their password at sign-in.' : ''}`);
+      if (!pin) return;
+      await jpatch(`/admin/staff/${id}`, { pin });
+    }
+    if (btn.dataset.sact === 'clearpin') {
+      if (!confirm(`Clear ${s.name}'s PIN?${s.has_password ? ' They will sign in with their password again.' : ' They have NO password — they will be locked out until you set a credential.'}`)) return;
+      await jpatch(`/admin/staff/${id}`, { clear_pin: true });
+    }
+    if (btn.dataset.sact === 'password') {
+      const password = prompt(`New password for ${s.name}:`);
+      if (!password) return;
+      await jpatch(`/admin/staff/${id}`, { password });
+    }
+    if (btn.dataset.sact === 'rename') {
+      const name = prompt('New name:', s.name);
+      if (!name || name === s.name) return;
+      await jpatch(`/admin/staff/${id}`, { name });
+    }
+    if (btn.dataset.sact === 'active') {
+      const activating = btn.dataset.val === '1';
+      if (!activating && !confirm(`Deactivate ${s.name}? They are signed out everywhere immediately.`)) return;
+      await jpatch(`/admin/staff/${id}`, { active: activating });
+    }
+    toast('Saved'); loadStaff();
+  } catch (e) { toast(e.message, true); }
+}
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'st-role') {
+    $('st-secret').placeholder = e.target.value === 'admin' ? 'Password' : 'PIN';
+  }
+});
+document.addEventListener('click', async (e) => {
+  if (e.target.id !== 'st-add') return;
+  const role = $('st-role').value;
+  try {
+    await jpost('/admin/staff', {
+      name: $('st-name').value.trim(), role,
+      pin: role === 'door' ? $('st-secret').value.trim() : undefined,
+      password: role === 'admin' ? $('st-secret').value.trim() : undefined,
+    });
+    $('st-name').value = ''; $('st-secret').value = ''; $('st-error').textContent = '';
+    toast('Staff added'); loadStaff();
+  } catch (err) { $('st-error').textContent = err.message; }
+});
 
 // ----------------------------------------------------------------- txns ----
 async function loadTxns() {
-  const events = await api('/admin/events');
+  const events = await api('/admin/events?include_past=1'); // txn/report filters need history
   const sel = $('tx-event');
   const cur = sel.value;
   sel.innerHTML = '<option value="">All events</option>' +
@@ -441,7 +511,7 @@ async function openTxn(id) {
 // -------------------------------------------------------------- reports ----
 let rpPersonId = null;
 async function loadReports() {
-  const events = await api('/admin/events');
+  const events = await api('/admin/events?include_past=1'); // txn/report filters need history
   $('rp-event').innerHTML = '<option value="">All events</option>' +
     events.map((e) => `<option value="${e.id}">${esc(e.title)} · ${fmtDT(e.start_at)}</option>`).join('');
   renderReportLinks();

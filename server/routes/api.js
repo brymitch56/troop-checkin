@@ -12,8 +12,11 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 // ---------------------------------------------------------------- auth ----
 router.get('/staff-list', (req, res) => {
-  // kiosk login picker: names only
-  res.json(db.prepare(`SELECT id, name, role FROM staff WHERE active = 1 ORDER BY name`).all());
+  // kiosk login picker: names only. has_pin drives the input type client-side
+  // (admins without a PIN type their password; a set PIN overrides it).
+  res.json(db.prepare(
+    `SELECT id, name, role, pin_hash IS NOT NULL AS has_pin
+       FROM staff WHERE active = 1 ORDER BY name`).all());
 });
 
 router.post('/login', express.json(), (req, res) => {
@@ -147,19 +150,27 @@ router.post('/visitor', express.json(), (req, res) => {
 router.get('/events/current', (req, res) => {
   // datetime() normalizes both stored formats (ISO 'T'/'Z' and SQLite space
   // form) — raw string compares are wrong across the two.
+  // "Past" is day-granular: a multi-day event whose finish DATE is today is
+  // not past yet. Past events are returned but the client hides them behind
+  // a toggle.
   const now = new Date().toISOString();
   const matching = db.prepare(
     `SELECT * FROM event
       WHERE datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?)
       ORDER BY datetime(start_at)`
   ).all(now, now);
-  const nearby = db.prepare(
+  const upcoming = db.prepare(
     `SELECT * FROM event
       WHERE NOT (datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?))
-        AND datetime(end_at) >= datetime(?, '-6 hours') AND datetime(start_at) <= datetime(?, '+24 hours')
-      ORDER BY datetime(start_at) LIMIT 10`
-  ).all(now, now, now, now);
-  res.json({ matching, nearby });
+        AND date(end_at, 'localtime') >= date('now', 'localtime')
+      ORDER BY datetime(start_at) LIMIT 20`
+  ).all(now, now);
+  const past = db.prepare(
+    `SELECT * FROM event
+      WHERE date(end_at, 'localtime') < date('now', 'localtime')
+      ORDER BY datetime(start_at) DESC LIMIT 20`
+  ).all();
+  res.json({ matching, upcoming, past });
 });
 
 router.post('/events', express.json(), (req, res) => {

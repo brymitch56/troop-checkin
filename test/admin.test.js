@@ -278,6 +278,68 @@ test('config endpoint exposes env branding, no auth required', async () => {
   assert.equal(man.json.short_name, r.json.troop_id);
 });
 
+test('events: past hidden by default (day-granular), include_past reveals; kiosk picker shape', async () => {
+  const day = 86400e3;
+  const mk = (title, s, e) => db.prepare(
+    `INSERT INTO event (source, title, start_at, end_at) VALUES ('manual', ?, ?, ?)`
+  ).run(title, new Date(s).toISOString(), new Date(e).toISOString());
+  mk('Ended Yesterday', Date.now() - 2 * day, Date.now() - day);
+  mk('Ends Today Earlier', Date.now() - 5 * 3600e3, Date.now() - 3600e3); // finish DATE is today -> not past
+  mk('Next Month', Date.now() + 30 * day, Date.now() + 30 * day + 3600e3);
+
+  const def = await req('GET', '/api/admin/events', { cookie: adminCookie });
+  const names = def.json.map((e) => e.title);
+  assert.ok(!names.includes('Ended Yesterday'), 'past event should be hidden by default');
+  assert.ok(names.includes('Ends Today Earlier'), 'event finishing today is not past yet');
+  assert.ok(names.includes('Next Month'));
+  // upcoming sorted soonest-first
+  const upcomingIdx = names.indexOf('Ends Today Earlier');
+  assert.ok(upcomingIdx < names.indexOf('Next Month'), 'sorted current -> furthest away');
+
+  const all = await req('GET', '/api/admin/events?include_past=1', { cookie: adminCookie });
+  const withPast = all.json.map((e) => e.title);
+  assert.ok(withPast.includes('Ended Yesterday'));
+  assert.equal(all.json.find((e) => e.title === 'Ended Yesterday').is_past, 1);
+
+  const cur = await req('GET', '/api/events/current', { cookie: doorCookie });
+  assert.ok(Array.isArray(cur.json.upcoming) && Array.isArray(cur.json.past));
+  assert.ok(cur.json.past.some((e) => e.title === 'Ended Yesterday'));
+  assert.ok(cur.json.upcoming.some((e) => e.title === 'Next Month'));
+  assert.ok(!cur.json.past.some((e) => e.title === 'Ends Today Earlier'));
+});
+
+test('staff management: create, PIN-overrides-password, guards', async () => {
+  // door needs a PIN; admin needs a password
+  assert.equal((await req('POST', '/api/admin/staff', { cookie: adminCookie, body: { name: 'X', role: 'door' } })).status, 400);
+  assert.equal((await req('POST', '/api/admin/staff', { cookie: adminCookie, body: { name: 'X', role: 'admin' } })).status, 400);
+  const mk = await req('POST', '/api/admin/staff', {
+    cookie: adminCookie, body: { name: 'Second Admin', role: 'admin', password: 'pw2' },
+  });
+  assert.equal(mk.status, 200);
+  const id = mk.json.id;
+  // password login works
+  const login1 = await req('POST', '/api/login', { body: { staff_id: id, pin: 'pw2' } });
+  assert.equal(login1.status, 200);
+  // setting a PIN overrides the password
+  await req('PATCH', `/api/admin/staff/${id}`, { cookie: adminCookie, body: { pin: '9876' } });
+  assert.equal((await req('POST', '/api/login', { body: { staff_id: id, pin: 'pw2' } })).status, 401, 'password must stop working once a PIN is set');
+  assert.equal((await req('POST', '/api/login', { body: { staff_id: id, pin: '9876' } })).status, 200);
+  // clearing the PIN restores the password
+  await req('PATCH', `/api/admin/staff/${id}`, { cookie: adminCookie, body: { clear_pin: true } });
+  assert.equal((await req('POST', '/api/login', { body: { staff_id: id, pin: 'pw2' } })).status, 200);
+  // staff-list exposes has_pin for the kiosk input
+  const sl = await req('GET', '/api/staff-list');
+  assert.equal(sl.json.find((s) => s.name === 'Second Admin').has_pin, 0);
+  // guards: cannot deactivate self; deactivating the other admin is fine, then
+  // the remaining admin is protected as the last one
+  assert.equal((await req('PATCH', '/api/admin/staff/1', { cookie: adminCookie, body: { active: false } })).status, 409);
+  assert.equal((await req('PATCH', `/api/admin/staff/${id}`, { cookie: adminCookie, body: { active: false } })).status, 200);
+  assert.equal((await req('PATCH', '/api/admin/staff/1', { cookie: adminCookie, body: { role: 'door' } })).status, 409);
+  // deactivated staff can't log in and vanish from the kiosk picker
+  assert.equal((await req('POST', '/api/login', { body: { staff_id: id, pin: 'pw2' } })).status, 401);
+  assert.ok(!(await req('GET', '/api/staff-list')).json.some((s) => s.name === 'Second Admin'));
+});
+
 test('backup: VACUUM INTO snapshot restores onto a scratch DB (exit test)', async () => {
   const r = await req('POST', '/api/admin/backup', { cookie: adminCookie });
   assert.equal(r.status, 200);

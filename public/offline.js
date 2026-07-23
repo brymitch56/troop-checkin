@@ -86,12 +86,16 @@
     return out.filter((g) => g.authorized !== 0 || true).sort((a, b) => (b.is_primary - a.is_primary));
   }
   async function currentEvents() {
+    // mirror the server's shape: live / upcoming (not past yet, day-granular) / past
     const events = (await kvGet('events')) || [];
     const now = Date.now();
+    const todayStart = new Date(new Date().toDateString()).getTime();
     const matching = events.filter((e) => new Date(e.start_at) <= now && new Date(e.end_at) >= now);
-    const nearby = events.filter((e) => !matching.includes(e) &&
-      new Date(e.end_at) >= now - 6 * 3600e3 && new Date(e.start_at) <= now + 24 * 3600e3).slice(0, 10);
-    return { matching, nearby };
+    const upcoming = events.filter((e) => !matching.includes(e) && new Date(e.end_at) >= todayStart)
+      .sort((a, b) => new Date(a.start_at) - new Date(b.start_at)).slice(0, 20);
+    const past = events.filter((e) => new Date(e.end_at) < todayStart)
+      .sort((a, b) => new Date(b.start_at) - new Date(a.start_at)).slice(0, 20);
+    return { matching, upcoming, past };
   }
   async function markOpen(personId, open) {
     const p = await tx('people', 'readonly', (s) => s.get(personId));

@@ -172,6 +172,13 @@ input[type="password"], input[type="datetime-local"] {
 .modal h3 { margin: 0 0 12px; }
 .field { margin: 12px 0; }
 .field > label { font-weight: 700; font-size: 14px; letter-spacing: .04em; }
+.foot-links { text-align: center; margin: 18px 0 0; }
+.foot-links a { color: var(--muted); font-size: 13px; text-decoration: none; }
+.foot-links a:hover { text-decoration: underline; }
+details.past-events { margin-top: 10px; }
+details.past-events summary { color: var(--muted); font-size: 14px; cursor: pointer; padding: 6px 0; }
+details.past-events button { opacity: .75; }
+
 .sign-names { font-size: 17px; margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 10px; }
 .sign-person { display: inline-flex; align-items: center; gap: 6px; }
 .sign-person img {

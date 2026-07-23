@@ -35,7 +35,9 @@
       <button data-tab="txns">Transactions</button>
       <button data-tab="reports">Reports</button>
       <button data-tab="import">Roster import</button>
+      <button data-tab="staff">Staff</button>
     </nav>
+    <a class="pill ghost-pill" href="/">← Check-in</a>
     <button id="logout" class="pill ghost-pill"></button>
   </header>
 
@@ -74,6 +76,7 @@
   <div id="tab-events" class="tab" hidden>
     <div class="row wrap">
       <button id="ev-new" class="btn ghost small">+ New event</button>
+      <label class="check"><input id="ev-past" type="checkbox"> Show past events</label>
     </div>
     <div id="ev-list" class="tbl"></div>
     <div id="ev-detail" class="panel" hidden></div>
@@ -112,6 +115,27 @@
     <div class="panel">
       <h3>SMS notification log</h3>
       <div id="rp-notifications" class="tbl"></div>
+    </div>
+  </div>
+
+  <!-- ---- staff ---- -->
+  <div id="tab-staff" class="tab" hidden>
+    <div class="panel">
+      <h3>Staff accounts</h3>
+      <p class="hint left">Door staff sign in with a PIN. Admins use a password by default — giving an admin
+      a PIN makes the PIN their login (handy for door duty); clearing it restores the password. Everyone
+      should have their own account: every check-in records who ran it.</p>
+      <div id="st-list" class="tbl"></div>
+    </div>
+    <div class="panel">
+      <h3>Add staff</h3>
+      <div class="row wrap">
+        <input id="st-name" type="text" placeholder="Full name">
+        <select id="st-role"><option value="door">Door staff</option><option value="admin">Admin</option></select>
+        <input id="st-secret" type="text" placeholder="PIN">
+        <button id="st-add" class="btn primary small">Add</button>
+      </div>
+      <div id="st-error" class="error"></div>
     </div>
   </div>
 

@@ -202,9 +202,19 @@ router.delete('/people/:youthId/guardians/:guardianId', (req, res) => {
 
 // --------------------------------------------------------------- events ----
 router.get('/events', (req, res) => {
-  res.json(db.prepare(
-    `SELECT e.*, (SELECT COUNT(*) FROM txn t WHERE t.event_id = e.id) AS txn_count
-       FROM event e ORDER BY datetime(start_at) DESC LIMIT 500`).all());
+  // Default: current + future only, soonest first. Past (day-granular: an
+  // event isn't past until its finish date's day has ended) via ?include_past=1.
+  const includePast = req.query.include_past === '1';
+  const rows = db.prepare(
+    `SELECT e.*, (SELECT COUNT(*) FROM txn t WHERE t.event_id = e.id) AS txn_count,
+            date(e.end_at, 'localtime') < date('now', 'localtime') AS is_past
+       FROM event e
+      WHERE ? OR date(e.end_at, 'localtime') >= date('now', 'localtime')
+      ORDER BY is_past ASC,
+               CASE WHEN is_past THEN NULL ELSE datetime(start_at) END ASC,
+               datetime(start_at) DESC
+      LIMIT 1000`).all(includePast ? 1 : 0);
+  res.json(rows);
 });
 
 router.patch('/events/:id', (req, res) => {
@@ -490,6 +500,76 @@ router.get('/export/visitors.csv', (req, res) => {
             (SELECT COUNT(*) FROM txn_person tp WHERE tp.person_id = p.id)
        FROM person p WHERE p.status = 'visitor' ORDER BY p.created_at DESC`).raw().all();
   sendCsv(res, 'visitors.csv', ['last_name', 'first_name', 'type', 'first_seen', 'notes', 'txn_count'], rows);
+});
+
+// ---------------------------------------------------------------- staff ----
+// Door staff use a PIN. Admins use a password by default; giving an admin a
+// PIN overrides the password at login (clearing the PIN restores it).
+router.get('/staff', (req, res) => {
+  res.json(db.prepare(
+    `SELECT id, name, role, active, created_at,
+            pin_hash IS NOT NULL AS has_pin, password_hash IS NOT NULL AS has_password
+       FROM staff ORDER BY active DESC, role DESC, name`).all());
+});
+
+router.post('/staff', (req, res) => {
+  const { name, role, pin, password } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name is required.' });
+  if (!['door', 'admin'].includes(role)) return res.status(400).json({ error: 'Role must be door or admin.' });
+  if (role === 'door' && !pin) return res.status(400).json({ error: 'Door staff need a PIN.' });
+  if (role === 'admin' && !password) return res.status(400).json({ error: 'Admins need a password (a PIN is optional and overrides it).' });
+  const dup = db.prepare('SELECT 1 FROM staff WHERE name = ?').get(String(name).trim());
+  if (dup) return res.status(409).json({ error: 'That name already exists.' });
+  const r = db.prepare(
+    `INSERT INTO staff (name, role, pin_hash, password_hash) VALUES (?, ?, ?, ?)`
+  ).run(String(name).trim(), role,
+        pin ? auth.hashSecret(pin) : null,
+        password ? auth.hashSecret(password) : null);
+  res.json({ ok: true, id: Number(r.lastInsertRowid) });
+});
+
+router.patch('/staff/:id', (req, res) => {
+  const s = db.prepare('SELECT * FROM staff WHERE id = ?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'No such staff member.' });
+  const b = req.body || {};
+  const lastAdminGuard = () => {
+    const others = db.prepare(
+      `SELECT COUNT(*) c FROM staff WHERE role = 'admin' AND active = 1 AND id != ?`).get(s.id).c;
+    return others === 0;
+  };
+  const sets = [], vals = [];
+  if ('name' in b) {
+    if (!String(b.name).trim()) return res.status(400).json({ error: 'Name cannot be empty.' });
+    const dup = db.prepare('SELECT 1 FROM staff WHERE name = ? AND id != ?').get(String(b.name).trim(), s.id);
+    if (dup) return res.status(409).json({ error: 'That name already exists.' });
+    sets.push('name = ?'); vals.push(String(b.name).trim());
+  }
+  if ('role' in b) {
+    if (!['door', 'admin'].includes(b.role)) return res.status(400).json({ error: 'Bad role.' });
+    if (s.role === 'admin' && b.role === 'door' && lastAdminGuard()) {
+      return res.status(409).json({ error: 'Cannot demote the last active admin.' });
+    }
+    sets.push('role = ?'); vals.push(b.role);
+  }
+  if ('active' in b) {
+    if (!b.active && s.id === req.staff.staff_id) {
+      return res.status(409).json({ error: 'You cannot deactivate your own account.' });
+    }
+    if (!b.active && s.role === 'admin' && lastAdminGuard()) {
+      return res.status(409).json({ error: 'Cannot deactivate the last active admin.' });
+    }
+    sets.push('active = ?'); vals.push(b.active ? 1 : 0);
+    if (!b.active) db.prepare('DELETE FROM session WHERE staff_id = ?').run(s.id); // kick them out
+  }
+  if (b.clear_pin) { sets.push('pin_hash = NULL'); }
+  else if (b.pin) { sets.push('pin_hash = ?'); vals.push(auth.hashSecret(b.pin)); }
+  if (b.password) { sets.push('password_hash = ?'); vals.push(auth.hashSecret(b.password)); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+  db.prepare(`UPDATE staff SET ${sets.join(', ')} WHERE id = ?`).run(...vals, s.id);
+  const out = db.prepare(
+    `SELECT id, name, role, active, pin_hash IS NOT NULL AS has_pin,
+            password_hash IS NOT NULL AS has_password FROM staff WHERE id = ?`).get(s.id);
+  res.json(out);
 });
 
 router.post('/backup', (req, res) => {
