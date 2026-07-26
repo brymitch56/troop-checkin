@@ -105,7 +105,10 @@ sudo systemctl status troop-checkin     # is it running?
 sudo systemctl restart troop-checkin    # after any .env change
 journalctl -u troop-checkin -f          # live logs (Ctrl-C to exit)
 cd ~/troop-checkin && git pull && npm ci --omit=dev && npm run migrate && sudo systemctl restart troop-checkin   # update to latest code
+bash scripts/deploy-verify.sh <expected-head-short> <expected-sw-version>   # ALWAYS verify after updating (see below)
 ```
+
+**Always run the deploy verifier after every update.** `bash scripts/deploy-verify.sh 1302ab4 tc-v12` (substitute the HEAD/sw you just deployed) checks that the working tree exactly matches HEAD (catches 0-byte/truncated files from a bad pull — this happened once in production), that critical modules export what callers need, that no migration is pending, and that the service, `healthz`, the served `sw.js` version, and co-hosted DerbyNet are all healthy. It prints `RESULT: PASS` and exits 0 only if everything is right. The app also refuses to boot if a core module is corrupt (startup self-check, loud in `journalctl`).
 
 Backups write themselves nightly to `~/troop-checkin/data/backups/` (kept: 14). Remote access via Cloudflare Tunnel is covered in the README ("Remote access").
 

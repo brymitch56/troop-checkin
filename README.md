@@ -32,6 +32,15 @@ Your troop's number and name live in `.env` — nothing troop-specific is hardco
 5. From a phone on the same Wi-Fi, open `http://<pi-hostname>.local:3000` — sign in, and use the browser's "Add to Home Screen" to install the PWA. The admin area is at `/admin.html`.
 6. Import your roster: Admin → **Roster import** → upload the Trail Life Connect member export (.xlsx) → review the preview (adds / updates / deactivations) → commit. Re-import any time you get a new export; your guardian/authorized-list edits are never overwritten. The uploaded file is archived under `data/` and stays out of git.
 
+## Updating & verifying a deploy
+
+```bash
+cd ~/troop-checkin && git pull && npm ci --omit=dev && npm run migrate && sudo systemctl restart troop-checkin
+bash scripts/deploy-verify.sh            # optionally: <expected-head-short> <expected-sw-version>
+```
+
+`scripts/deploy-verify.sh` must print `RESULT: PASS` before you trust the deploy. It verifies the working tree exactly matches HEAD (catching 0-byte or truncated files from an interrupted pull), that critical server modules export what their callers depend on, that no database migration is pending, and that the service answers `healthz` and serves the expected `sw.js` version. On a dev machine run it with `SKIP_SERVICE=1`. As a second line of defense the server runs a startup self-check and refuses to boot (exit 1, clear `journalctl` message) if a core module is corrupt — a broken deploy fails loudly instead of crashing days later mid-meeting.
+
 ## Roster import expectations
 
 The importer reads the standard Trail Life Connect member export: a title row, then a header row containing **Member Number** (located by name, so filtered exports work too), with the **Youth** Y/N column separating youth from adults. A youth's "Email" column is treated as a TLC username, not an email; guardians auto-link via **Adult Cc Email** matching an adult's Email, falling back to same last name or same address+zip. People absent from a newer file are marked inactive (never deleted); a youth-only export leaves adults untouched.
