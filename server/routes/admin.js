@@ -480,6 +480,62 @@ router.post('/merge', (req, res) => {
   res.json({ ok: true });
 });
 
+// ------------------------------------------------- automated roster sync ----
+// The fetch job (server/scripts/fetch-roster.js, weekly systemd timer or the
+// "Sync now" button) stages a PENDING import; these routes surface it for
+// one-tap Approve/Discard. The job can never commit — only approve does.
+const rosterSync = require('../lib/rosterSync');
+let syncChild = null; // one sync at a time; admin UI polls `running`
+
+router.get('/roster-sync', (req, res) => {
+  let state = {};
+  try {
+    state = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'roster-fetch-state.json'), 'utf8'));
+  } catch { /* no runs yet */ }
+  res.json({
+    configured: !!(process.env.TLC_EMAIL && process.env.TLC_PASSWORD),
+    enabled: String(process.env.TLC_ENABLED || 'true').toLowerCase() !== 'false',
+    running: !!syncChild,
+    started_at: syncChild ? syncChild.startedAt : null,
+    last_run: state.last_run || null,
+    last_status: state.last_status || null,
+    last_error: state.last_error || null,
+    last_rows: state.last_rows || null,
+    pending: rosterSync.getPending(),
+  });
+});
+
+router.post('/roster-sync/run', (req, res) => {
+  if (syncChild) return res.status(409).json({ error: 'A sync is already running.' });
+  if (!process.env.TLC_EMAIL || !process.env.TLC_PASSWORD) {
+    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured (TLC_EMAIL / TLC_PASSWORD in .env).' });
+  }
+  const { spawn } = require('child_process');
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'scripts', 'fetch-roster.js')],
+    { stdio: 'ignore', env: process.env });
+  syncChild = { startedAt: new Date().toISOString() };
+  const done = () => { syncChild = null; clearTimeout(killer); };
+  child.on('exit', done);
+  child.on('error', done);
+  // hard stop: the poll loop is self-limiting, but never let a wedged child
+  // hang the "running" state forever
+  const killer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 10 * 60 * 1000);
+  killer.unref();
+  res.json({ ok: true, started: true });
+});
+
+router.post('/roster-sync/approve', (req, res) => {
+  try {
+    res.json({ ok: true, ...rosterSync.approvePending(req.staff.staff_id) });
+  } catch (e) {
+    res.status(e.code || 500).json({ error: e.message });
+  }
+});
+
+router.post('/roster-sync/discard', (req, res) => {
+  res.json({ ok: true, ...rosterSync.discardPending() });
+});
+
 // -------------------------------------------------------------- reports ----
 router.get('/imports', (req, res) => {
   res.json(db.prepare(

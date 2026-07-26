@@ -766,10 +766,82 @@ async function runReport() {
     : '<p class="hint left">No attendance in that range.</p>';
 }
 
+// ---------------------------------------------------- automated sync ----
+let syncTimer = null;
+async function loadSync() {
+  const s = await api('/admin/roster-sync').catch(() => null);
+  if (!s) return;
+  // status line: make a silently-broken job visible at a glance
+  const bits = [];
+  if (!s.configured) bits.push('Not configured — set TLC_EMAIL / TLC_PASSWORD in .env on the server.');
+  else if (!s.enabled) bits.push('Disabled (TLC_ENABLED=false).');
+  if (s.running) bits.push(`⏳ Sync running (started ${fmtDT(s.started_at)})…`);
+  if (s.last_run) {
+    bits.push(`Last run ${fmtDT(s.last_run)}: ` + (s.last_status === 'ok'
+      ? `✅ ok (${s.last_rows} rows)`
+      : `❌ ${esc(s.last_error || 'failed')}`));
+  } else if (s.configured) {
+    bits.push('No runs yet.');
+  }
+  $('sync-status').innerHTML = bits.join('<br>') || '';
+  $('sync-now').disabled = !!s.running || !s.configured;
+
+  const p = s.pending;
+  if (!p) {
+    $('sync-pending').innerHTML = s.configured
+      ? '<p class="hint left">No pending import — nothing fetched yet, or the last one was approved/discarded.</p>' : '';
+  } else {
+    const pv = p.preview || {};
+    const list = (arr) => (arr || []).map(esc).join(', ');
+    $('sync-pending').innerHTML = `
+      <div class="panel">
+        <h4>Pending import — fetched ${fmtDT(p.fetched_at)}
+          ${p.replaced_count ? '<span class="tag off" title="A newer fetch replaced the previous pending import">replaced an older pending import</span>' : ''}
+        </h4>
+        <p><b>${p.rows}</b> people in file (${pv.youth ?? '?'} youth, ${pv.adults ?? '?'} adults) —
+          <b>${(pv.added || []).length}</b> new, <b>${(pv.updated || []).length}</b> updated,
+          <b>${(pv.deactivated || []).length}</b> would be deactivated.</p>
+        ${(pv.added || []).length ? `<p><b>New:</b> ${list(pv.added)}</p>` : ''}
+        ${(pv.updated || []).length ? `<p><b>Updated:</b> ${pv.updated.map((u) => `${esc(u.name)} (${u.fields.map(esc).join(', ')})`).join('; ')}</p>` : ''}
+        ${(pv.deactivated || []).length ? `<p class="error"><b>Deactivated:</b> ${list(pv.deactivated)}</p>` : ''}
+        <p class="hint left">Diff computed when fetched; approving re-checks everything against the current
+        roster (locks, guardians, deactivation scoping) exactly like a manual commit.</p>
+        <div class="row wrap">
+          <button id="sync-approve" class="btn primary small">Approve import</button>
+          <button id="sync-discard" class="btn ghost small">Discard</button>
+        </div>
+      </div>`;
+  }
+  // poll while a sync is running so the result appears without a manual refresh
+  clearTimeout(syncTimer);
+  if (s.running && !$('tab-import').hidden) syncTimer = setTimeout(loadSync, 5000);
+}
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'sync-now') {
+    try { await jpost('/admin/roster-sync/run', {}); toast('Sync started — this can take a couple of minutes.'); loadSync(); }
+    catch (err) { toast(err.message, true); }
+  }
+  if (e.target.id === 'sync-approve') {
+    const deact = document.querySelector('#sync-pending .error');
+    if (!confirm('Approve this import?' + (deact ? '\n\nIt DEACTIVATES the people listed in red — make sure that is expected.' : ''))) return;
+    try {
+      const r = await jpost('/admin/roster-sync/approve', {});
+      toast(`Imported: +${r.added}, ~${r.updated}, −${r.deactivated}, ${r.linked_guardians} guardians linked`);
+      loadImport();
+    } catch (err) { toast(err.message, true); }
+  }
+  if (e.target.id === 'sync-discard') {
+    if (!confirm('Discard this pending import? The fetched file stays archived; the next sync will stage a fresh one.')) return;
+    try { await jpost('/admin/roster-sync/discard', {}); toast('Discarded'); loadSync(); }
+    catch (err) { toast(err.message, true); }
+  }
+});
+
 // --------------------------------------------------------------- import ----
 async function loadImport() {
   $('imp-commit').disabled = true;
   $('imp-result').innerHTML = '';
+  loadSync();
   const log = await api('/admin/imports');
   $('imp-log').innerHTML = log.length ? `<table><tr><th>When</th><th>File</th><th>By</th><th>Added</th><th>Updated</th><th>Deactivated</th><th>Linked</th></tr>` +
     log.map((r) => `<tr><td>${fmtDT(r.imported_at)}</td><td>${esc(r.filename)}</td><td>${esc(r.staff_name || '')}</td>
