@@ -482,6 +482,15 @@ router.get('/export/summary.csv', (req, res) => {
     rows);
 });
 
+// Full SMS message log: broadcasts, alerts, and every inbound reply.
+router.get('/messages', (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  res.json(db.prepare(
+    `SELECT m.*, g.first_name || ' ' || g.last_name AS guardian_name
+       FROM sms_message m LEFT JOIN person g ON g.id = m.guardian_id
+      ORDER BY m.id DESC LIMIT ?`).all(limit));
+});
+
 // SMS notification log (Phase 3)
 router.get('/notifications', (req, res) => {
   res.json(db.prepare(

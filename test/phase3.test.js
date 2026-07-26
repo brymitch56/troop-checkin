@@ -322,6 +322,39 @@ test('notify-onsite: one text per guardian covering all their youth; skips + ded
   }
 });
 
+test('message log: all traffic stored; broadcast replies logged, not robo-answered; delivery callbacks', async () => {
+  const bob = person('Bob');
+  // inbound non-keyword reply (e.g. answering an ETA broadcast)
+  const before = db.prepare('SELECT COUNT(*) c FROM sms_message').get().c;
+  const reply = await twilioPost('/api/sms/inbound', { From: '5550102', Body: 'Sounds good, we are 10 min out' });
+  assert.equal(reply.status, 200);
+  assert.ok(!/Reply Y to confirm/.test(reply.text), 'no pickup nag when nothing is pending');
+  const row = db.prepare('SELECT * FROM sms_message ORDER BY id DESC LIMIT 1').get();
+  assert.equal(row.direction, 'in');
+  assert.equal(row.kind, 'reply');
+  assert.equal(row.guardian_id, bob.id);
+  assert.equal(row.body, 'Sounds good, we are 10 min out');
+  assert.ok(db.prepare('SELECT COUNT(*) c FROM sms_message').get().c > before);
+  // outbound traffic from the earlier notify/broadcast tests is in the log too
+  assert.ok(db.prepare(`SELECT COUNT(*) c FROM sms_message WHERE direction = 'out' AND kind = 'custom'`).get().c >= 2);
+  assert.ok(db.prepare(`SELECT COUNT(*) c FROM sms_message WHERE direction = 'out' AND kind = 'lingering'`).get().c >= 1);
+  // admin endpoint joins guardian names
+  const list = await req('GET', '/api/admin/messages', { cookie: adminCookie });
+  assert.equal(list.status, 200);
+  assert.ok(list.json[0].guardian_name.includes('Bob'));
+  // delivery status callback (signed) updates the message row
+  db.prepare(`UPDATE sms_message SET twilio_sid = 'SMtest123' WHERE id = ?`).run(row.id);
+  const cb = await twilioPost('/api/sms/status', { MessageSid: 'SMtest123', MessageStatus: 'delivered' });
+  assert.equal(cb.status, 204);
+  assert.equal(db.prepare('SELECT status FROM sms_message WHERE id = ?').get(row.id).status, 'delivered');
+  // unsigned callback rejected
+  const forged = await req('POST', '/api/sms/status', {
+    body: 'MessageSid=SMtest123&MessageStatus=failed',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  });
+  assert.equal(forged.status, 403);
+});
+
 // ---------------------------------------------------------------- reports ----
 test('report summary + CSVs honor date-range/person/event filters', async () => {
   const sum = await req('GET', '/api/admin/report/summary', { cookie: adminCookie });

@@ -19,17 +19,20 @@ const e164 = (p) => {
 };
 
 // Returns { sid } on success; throws with Twilio's error message on failure.
+// When PUBLIC_URL is set, Twilio posts delivery updates to /api/sms/status.
 async function send(to, body) {
   if (!configured()) throw new Error('SMS is not configured (SMS_ENABLED / TWILIO_* in .env).');
   const url = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`;
   const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+  const params = { From: env.TWILIO_FROM_NUMBER, To: e164(to), Body: body };
+  if (env.PUBLIC_URL) params.StatusCallback = `${env.PUBLIC_URL}/api/sms/status`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${auth}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({ From: env.TWILIO_FROM_NUMBER, To: e164(to), Body: body }),
+    body: new URLSearchParams(params),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || `Twilio error ${res.status}`);

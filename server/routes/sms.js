@@ -27,7 +27,8 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
   }
 
   const from = sms.normPhone(req.body.From);
-  const text = String(req.body.Body || '').trim().toUpperCase();
+  const rawBody = String(req.body.Body || '').trim();
+  const text = rawBody.toUpperCase();
   if (!from) return twiml(res);
 
   // guardian rows whose adult's mobile matches the sender
@@ -39,6 +40,16 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
     const g = db.prepare('SELECT phone_mobile FROM person WHERE id = ?').get(r.guardian_id);
     return sms.normPhone(g.phone_mobile) === from;
   });
+
+  // every inbound message goes in the viewable log (keyword or not)
+  const isKeyword = ['Y', 'YES', 'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT',
+    'START', 'UNSTOP', 'SUBSCRIBE', 'HELP'].includes(text);
+  db.prepare(
+    `INSERT INTO sms_message (direction, kind, guardian_id, phone, body, twilio_sid, status)
+     VALUES ('in', ?, ?, ?, ?, ?, 'received')`
+  ).run(isKeyword ? 'keyword' : 'reply',
+        guardianRows.length ? guardianRows[0].guardian_id : null,
+        String(req.body.From || ''), rawBody, req.body.MessageSid || null);
 
   if (['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'].includes(text)) {
     for (const r of guardianRows) {
@@ -99,7 +110,41 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
       : 'No open check-ins were waiting on you. If something looks wrong, please contact the leaders.');
   }
 
-  return twiml(res, `Reply Y to confirm pickup, or STOP to opt out of ${env.TROOP_ID} alerts.`);
+  // Non-keyword text (e.g. a reply to an ETA broadcast): it's logged above for
+  // leaders to read in Admin → Messages. Only send the Y-hint when this sender
+  // actually has a pickup confirmation pending — otherwise stay quiet instead
+  // of robo-nagging someone who just wrote "thanks".
+  const hasPending = guardianRows.some((r) => db.prepare(
+    `SELECT 1 FROM notification n
+       JOIN txn_person tp ON tp.person_id = n.person_id AND tp.open = 1
+       JOIN txn t ON t.id = tp.txn_id AND t.voided_by_txn_id IS NULL
+      WHERE n.guardian_id = ? AND n.person_id = ? AND n.kind = 'lingering'
+        AND n.status IN ('sent', 'delivered') LIMIT 1`
+  ).get(r.guardian_id, r.youth_id));
+  if (hasPending) {
+    return twiml(res, `Reply Y to confirm pickup, or STOP to opt out of ${env.TROOP_ID} alerts.`);
+  }
+  return twiml(res);
+});
+
+// Twilio delivery-status callbacks (sent -> delivered/undelivered/failed).
+// Configured automatically on every send when PUBLIC_URL is set.
+router.post('/status', express.urlencoded({ extended: false }), (req, res) => {
+  if (!env.SMS_ENABLED || !env.PUBLIC_URL) return res.status(404).end();
+  const url = `${env.PUBLIC_URL}/api/sms/status`;
+  if (!sms.validateSignature(req.headers['x-twilio-signature'], url, req.body)) {
+    return res.status(403).end();
+  }
+  const sid = req.body.MessageSid, st = req.body.MessageStatus;
+  if (sid && st) {
+    db.prepare('UPDATE sms_message SET status = ? WHERE twilio_sid = ?').run(st, sid);
+    if (st === 'delivered') {
+      db.prepare(`UPDATE notification SET status = 'delivered' WHERE twilio_sid = ? AND status = 'sent'`).run(sid);
+    } else if (st === 'failed' || st === 'undelivered') {
+      db.prepare(`UPDATE notification SET status = 'failed' WHERE twilio_sid = ? AND status IN ('sent')`).run(sid);
+    }
+  }
+  res.status(204).end();
 });
 
 module.exports = router;

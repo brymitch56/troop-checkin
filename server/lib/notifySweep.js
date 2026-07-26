@@ -73,20 +73,26 @@ function groupByGuardian(rows, { dedupe }) {
   return { groups, skipped };
 }
 
-// Send one text per guardian group; record one notification row per youth.
+// Send one text per guardian group; record one notification row per youth and
+// one sms_message row per actual message (the viewable log).
 async function sendGroups(groups, kind, bodyFor) {
   const sent = [], failed = [];
   let recorded = 0, sentCount = 0;
   for (const grp of groups.values()) {
     let status = 'failed', sid = null;
+    const body = bodyFor(grp);
     if (sms.configured()) {
       try {
-        const r = await sms.send(grp.phone_mobile, bodyFor(grp));
+        const r = await sms.send(grp.phone_mobile, body);
         status = 'sent'; sid = r.sid; sentCount++;
       } catch (e) {
         console.error(`sms to guardian #${grp.guardian_id} failed:`, e.message);
       }
     }
+    db.prepare(
+      `INSERT INTO sms_message (direction, kind, guardian_id, phone, body, twilio_sid, status)
+       VALUES ('out', ?, ?, ?, ?, ?, ?)`
+    ).run(kind, grp.guardian_id, grp.phone_mobile, body, sid, status);
     for (const row of grp.rows) {
       db.prepare(
         `INSERT INTO notification (person_id, guardian_id, event_id, channel, status, twilio_sid, kind)

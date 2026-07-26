@@ -65,5 +65,8 @@
 .gadd-forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
 .gadd-forms h4 { margin: 0 0 8px; }
 .gadd-forms input { font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px; }
+.msg-body { max-width: 380px; word-break: break-word; }
+tr.msg-reply { background: #FDF4EC; }
+
 .filters label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
 .filters input[type="date"] { font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px; background: var(--card); }

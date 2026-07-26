@@ -64,7 +64,7 @@ function enterApp() {
 }
 
 // ----------------------------------------------------------------- tabs ----
-const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, reports: loadReports, import: loadImport, staff: loadStaff };
+const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, messages: loadMessages, reports: loadReports, import: loadImport, staff: loadStaff };
 $('tabs').onclick = (e) => {
   const b = e.target.closest('button[data-tab]');
   if (b) showTab(b.dataset.tab);
@@ -562,6 +562,32 @@ async function openTxn(id) {
     catch (e) { toast(e.message, true); }
   };
 }
+
+// ------------------------------------------------------------- messages ----
+let msgTimer = null;
+async function loadMessages() {
+  const rows = await api('/admin/messages');
+  const kindTag = (m) => m.direction === 'in'
+    ? (m.kind === 'reply' ? '<span class="tag warn">reply</span>' : '<span class="tag off">keyword</span>')
+    : (m.kind === 'custom' ? '<span class="tag youth">broadcast</span>' : '<span class="tag off">pickup alert</span>');
+  $('msg-list').innerHTML = rows.length
+    ? `<table><tr><th></th><th>When</th><th>Who</th><th>Type</th><th>Message</th><th>Status</th></tr>` +
+      rows.map((m) => `<tr class="${m.direction === 'in' && m.kind === 'reply' ? 'msg-reply' : ''}">
+        <td>${m.direction === 'in' ? '📥' : '📤'}</td>
+        <td>${fmtDT(m.at)}</td>
+        <td>${esc(m.guardian_name || m.phone || '?')}</td>
+        <td>${kindTag(m)}</td>
+        <td class="msg-body">${esc(m.body || '')}</td>
+        <td>${esc(m.status || '')}</td></tr>`).join('') + '</table>'
+    : '<p class="hint left">No messages yet.</p>';
+  // live-ish refresh while the tab is open
+  clearInterval(msgTimer);
+  msgTimer = setInterval(() => {
+    if ($('tab-messages').hidden) return clearInterval(msgTimer);
+    loadMessages();
+  }, 15000);
+}
+document.addEventListener('click', (e) => { if (e.target.id === 'msg-refresh') loadMessages(); });
 
 // -------------------------------------------------------------- reports ----
 let rpPersonId = null;
