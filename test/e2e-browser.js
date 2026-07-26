@@ -199,8 +199,20 @@ async function main() {
   await admin.$eval('[data-tab="people"]', (el) => el.click());
   await admin.waitForFunction(() => document.querySelectorAll('#pp-list tr[data-id]').length >= 6);
   await admin.$eval('#pp-list tr[data-id]', (el) => el.click());
-  await admin.waitForSelector('#pp-detail:not([hidden])');
-  step('admin people list + detail');
+  await admin.waitForSelector('#person-modal:not([hidden])');
+  await admin.waitForFunction(() => document.querySelectorAll('#pp-detail [data-f]').length > 0);
+  // layered dialog: open the family/consent modal on top, then close both
+  const isYouthDetail = await admin.$('#pp-family');
+  if (isYouthDetail) {
+    await admin.$eval('#pp-family', (el) => el.click());
+    await admin.waitForSelector('#adm-modal:not([hidden])');
+    await admin.waitForFunction(() => document.querySelectorAll('#fam-ylist input').length > 0);
+    await admin.$eval('#fam-close', (el) => el.click());
+    await admin.waitForSelector('#adm-modal[hidden]');
+  }
+  await admin.$eval('#person-close', (el) => el.click());
+  await admin.waitForSelector('#person-modal[hidden]');
+  step('admin people list + person dialog + layered family dialog');
 
   await admin.$eval('[data-tab="txns"]', (el) => el.click());
   await admin.waitForFunction(() => document.querySelectorAll('#tx-list tr[data-id]').length >= 2);

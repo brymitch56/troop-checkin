@@ -68,6 +68,8 @@
 /* centered dialog (kiosk's .modal-root is a bottom sheet) */
 .modal-root { align-items: center !important; }
 .adm-modal { max-width: 640px; width: calc(100% - 32px); max-height: 88vh; overflow-y: auto; }
+#person-modal .adm-modal { max-width: 900px; } /* person editor is wide (guardian table) */
+#adm-modal { z-index: 60; } /* family/consent dialog layers above the person dialog (z 50) */
 .fam-head { display: flex; justify-content: space-between; align-items: center; }
 .adm-modal h4 { margin: 14px 0 6px; color: var(--pine); }
 .adm-modal input[type="search"], .adm-modal input[type="text"], .adm-modal input[type="tel"],

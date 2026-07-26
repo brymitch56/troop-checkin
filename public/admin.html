@@ -70,7 +70,6 @@
       <select id="pp-status"><option value="">Any status</option><option>active</option><option>inactive</option><option>visitor</option></select>
     </div>
     <div id="pp-list" class="tbl"></div>
-    <div id="pp-detail" class="panel" hidden></div>
   </div>
 
   <!-- ---- events ---- -->
@@ -178,6 +177,19 @@
     </div>
   </div>
 </section>
+
+<!-- ============ PERSON DETAIL MODAL ============ -->
+<div id="person-modal" class="modal-root" hidden>
+  <div class="modal adm-modal">
+    <div class="modal-page">
+      <div class="fam-head">
+        <h3>Edit person</h3>
+        <button id="person-close" class="btn ghost small" aria-label="Close">✕ Close</button>
+      </div>
+      <div id="pp-detail"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ============ FAMILY GUARDIAN/CONSENT MODAL ============ -->
 <div id="adm-modal" class="modal-root" hidden>

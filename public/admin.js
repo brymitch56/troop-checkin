@@ -140,7 +140,8 @@ async function loadPeople() {
 async function openPerson(id) {
   const p = await api(`/admin/people/${id}`);
   const forms = p.is_youth ? await api('/admin/consent-forms').catch(() => []) : [];
-  const d = $('pp-detail'); d.hidden = false;
+  const d = $('pp-detail');
+  $('person-modal').hidden = false; // person editor is a dialog; family/consent layers above it
   let locked = [];
   try { locked = JSON.parse(p.manual_fields || '[]'); } catch { /* ignore */ }
   const lockTag = (field) => locked.includes(field) ? ' <span class="tag off" title="Hand-edited — roster imports will not change this field">🔒</span>' : '';
@@ -185,7 +186,7 @@ async function openPerson(id) {
     try { await jpatch(`/admin/people/${id}`, body); toast('Saved'); loadPeople(); openPerson(id); }
     catch (e) { toast(e.message, true); }
   };
-  $('pp-close').onclick = () => (d.hidden = true);
+  $('pp-close').onclick = closePersonModal;
   if ($('pp-unlock')) $('pp-unlock').onclick = async () => {
     if (!confirm('Unlock all fields on this person? The next roster import may overwrite them with file values.')) return;
     try { await jpatch(`/admin/people/${id}`, { clear_manual: true }); openPerson(id); }
@@ -217,7 +218,7 @@ async function openPerson(id) {
     if (!hits.length) return toast('No matching roster youth.', true);
     const pick = hits[0];
     if (!confirm(`Merge into ${pick.first_name} ${pick.last_name} (#${pick.member_id})? Attendance history transfers; this cannot be undone.`)) return;
-    try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); d.hidden = true; loadPeople(); }
+    try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); closePersonModal(); loadPeople(); }
     catch (e) { toast(e.message, true); }
   };
 
@@ -311,6 +312,17 @@ function renderFamYouthList(preChecked) {
 }
 
 function closeFamilyModal() { $('adm-modal').hidden = true; }
+function closePersonModal() { $('person-modal').hidden = true; }
+// Esc closes the top-most layer; clicking the dark backdrop closes that layer
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!$('adm-modal').hidden) closeFamilyModal();
+  else if (!$('person-modal').hidden) closePersonModal();
+});
+document.addEventListener('mousedown', (e) => {
+  if (e.target.id === 'adm-modal') closeFamilyModal();
+  if (e.target.id === 'person-modal') closePersonModal();
+});
 
 document.addEventListener('input', (e) => {
   if (e.target.id === 'fam-ysearch') renderFamYouthList();
@@ -344,6 +356,7 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'fam-optin') $('fam-consent-wrap').hidden = !$('fam-optin').checked;
 });
 document.addEventListener('click', async (e) => {
+  if (e.target.id === 'person-close') closePersonModal();
   if (e.target.id === 'fam-close' || e.target.id === 'fam-cancel') closeFamilyModal();
   if (e.target.id !== 'fam-apply') return;
   const err = (m) => ($('fam-error').textContent = m);
