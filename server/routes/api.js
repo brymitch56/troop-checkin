@@ -367,33 +367,47 @@ router.get('/onsite', (req, res) => {
   res.json(rows);
 });
 
-// Kiosk "text guardians" button: notify every youth still on site (optionally
-// one patrol). Strictly opt-in — the response tells the leader exactly who was
-// NOT contacted and why, so they can phone those families instead.
+// Kiosk guardian texting. Strictly opt-in; ONE text per guardian even when
+// they cover several on-site youth; the response tells the leader exactly who
+// was NOT contacted and why, so they can phone those families instead.
+const onsiteYouthRows = (patrol) => db.prepare(
+  `SELECT p.id AS person_id, p.first_name, p.last_name, p.nickname,
+          e.id AS event_id, e.title
+     FROM txn_person tp
+     JOIN txn t ON t.id = tp.txn_id
+     JOIN person p ON p.id = tp.person_id
+     JOIN event e ON e.id = t.event_id
+    WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL AND p.is_youth = 1
+      AND (? IS NULL OR p.patrol = ?)`
+).all(patrol, patrol);
+
 router.post('/notify-onsite', express.json(), async (req, res) => {
   const sms = require('../lib/sms');
-  const { notifyYouth } = require('../lib/notifySweep');
+  const { notifyLingering } = require('../lib/notifySweep');
   if (!sms.configured()) {
     return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
   }
   const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
-  const rows = db.prepare(
-    `SELECT p.id AS person_id, p.first_name, p.last_name, p.nickname,
-            e.id AS event_id, e.title
-       FROM txn_person tp
-       JOIN txn t ON t.id = tp.txn_id
-       JOIN person p ON p.id = tp.person_id
-       JOIN event e ON e.id = t.event_id
-      WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL AND p.is_youth = 1
-        AND (? IS NULL OR p.patrol = ?)`
-  ).all(patrol, patrol);
-  const sent = [], skipped = [];
-  for (const row of rows) {
-    const r = await notifyYouth(row);
-    if (r.status === 'sent') sent.push({ youth: r.youth, guardian: r.guardian });
-    else skipped.push({ youth: r.youth, reason: r.reason });
+  const rows = onsiteYouthRows(patrol);
+  const r = await notifyLingering(rows);
+  res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
+});
+
+// Custom broadcast to opted-in guardians of on-site youth (ETA updates on the
+// way back from a trip, etc.). Repeatable; never closes sign-ins.
+router.post('/message-onsite', express.json(), async (req, res) => {
+  const sms = require('../lib/sms');
+  const { messageGuardians } = require('../lib/notifySweep');
+  if (!sms.configured()) {
+    return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
   }
-  res.json({ onsite_youth: rows.length, sent, skipped });
+  const message = String((req.body && req.body.message) || '').trim();
+  if (!message) return res.status(400).json({ error: 'Type the message first.' });
+  if (message.length > 300) return res.status(400).json({ error: 'Keep the message under 300 characters.' });
+  const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
+  const rows = onsiteYouthRows(patrol);
+  const r = await messageGuardians(rows, message);
+  res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
 });
 
 router.get('/patrols', (req, res) => {

@@ -75,7 +75,8 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
         if (!open) continue;
         const notified = db.prepare(
           `SELECT id FROM notification
-            WHERE person_id = ? AND guardian_id = ? AND event_id = ? AND status IN ('sent', 'delivered')`
+            WHERE person_id = ? AND guardian_id = ? AND event_id = ?
+              AND kind = 'lingering' AND status IN ('sent', 'delivered')`
         ).get(r.youth_id, r.guardian_id, open.event_id);
         if (!notified) continue; // only close what we actually asked about
         const t = db.prepare(

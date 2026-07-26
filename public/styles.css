@@ -173,6 +173,10 @@ input[type="password"], input[type="datetime-local"] {
 .field { margin: 12px 0; }
 .field > label { font-weight: 700; font-size: 14px; letter-spacing: .04em; }
 .notify-row { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+#msg-text {
+  width: 100%; font-size: 16px; padding: 10px; border: 1.5px solid var(--line);
+  border-radius: var(--radius); font-family: inherit; resize: vertical;
+}
 .warn-text { color: var(--blaze); }
 #modal-notify h4 { margin: 12px 0 4px; }
 

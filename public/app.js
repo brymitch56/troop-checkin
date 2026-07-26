@@ -650,28 +650,47 @@ $('onsite-pill').onclick = async () => {
 };
 $('onsite-back').onclick = () => { show('screen-main'); refreshOnsiteCount(); };
 
-// "Text guardians" — notifies opted-in guardians of everyone still on site
-// (scoped to the current patrol filter) and reports who was NOT contacted.
+// Guardian texting from the on-site screen. One text per guardian (a parent
+// with several youth on site gets a single message covering all of them);
+// the results modal lists exactly who was NOT contacted and why.
+function renderNotifyResults(r) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const box = $('notify-results');
+  box.innerHTML =
+    (r.sent.length
+      ? `<h4>✅ Texted (${r.sent.length} message${r.sent.length > 1 ? 's' : ''})</h4>` +
+        r.sent.map((x) => `<div class="notify-row">${esc(x.guardian)} ← ${esc(x.youths.join(', '))}</div>`).join('')
+      : '<p class="hint">No texts sent.</p>') +
+    (r.skipped.length
+      ? `<h4 class="warn-text">⚠️ Not contacted — reach these families another way</h4>` +
+        r.skipped.map((x) => `<div class="notify-row">${esc(x.youth || (x.youths || []).join(', '))} — <span class="warn-text">${esc(x.reason)}</span></div>`).join('')
+      : '');
+  openModal('modal-notify');
+}
 $('onsite-notify').onclick = async () => {
   if (!confirm('Text the guardians of everyone still on site' +
-    (state.patrol ? ` in ${state.patrol}` : '') + '?')) return;
+    (state.patrol ? ` in ${state.patrol}` : '') + '? Each family gets one message.')) return;
   try {
-    const r = await jpost('/notify-onsite', { patrol: state.patrol || undefined });
-    const box = $('notify-results');
-    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    box.innerHTML =
-      (r.sent.length
-        ? `<h4>✅ Texted (${r.sent.length})</h4>` +
-          r.sent.map((x) => `<div class="notify-row">${esc(x.youth)} → ${esc(x.guardian)}</div>`).join('')
-        : '<p class="hint">No texts sent.</p>') +
-      (r.skipped.length
-        ? `<h4 class="warn-text">⚠️ Not contacted (${r.skipped.length}) — reach these families another way</h4>` +
-          r.skipped.map((x) => `<div class="notify-row">${esc(x.youth)} — <span class="warn-text">${esc(x.reason)}</span></div>`).join('')
-        : '');
-    openModal('modal-notify');
+    renderNotifyResults(await jpost('/notify-onsite', { patrol: state.patrol || undefined }));
   } catch (e) { toast(e.message, true); }
 };
 $('notify-close').onclick = closeModal;
+
+// custom broadcast (ETA updates etc.)
+$('onsite-message').onclick = () => {
+  $('msg-text').value = '';
+  $('msg-error').textContent = '';
+  $('msg-scope').textContent = state.patrol ? `Sends to guardians of on-site youth in ${state.patrol}.` : 'Sends to guardians of everyone on site.';
+  openModal('modal-message');
+};
+$('msg-cancel').onclick = closeModal;
+$('msg-send').onclick = async () => {
+  const message = $('msg-text').value.trim();
+  if (!message) return ($('msg-error').textContent = 'Type the message first.');
+  try {
+    renderNotifyResults(await jpost('/message-onsite', { message, patrol: state.patrol || undefined }));
+  } catch (e) { $('msg-error').textContent = e.message; }
+};
 
 async function renderOnsite() {
   const patrols = await api('/patrols').catch(() => []);

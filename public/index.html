@@ -70,6 +70,7 @@
     <button id="onsite-back" class="pill ghost-pill">‹ Back</button>
     <h2>Still on site</h2>
     <button id="onsite-notify" class="pill ghost-pill">🔔 Text guardians</button>
+    <button id="onsite-message" class="pill ghost-pill">✉️ Message</button>
   </header>
   <div id="patrol-filters" class="patrol-filters"></div>
   <div id="onsite-list" class="onsite-list"></div>
@@ -142,6 +143,18 @@
       <h3>Guardian texts</h3>
       <div id="notify-results"></div>
       <button id="notify-close" class="btn primary">Done</button>
+    </div>
+
+    <div id="modal-message" class="modal-page" hidden>
+      <h3>Message guardians</h3>
+      <p id="msg-scope" class="hint"></p>
+      <textarea id="msg-text" rows="4" maxlength="300"
+        placeholder="e.g. Trailer is 45 minutes out — pickup at the church around 8:15pm."></textarea>
+      <div id="msg-error" class="error" role="alert"></div>
+      <div class="row">
+        <button id="msg-cancel" class="btn ghost">Cancel</button>
+        <button id="msg-send" class="btn primary">Send</button>
+      </div>
     </div>
 
     <div id="modal-camera" class="modal-page" hidden>
