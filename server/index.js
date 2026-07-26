@@ -58,6 +58,9 @@ app.get('/healthz', (req, res) => {
 module.exports = app;
 
 if (require.main === module) {
+  // fail fast: a corrupt/empty core module must refuse to start the service,
+  // not boot "healthy" and crash later on the code path (see lib/selfcheck.js)
+  require('./lib/selfcheck').selfCheckOrExit();
   setInterval(auth.pruneSessions, 60 * 60 * 1000).unref();
   icalSync.scheduleNightly();
   require('./lib/backup').scheduleNightly();
