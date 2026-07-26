@@ -73,7 +73,7 @@ router.get('/people/:id', (req, res) => {
 });
 
 const PERSON_FIELDS = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
-  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'notes'];
+  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'membership_expires', 'notes'];
 const IMPORT_FIELDS = new Set(require('../lib/rosterImport').UPDATABLE);
 router.patch('/people/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
@@ -632,6 +632,26 @@ router.get('/export/visitors.csv', (req, res) => {
   sendCsv(res, 'visitors.csv', ['last_name', 'first_name', 'type', 'first_seen', 'notes', 'txn_count'], rows);
 });
 
+// ------------------------------------------------- membership renewals ----
+// Expired-or-expiring within N days (default 30; leadership chases renewals
+// before they lapse). Includes youth AND registered adults; already-expired
+// members are listed too (negative days_left), soonest/most-lapsed first.
+const expiringDays = (q) => Math.min(Math.max(Number(q.days) || 30, 1), 365);
+router.get('/expiring', (req, res) => {
+  res.json(require('../lib/membership').expiringPeople(expiringDays(req.query)));
+});
+
+router.get('/export/expiring.csv', (req, res) => {
+  const days = expiringDays(req.query);
+  const rows = require('../lib/membership').expiringPeople(days).map((p) => [
+    p.last_name, p.first_name, p.is_youth ? 'youth' : 'adult', p.member_id || '',
+    p.is_youth ? p.patrol || '' : p.role || '', p.membership_expires, p.days_left,
+  ]);
+  sendCsv(res, `membership-expiring-${days}d.csv`,
+    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'membership_expires', 'days_left'],
+    rows);
+});
+
 // -------------------------------------------------------- consent forms ----
 // One scanned form can cover many youth/guardian pairs; pairs link to it via
 // person_guardian.consent_form_id. Files live under data/ with the other PII,
@@ -766,6 +786,7 @@ router.get('/status', (req, res) => {
                           WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL`),
     events: count('SELECT COUNT(*) c FROM event'),
     txns: count('SELECT COUNT(*) c FROM txn'),
+    expiring_30: require('../lib/membership').expiringPeople(30).length,
     last_ical_sync: lastSync,
   });
 });

@@ -133,6 +133,21 @@
       <div id="rp-result" class="tbl"></div>
     </div>
     <div class="panel">
+      <h3>Membership renewals</h3>
+      <p class="hint left">Active members (youth and registered adults) whose Trail Life membership has
+      expired or expires within the window — chase these before they lapse. The kiosk also flags youth
+      within 30 days at check-in (warning only, never blocks).</p>
+      <div class="row wrap">
+        <select id="mx-days">
+          <option value="30">Expiring within 30 days</option>
+          <option value="60">Expiring within 60 days</option>
+          <option value="90">Expiring within 90 days</option>
+        </select>
+        <a id="mx-csv" class="btn ghost small" href="/api/admin/export/expiring.csv?days=30">Renewals CSV</a>
+      </div>
+      <div id="mx-list" class="tbl"></div>
+    </div>
+    <div class="panel">
       <h3>SMS notification log</h3>
       <div id="rp-notifications" class="tbl"></div>
     </div>

@@ -82,8 +82,9 @@ async function loadDash() {
     [s.youth_active, 'active youth'], [s.adults_active, 'active adults'],
     [s.visitors, 'visitors'], [s.open_signins, 'on site now'],
     [s.events, 'events'], [s.txns, 'transactions'],
+    [s.expiring_30 || 0, 'renewals due ≤30 days', s.expiring_30 ? 'card-warn' : ''],
   ];
-  $('dash-cards').innerHTML = cards.map(([n, l]) => `<div class="card"><b>${n}</b><span>${l}</span></div>`).join('');
+  $('dash-cards').innerHTML = cards.map(([n, l, cls]) => `<div class="card ${cls || ''}"><b>${n}</b><span>${l}</span></div>`).join('');
   $('tool-status').textContent = s.last_ical_sync
     ? `Last iCal sync ${fmtDT(s.last_ical_sync.at)}: +${s.last_ical_sync.added} / ~${s.last_ical_sync.updated} / flagged ${s.last_ical_sync.flagged}`
     : 'iCal has not synced yet.';
@@ -164,6 +165,7 @@ async function openPerson(id) {
       ${f('Mobile', 'phone_mobile', p.phone_mobile)}${f('Home phone', 'phone_home', p.phone_home)}
       ${f('Work phone', 'phone_work', p.phone_work)}${f('Birthdate', 'birthdate', p.birthdate)}
       ${f('Email', 'email', p.email)}
+      ${f('Membership expires (YYYY-MM-DD)', 'membership_expires', p.membership_expires)}
       <div><label>Status</label>
         <select data-f="status">
           ${['active', 'inactive', 'visitor'].map((s) => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}
@@ -678,6 +680,7 @@ async function loadReports() {
   $('rp-event').innerHTML = '<option value="">All events</option>' +
     events.map((e) => `<option value="${e.id}">${esc(e.title)} · ${fmtDT(e.start_at)}</option>`).join('');
   renderReportLinks();
+  loadExpiring();
   const log = await api('/admin/notifications');
   $('rp-notifications').innerHTML = log.length
     ? `<table><tr><th>When</th><th>Youth</th><th>Guardian</th><th>Event</th><th>Status</th></tr>` +
@@ -686,6 +689,27 @@ async function loadReports() {
         <td><span class="tag ${n.status === 'failed' ? 'warn' : n.status === 'replied_y' ? 'youth' : 'off'}">${esc(n.status)}</span></td></tr>`).join('') + '</table>'
     : '<p class="hint left">No notifications yet (SMS is off until Twilio is configured).</p>';
 }
+// membership renewals: expired or expiring within the selected window
+async function loadExpiring() {
+  const days = $('mx-days').value;
+  $('mx-csv').href = `/api/admin/export/expiring.csv?days=${days}`;
+  const rows = await api(`/admin/expiring?days=${days}`).catch(() => []);
+  $('mx-list').innerHTML = rows.length
+    ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th><th>Expires</th><th>Days left</th></tr>` +
+      rows.map((p) => `<tr>
+        <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
+        <td><span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span></td>
+        <td>${esc(p.member_id || '')}</td>
+        <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>
+        <td>${esc(p.membership_expires)}</td>
+        <td>${p.days_left < 0 ? `<span class="tag warn">expired ${-p.days_left}d ago</span>` : p.days_left}</td>
+      </tr>`).join('') + '</table>'
+    : `<p class="hint left">Nobody expires within ${days} days. 🎉</p>`;
+}
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'mx-days') loadExpiring();
+});
+
 function reportQuery() {
   const q = new URLSearchParams();
   if ($('rp-from').value) q.set('from', $('rp-from').value);

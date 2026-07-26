@@ -20,6 +20,8 @@
 }
 .card b { display: block; font-size: 26px; }
 .card span { color: var(--muted); font-size: 13px; }
+.card.card-warn b { color: var(--blaze); }
+.card.card-warn { border-color: var(--blaze); }
 
 .panel {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
