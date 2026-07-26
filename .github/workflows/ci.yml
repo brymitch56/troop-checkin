@@ -1,0 +1,62 @@
+# CI for troop-checkin.
+#
+# `test` (node:test suite) is the REQUIRED gate — it must be green on every
+# push/PR to main. It includes the startup self-check tests, so a commit that
+# breaks a core module's exports fails here before it can ever reach the Pi.
+#
+# `e2e-browser` is a SEPARATE, advisory job (continue-on-error): real-Chrome
+# puppeteer runs can be flaky on shared runners and must never block the
+# required unit gate. Treat a red E2E as a prompt to run it locally
+# (`npm install --no-save puppeteer && node test/e2e-browser.js`), not as
+# noise to ignore.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: node:test suite (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+        env:
+          DATA_DIR: ${{ runner.temp }}/tc-data
+
+  e2e-browser:
+    name: browser E2E (advisory, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save puppeteer
+      # Chrome's shared-library deps (libXdamage & friends — see the e2e notes
+      # in SESSION-NOTES.md). Package names differ across Ubuntu releases
+      # (libasound2 vs libasound2t64), so fall back rather than fail the job
+      # on a rename; most are preinstalled on GitHub runners anyway.
+      - name: Install Chrome system libraries
+        run: |
+          sudo apt-get update
+          for pkg in libxdamage1 libxcomposite1 libxrandr2 libxkbcommon0 libgbm1 \
+                     libatk1.0-0 libatk-bridge2.0-0 libcups2 libnss3 libnspr4 \
+                     libpango-1.0-0 libcairo2 libasound2t64; do
+            sudo apt-get install -y "$pkg" || echo "skipping $pkg (not in this release)"
+          done
+          sudo apt-get install -y libasound2 || true
+      - run: node test/e2e-browser.js
+        env:
+          DATA_DIR: ${{ runner.temp }}/tc-e2e-data
