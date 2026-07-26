@@ -1,16 +1,17 @@
 # 07 — Project Status
 
-**Date:** 2026-07-26 (rev 4) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `3ce9668` — **membership-expiration feature is pushed but NOT yet deployed** (needs `git pull`, migration 007, restart, sw tc-v12)
+**Date:** 2026-07-26 (rev 5) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `1302ab4`, schema through 007, sw `tc-v12`, real roster with membership dates (81/113) — **deploy-integrity hardening (startup self-check + CI + repo deploy-verify script) is pushed but NOT yet deployed**
 
 ## Where things stand
 
 The app is deployed and in early real-world testing. Two field bugs were found and fixed during deployment (modal-scrim CSS overriding `hidden`; `crypto.randomUUID` missing in plain-HTTP contexts — both now regression-tested). The SMS system is fully built and **strictly opt-in** (per youth↔guardian pair, gated on stored signed consent forms); it awaits Twilio `.env` values + webhook, which in turn await the **Cloudflare Tunnel**, which awaits the **ny2911.org DNS move to Cloudflare** (in progress via Bryan's friend; HostGator keeps hosting). The A2P campaign is **approved**.
 
-## Feature inventory (all built, tested: 64 node:test + 21-step browser E2E incl. offline round-trip)
+## Feature inventory (all built, tested: 71 node:test + 21-step browser E2E incl. offline round-trip)
 
 Everything from rev 2, plus the deployment-era additions:
 
-- **Membership-expiration alert** (NEW, rev 4): the TLC export's "Membership Exp." column imports into `person.membership_expires` (migration 007; normalized to ISO, defensive parsing; respects field-level manual locks). Kiosk shows an orange tag on the cart row + a "Membership expires MMM D — renewal due" line in the sign modal for youth within 30 days (day-granular, expired included) — **non-blocking**, works offline via the roster snapshot. Admin: Reports → "Membership renewals" 30/60/90-day list (+ registered adults) with CSV, and a dashboard "renewals due ≤30 days" card. Note: the real export's date FORMAT is unverified — the parser handles US M/D/YYYY, ISO, and Date-parseable strings, and keeps anything else raw (treated as "no date", never crashes); ask Claude Code for one sample value to confirm.
+- **Deploy-integrity hardening** (NEW, rev 5; prompted by the 0-byte `membership.js` catch during the 1302ab4 deploy): (1) fail-fast **startup self-check** (`server/lib/selfcheck.js`, runs before `app.listen`) — a corrupt/empty core module (`membership`, `rosterImport`, `sms`, `notifySweep`) makes the service exit 1 with `STARTUP SELF-CHECK FAILED: …` instead of booting "healthy" and crashing later; systemd retry keeps it loud in journalctl. (2) **GitHub Actions CI** (`.github/workflows/ci.yml`): required node:test gate + advisory (non-blocking) browser-E2E job on push/PR to main. (3) **`scripts/deploy-verify.sh`** — repo-versioned mirror of the on-Pi `~/troop-deploy-verify.sh` guard (tree==HEAD, no 0-byte tracked sources, module exports via the same selfcheck list, migrations reconciled, service/healthz/sw/DerbyNet), referenced from README + Pi guide so clones share the check. Tested incl. a real boot of a truncated copy (exit 1) and a healthy boot.
+- **Membership-expiration alert** (rev 4, DEPLOYED): the TLC export's "Membership Exp." column imports into `person.membership_expires` (migration 007; normalized to ISO — verified on the real export, `09/16/2026`→`2026-09-16`, all 52 distinct dates parsed, 81/113 people carry one; respects field-level manual locks). Kiosk shows an orange tag on the cart row + a "Membership expires MMM D — renewal due" line in the sign modal for youth within 30 days (day-granular, expired included) — **non-blocking**, works offline via the roster snapshot. Admin: Reports → "Membership renewals" 30/60/90-day list (+ registered adults) with CSV, and a dashboard "renewals due ≤30 days" card. The real export includes long-expired memberships (2022–2025) — listing those is by design.
 
 - **Consent/opt-in SMS system**: `sms_opt_in` per youth↔guardian pair; opt-in requires an uploaded signed consent form (`consent_form` table, one form covers many pairs); sends (auto-sweep + manual) go only to `yes`; compliance CSV export.
 - **Grouped notifications**: one text per guardian listing all their lingering youth; one Y reply closes them all. Exactly one guardian per youth is texted (primary preferred, opted-in fallback).
@@ -23,7 +24,7 @@ Everything from rev 2, plus the deployment-era additions:
 
 ## Deployment facts
 
-Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-checkin`, reboot-tested, DerbyNet coexisting on :80. Backups: 03:15 local + 03:45 encrypted rclone push to Drive (`gdrive-crypt`; password in Bryan's Bitwarden). Claude Code (separate session, SSH) handles all Pi work — see `CLAUDE-CODE-PI-DEPLOY-HANDOFF.md` (deployment record + SMS-activation addendum). Service-worker cache means every deploy needs a VERSION bump (currently **tc-v12** in the repo; the Pi serves tc-v11 until the next deploy) and two reloads on phones.
+Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-checkin`, reboot-tested, DerbyNet coexisting on :80. Backups: 03:15 local + 03:45 encrypted rclone push to Drive (`gdrive-crypt`; password in Bryan's Bitwarden). Claude Code (separate session, SSH) handles all Pi work — see `CLAUDE-CODE-PI-DEPLOY-HANDOFF.md` (deployment record + SMS-activation addendum). Service-worker cache means every deploy needs a VERSION bump (currently **tc-v12**, repo and Pi in sync) and two reloads on phones — bump only when `public/` client assets change. **Every deploy ends with the integrity guard**: `bash ~/troop-deploy-verify.sh <head> <sw>` on the Pi (mirrored in-repo at `scripts/deploy-verify.sh`) must print RESULT: PASS — it exists because a pull once left `membership.js` 0-byte while the service booted "healthy" (see the handoff doc's integrity-catch note).
 
 ## Blocked / waiting
 
@@ -34,7 +35,7 @@ Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-chec
 
 ## Next step
 
-**Deploy the membership-expiration feature** (Claude Code / Pi session): `git pull`, `npm run migrate` (applies the NEW migration 007), restart, confirm sw tc-v12, reload phones twice. Then re-import the current TLC roster export in Admin so `membership_expires` populates for the real 113 people, and confirm one sample date value parsed to ISO (headers/values stay on the Pi — a single date value, no name, is fine in transcripts).
+**Deploy the integrity hardening** (Claude Code / Pi session): `git pull` (no new migration — expect migrate "up to date"), restart, then `bash ~/troop-deploy-verify.sh <new-head> tc-v12` → RESULT: PASS. First deploy with the startup self-check active, so explicitly confirm the service starts (healthz ok). No sw bump (server-only change), no phone reloads needed. Then: first live meeting night alongside paper.
 
 ## Backlog (unchanged)
 

@@ -5,12 +5,12 @@ Two layers: the automated suite (run it after any change), and manual walkthroug
 ## Automated tests
 
 ```bash
-npm test                      # 64 node:test cases across 6 files
+npm test                      # 71 node:test cases across 7 files (also the required CI gate)
 npm install --no-save puppeteer
 node test/e2e-browser.js      # 21-step real-browser E2E (kiosk + admin + offline)
 ```
 
-What they cover: roster parser and guardian-link rules; import idempotency, deactivation scoping, field locks; every API endpoint over HTTP including all `/txn` business rules (signer requirements, authorization + override, 409 races, dedupe, FR-12 adults); admin flows (guardian authority, void/close corrections, merge, CSVs, iCal apply rules, backup restore); Twilio signature validation and Y/STOP webhook flows; report filters; photo upload and gating; membership-expiration rules (date normalization, the 30-day boundary — expires today / day 29 in, day 31 out — lock interaction, the admin expiring list/CSV, snapshot inclusion). The E2E drives a real Chrome through login, wedge scanning, badge enrollment, cart, signature canvas, override confirm, station mode, the admin UI, and a full offline round-trip (queue → reconnect → sync).
+What they cover: roster parser and guardian-link rules; import idempotency, deactivation scoping, field locks; every API endpoint over HTTP including all `/txn` business rules (signer requirements, authorization + override, 409 races, dedupe, FR-12 adults); admin flows (guardian authority, void/close corrections, merge, CSVs, iCal apply rules, backup restore); Twilio signature validation and Y/STOP webhook flows; report filters; photo upload and gating; membership-expiration rules (date normalization, the 30-day boundary — expires today / day 29 in, day 31 out — lock interaction, the admin expiring list/CSV, snapshot inclusion); the startup self-check (real modules pass; stubs with missing exports fail; a truncated-to-0-bytes core module makes a real `node server/index.js` boot exit 1 while the intact copy boots). CI (`.github/workflows/ci.yml`) runs `npm test` as the required gate on every push/PR to main, plus an advisory browser-E2E job. After deploying to the Pi, always run `bash scripts/deploy-verify.sh <head> <sw-version>` → RESULT: PASS. The E2E drives a real Chrome through login, wedge scanning, badge enrollment, cart, signature canvas, override confirm, station mode, the admin UI, and a full offline round-trip (queue → reconnect → sync).
 
 Everything runs against a throwaway `DATA_DIR` in `/tmp` — your real database is never touched. A fresh-clone check (`git clone … && npm ci && npm run migrate && npm start`) should also pass after any dependency change; this is what the Pi installer does.
 

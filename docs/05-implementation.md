@@ -22,6 +22,8 @@ server/
     env.js            zero-dep .env loader; live getters (PORT, TROOP_*, ICAL_URL, SMS/Twilio, PUBLIC_URL)
     rosterImport.js   TLC xlsx parser, guardian-link suggestion, preview/apply, field locks
     membership.js     expiration-date normalization (ISO), day-granular daysUntil, expiring list
+    selfcheck.js      fail-fast boot check: core modules must export what callers destructure,
+                      else exit(1) before listen (a 0-byte module must never boot "healthy")
     icalSync.js       feed sync, removed-from-feed rule, nightly scheduler
     backup.js         VACUUM INTO + signatures tar, nightly 03:15, keep 14
     sms.js            Twilio REST send, E.164/last-10 normalization, X-Twilio-Signature HMAC check
@@ -41,8 +43,11 @@ public/
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
   install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd
+  deploy-verify.sh    post-deploy integrity guard (tree==HEAD, no 0-byte files, module
+                      exports, migrations reconciled, service/healthz/sw) -> RESULT: PASS/FAIL
   troop-checkin.service.template
-test/                 64 node:test cases (6 files) + e2e-browser.js (puppeteer, 21 steps)
+.github/workflows/ci.yml   required node:test gate on push/PR to main + advisory browser-E2E job
+test/                 71 node:test cases (7 files) + e2e-browser.js (puppeteer, 21 steps)
 ```
 
 ## Data model highlights
@@ -56,6 +61,8 @@ Schema is in `server/migrations/001_init.sql` (see doc 03). Later additions: `tx
 **Transactions (`POST /api/txn`).** Client sends `client_uuid` (dedupe key — retries and offline sync are idempotent), direction, entries, signer, signature dataURL. Server-side validation is authoritative: open-state race checks (409), event required for IN, adults rejected at non-tracking events (422 FR-12), signer authorization per youth (422 unless `force`, which is recorded in `txn.forced`). Sign-out needs no event: it attaches through the open sign-in's event (multi-day events work by construction). Emergency phones snapshot onto the txn row and write back to the person as next-time defaults.
 
 **Roster import.** Parser finds the header row by the "Member Number" cell; Youth Y/N discriminates; youth "Email" is a TLC username, not an email. Matching keys on member number (falling back to name only for unregistered adults). Absent people are deactivated only within the classes present in the file, never visitors. Guardian suggestions: cc-email → adult email, else same last name or same address+zip; existing links are never touched or duplicated. **Field locks:** any import-managed field changed through the admin editor lands in `person.manual_fields` and every future import skips it for that person ("Save" locks; per-person unlock button clears).
+
+**Deploy integrity (hardening after the 2026-07-26 incident).** A `git pull` once landed `membership.js` as 0 bytes on the Pi; `require()` of an empty file succeeds, so the service booted "healthy" and would only have crashed when roster import called the missing function. Three layers now guard this class of failure: (1) `server/lib/selfcheck.js` runs before `app.listen` when the server is started directly — it typeof-checks the critical exports (`membership`, `rosterImport` incl. non-empty `UPDATABLE`, `sms`, `notifySweep`) and exits 1 with `STARTUP SELF-CHECK FAILED: …` so systemd restarts loudly instead of serving a time bomb; (2) `scripts/deploy-verify.sh` (mirrors the on-Pi `~/troop-deploy-verify.sh`) is run after every deploy and fails on a dirty tree, zero-byte tracked sources, missing exports (it reuses `selfcheck.runSelfCheck`, so the lists can't drift), pending migrations, or unhealthy service/sw/DerbyNet; (3) GitHub Actions CI runs the full node:test suite (required) plus an advisory browser-E2E job on every push/PR to main. Tests cover the self-check against real modules, stubs, and a real boot of a truncated copy.
 
 **Membership expiration.** The TLC export's "Membership Exp." column (trailing period; header row found by "Member Number") imports into `person.membership_expires` — normalized to ISO `YYYY-MM-DD` when the formatted cell string is recognizable (US M/D/YYYY, ISO, or Date-parseable), stored raw otherwise; all compare-time code parses defensively and treats junk as "no date". It is in the parser's `UPDATABLE` list, so hand edits lock it against imports like any import field. Kiosk: a youth expiring within 30 days (day-granular, expired included) gets an orange `.exp-tag` on their cart row and a "Membership expires MMM D — renewal due" line in the sign modal — **never blocks check-in**, and works offline because `membership_expires` rides in the roster snapshot (`personView`). Admin: Reports → "Membership renewals" (30/60/90-day window incl. registered adults, most-lapsed first) + `expiring.csv`, and a dashboard "renewals due ≤30 days" card (`status.expiring_30`).
 
