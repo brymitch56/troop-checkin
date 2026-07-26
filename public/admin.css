@@ -6,12 +6,36 @@
   border-radius: var(--radius); background: var(--card);
 }
 
-.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Admin topbar: two calm rows — identity + utility links above, tabs below.
+   On narrow screens the tab row scrolls sideways instead of stacking into a
+   tall column; on wide screens it wraps naturally. */
+.admin-topbar { display: block; padding: 6px 0 4px; }
+.admin-topbar .topbar-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap; /* logout drops below rather than clipping on tiny screens */
+}
+.admin-topbar .topbar-links { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 480px) {
+  .admin-topbar .pill { padding: 8px 11px; font-size: 14px; }
+  .admin-topbar .brand-mark { font-size: 14px; padding: 8px 10px; }
+}
+.admin-topbar .brand-mark { white-space: nowrap; }
+
+.tabs {
+  display: flex; gap: 6px; margin-top: 8px; padding-bottom: 6px;
+  flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
 .tabs button {
   border: none; background: transparent; color: var(--pine); font-weight: 700;
   font-size: 15px; padding: 8px 12px; border-radius: 999px; cursor: pointer;
+  white-space: nowrap; flex: 0 0 auto;
 }
 .tabs button.active { background: var(--pine); color: #fff; }
+@media (min-width: 760px) {
+  .tabs { flex-wrap: wrap; overflow-x: visible; }
+}
 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
 .card {

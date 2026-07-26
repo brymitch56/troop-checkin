@@ -1,6 +1,6 @@
 # 07 — Project Status
 
-**Date:** 2026-07-26 (rev 7) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `7c3198c`, schema through 008, sw `tc-v14`, roster sync deployed dormant and live-tested with manually-preloaded creds — **pushed but NOT yet deployed: roster-sync env-loading fix + admin credentials editor (sw tc-v15, then tc-v16 with the multi-role warning)**
+**Date:** 2026-07-26 (rev 7) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `7c3198c`, schema through 008, sw `tc-v14`, roster sync deployed dormant and live-tested with manually-preloaded creds — **pushed but NOT yet deployed: roster-sync env-loading fix + admin credentials editor (sw tc-v15, then tc-v16 multi-role warning, then tc-v17 nav cleanup)**
 
 ## Where things stand
 
@@ -39,7 +39,7 @@ Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-chec
 
 ## Next step
 
-**Deploy the env fix + credentials editor** (Claude Code / Pi session): `git pull`, migrate (expect "up to date" — no new migration), restart, verifier PASS at `tc-v16`, then **prove the fix**: plain `node server/scripts/fetch-roster.js` (NO `-r` preload) must log "ok: … rows" and stage a pending import (safe — replaces the staged preview, never commits; creds already in `.env` mode 600). Phones reload twice (tc-v16). The weekly timer stays intentionally NOT installed — scheduling is Bryan's explicit call after this deploy verifies (`install-pi.sh --with-roster-sync` when ready). Then: first live meeting night alongside paper.
+**Deploy the env fix + credentials editor** (Claude Code / Pi session): `git pull`, migrate (expect "up to date" — no new migration), restart, verifier PASS at `tc-v17`, then **prove the fix**: plain `node server/scripts/fetch-roster.js` (NO `-r` preload) must log "ok: … rows" and stage a pending import (safe — replaces the staged preview, never commits; creds already in `.env` mode 600). Phones reload twice (tc-v17). The weekly timer stays intentionally NOT installed — scheduling is Bryan's explicit call after this deploy verifies (`install-pi.sh --with-roster-sync` when ready). Then: first live meeting night alongside paper.
 
 ## Backlog (unchanged)
 

@@ -26,8 +26,15 @@
 
 <!-- ============ APP ============ -->
 <section id="screen-app" class="screen admin-screen" hidden>
-  <header class="topbar">
-    <div class="brand-mark" data-brand-id>TROOP</div>
+  <header class="topbar admin-topbar">
+    <div class="topbar-row">
+      <div class="brand-mark" data-brand-id>TROOP</div>
+      <div class="topbar-links">
+        <a class="pill ghost-pill" href="/">← Check-in</a>
+        <a class="pill ghost-pill" href="/guide.html" title="User guide">Guide</a>
+        <button id="logout" class="pill ghost-pill"></button>
+      </div>
+    </div>
     <nav id="tabs" class="tabs">
       <button data-tab="dash" class="active">Dashboard</button>
       <button data-tab="people">People</button>
@@ -38,9 +45,6 @@
       <button data-tab="import">Roster import</button>
       <button data-tab="staff">Staff</button>
     </nav>
-    <a class="pill ghost-pill" href="/">← Check-in</a>
-    <a class="pill ghost-pill" href="/guide.html" title="User guide">? Guide</a>
-    <button id="logout" class="pill ghost-pill"></button>
   </header>
 
   <!-- ---- dashboard ---- -->

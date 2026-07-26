@@ -80,7 +80,9 @@ input[type="password"], input[type="datetime-local"] {
 }
 .topbar h2 { margin: 0; font-size: 20px; }
 .topbar-right { display: flex; gap: 8px; }
+a.pill { text-decoration: none; display: inline-flex; align-items: center; }
 .pill {
+  white-space: nowrap;
   border: none; border-radius: 999px; padding: 10px 14px;
   font-size: 15px; font-weight: 700; cursor: pointer;
 }

@@ -73,6 +73,9 @@ $('tabs').onclick = (e) => {
 function showTab(name) {
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   for (const t of document.querySelectorAll('.tab')) t.hidden = t.id !== `tab-${name}`;
+  // keep the active tab visible when the tab row scrolls sideways (phones)
+  const active = document.querySelector('#tabs button.active');
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   loaders[name]();
 }
 
