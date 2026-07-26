@@ -5,7 +5,7 @@ Two layers: the automated suite (run it after any change), and manual walkthroug
 ## Automated tests
 
 ```bash
-npm test                      # 97 node:test cases across 9 files (also the required CI gate)
+npm test                      # 100 node:test cases across 9 files (also the required CI gate)
 npm install --no-save puppeteer
 node test/e2e-browser.js      # 21-step real-browser E2E (kiosk + admin + offline)
 ```
@@ -90,7 +90,8 @@ Setup once: `npm run migrate`, create one door and one admin account (`npm run c
 4. Dashboard shows a "renewals due ≤30 days" card (orange when non-zero).
 5. Offline check: with the youth's date still near, load the kiosk on a phone, enable airplane mode, re-open, add them to the cart — the tag must still appear (it comes from the offline snapshot).
 
-### 13. Automated roster sync (after setting TLC credentials in .env)
+### 13. Automated roster sync
+0. Admin → Import → "Trail Life Connect credentials" → enter the TLC login → Save. (Or set them in `.env`; admin-saved wins.) Confirm the info line shows which source is active and that the password is never displayed anywhere.
 1. Admin → Import → **Sync now**. Within a couple of minutes the panel shows a pending import with the fetch time, row count, and the add/update/deactivate diff; the last-run line shows ✅.
 2. **Approve** → the roster updates exactly as a manual commit would (locks and guardian edits respected); the import appears in Import history.
 3. Run Sync now twice without approving → the second fetch replaces the first pending import and says so.

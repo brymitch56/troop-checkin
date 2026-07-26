@@ -293,6 +293,8 @@
     <li>Membership expiration dates come in from the export's "Membership Exp." column automatically.</li>
     <li>Every upload is archived, and the import log shows who imported what, when, with counts.</li>
   </ul>
+  <h3>Automatic roster sync</h3>
+  <p>The Import tab can also fetch the export from Trail Life Connect <em>for</em> you — on a weekly schedule (if the server admin enabled the timer) or via <b>Sync now</b>. A fetch never changes anything by itself: it stages a <b>pending import</b> showing when it was fetched, the row count, and the full add/update/deactivate diff, with <b>Approve</b> / <b>Discard</b> buttons. Approving runs exactly the same commit path as a manual upload; only one pending import exists at a time (a newer fetch replaces the old one and says so). The panel shows the last run's status, so a broken sync is visible instead of silent. The Trail Life Connect login it uses can be entered and updated right in the panel ("Trail Life Connect credentials") — the password is stored on the check-in server, used only to download the export, and never displayed again.</p>
 </section>
 
 <section id="staff">

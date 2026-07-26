@@ -32,7 +32,9 @@ Additional details:
 - No MFA or CAPTCHA on the login form as of this writing. If TLC adds MFA, unattended login breaks and this feature must fall back to manual upload — design for that failure, don't fight it.
 - The `new=0` parameter's meaning is unconfirmed. Verify it does not mean "changes since last export."
 
-### Open question — export filtering
+### Open question — export filtering — **RESOLVED SAFE (2026-07-26)**
+
+**Resolution:** the live Pi test (2026-07-26) ran the full fetch in a fresh session and received the complete 113-row roster with zero deactivations in the preview — a fresh login does **not** inherit filter state, so automated sync is safe on this front. The row-count guard stays enabled as standing defense anyway. Original concern preserved below for the record.
 
 The xlsx button's tooltip reads **"Export filtered to Excel"**, and a test export returned only the members matching a filter that had been applied earlier in the session. It is not yet known whether that filter state persists across logins.
 
@@ -56,7 +58,9 @@ A working starting implementation exists and should be reviewed, corrected, and 
 | `TLC_ENABLED` | kill switch; `false` makes the job a no-op |
 | `HEALTHCHECK_URL` | optional success ping (healthchecks.io) |
 
-Credentials live only in `.env` — `chmod 600`, owned by the service user, already covered by `.gitignore`. They must never appear in logs, error messages, commit history, or test fixtures.
+Credentials live in `.env` (`chmod 600`, owned by the service user, gitignored) **or** — since the 2026-07-26 addition — can be entered/updated by an admin in Admin → Import → "Trail Life Connect credentials": stored in the app database (`meta` table, under `data/` with the rest of the PII, included in the encrypted backups), write-only toward the browser (never returned by any API), and taking precedence over `.env` when present. Either way they must never appear in logs, error messages, commit history, or test fixtures.
+
+**Env loading (fixed 2026-07-26):** `fetch-roster.js` self-loads `.env` via `require('../lib/env')` — the same parser the app uses — so the standalone CLI and the systemd timer see credentials without any preload. The systemd unit also sets `EnvironmentFile=-.env` as defense-in-depth; note systemd's parser is not a shell parser and its values win over env.js's (env.js never overrides existing process.env), so keep `.env` values simple or prefer the admin-saved credentials.
 
 ### Safety rules (non-negotiable)
 
