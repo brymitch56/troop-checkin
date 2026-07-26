@@ -16,9 +16,12 @@ server/
   db.js               opens $DATA_DIR/troop.db, creates data dirs
   migrate.js          applies server/migrations/*.sql in order, tracked in schema_migration
   migrations/         001_init (full schema) · 002 (txn.forced) · 003 (person.manual_fields, photo_path)
+                      · 004 (consent_form, pg.consent_form_id) · 005 (notification.kind) · 006 (sms_message)
+                      · 007 (person.membership_expires)
   lib/
     env.js            zero-dep .env loader; live getters (PORT, TROOP_*, ICAL_URL, SMS/Twilio, PUBLIC_URL)
     rosterImport.js   TLC xlsx parser, guardian-link suggestion, preview/apply, field locks
+    membership.js     expiration-date normalization (ISO), day-granular daysUntil, expiring list
     icalSync.js       feed sync, removed-from-feed rule, nightly scheduler
     backup.js         VACUUM INTO + signatures tar, nightly 03:15, keep 14
     sms.js            Twilio REST send, E.164/last-10 normalization, X-Twilio-Signature HMAC check
@@ -34,12 +37,12 @@ public/
   index.html/app.js/styles.css   kiosk PWA
   admin.html/admin.js/admin.css  admin SPA
   offline.js          IndexedDB snapshot + txn queue + conflict store
-  sw.js               app-shell cache (VERSION tc-v2 — bump on deploy)
+  sw.js               app-shell cache (VERSION tc-v12 — bump on every deploy)
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
   install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd
   troop-checkin.service.template
-test/                 46 node:test cases + e2e-browser.js (puppeteer, 19 steps)
+test/                 64 node:test cases (6 files) + e2e-browser.js (puppeteer, 21 steps)
 ```
 
 ## Data model highlights
@@ -53,6 +56,8 @@ Schema is in `server/migrations/001_init.sql` (see doc 03). Later additions: `tx
 **Transactions (`POST /api/txn`).** Client sends `client_uuid` (dedupe key — retries and offline sync are idempotent), direction, entries, signer, signature dataURL. Server-side validation is authoritative: open-state race checks (409), event required for IN, adults rejected at non-tracking events (422 FR-12), signer authorization per youth (422 unless `force`, which is recorded in `txn.forced`). Sign-out needs no event: it attaches through the open sign-in's event (multi-day events work by construction). Emergency phones snapshot onto the txn row and write back to the person as next-time defaults.
 
 **Roster import.** Parser finds the header row by the "Member Number" cell; Youth Y/N discriminates; youth "Email" is a TLC username, not an email. Matching keys on member number (falling back to name only for unregistered adults). Absent people are deactivated only within the classes present in the file, never visitors. Guardian suggestions: cc-email → adult email, else same last name or same address+zip; existing links are never touched or duplicated. **Field locks:** any import-managed field changed through the admin editor lands in `person.manual_fields` and every future import skips it for that person ("Save" locks; per-person unlock button clears).
+
+**Membership expiration.** The TLC export's "Membership Exp." column (trailing period; header row found by "Member Number") imports into `person.membership_expires` — normalized to ISO `YYYY-MM-DD` when the formatted cell string is recognizable (US M/D/YYYY, ISO, or Date-parseable), stored raw otherwise; all compare-time code parses defensively and treats junk as "no date". It is in the parser's `UPDATABLE` list, so hand edits lock it against imports like any import field. Kiosk: a youth expiring within 30 days (day-granular, expired included) gets an orange `.exp-tag` on their cart row and a "Membership expires MMM D — renewal due" line in the sign modal — **never blocks check-in**, and works offline because `membership_expires` rides in the roster snapshot (`personView`). Admin: Reports → "Membership renewals" (30/60/90-day window incl. registered adults, most-lapsed first) + `expiring.csv`, and a dashboard "renewals due ≤30 days" card (`status.expiring_30`).
 
 **Authorized adults.** `person_guardian` rows carry `authorized`, `is_primary`, `relationship`, `source` (`import_email`/`import_address`/`manual`), `sms_opt_in`. Admin edits flip `source` to `manual` and are permanent against imports. Import-created links cannot be deleted (they would resurrect on re-import) — they get unauthorized instead. Consent-form designees are created as brand-new adults (no member number, any name) and linked in one step; they appear in the kiosk signer picker like any guardian.
 
@@ -68,7 +73,7 @@ Schema is in `server/migrations/001_init.sql` (see doc 03). Later additions: `tx
 
 Kiosk (door session): `GET /api/staff-list*`, `POST /api/login*`, `POST /api/logout`, `GET /api/me`, `GET /api/search`, `GET /api/badge/:code`, `POST /api/badge/link`, `GET /api/person/:id/guardians`, `POST /api/visitor`, `GET /api/events/current`, `POST /api/events`, `POST /api/txn`, `GET /api/onsite`, `GET /api/patrols`, `GET /api/roster-snapshot`, `POST /api/roster/import` (admin), `GET /api/config*`, `GET /healthz*` (* = no session).
 
-Admin: `GET/PATCH /api/admin/people[/:id]`, `POST/DELETE /api/admin/people/:id/photo`, `POST /api/admin/people/:yid/guardians[/new]`, `PATCH/DELETE /api/admin/people/:yid/guardians/:gid`, `GET/PATCH/DELETE /api/admin/events[/:id]`, `POST /api/admin/sync-ical`, `GET /api/admin/txns[/:id]`, `POST /api/admin/txns/:id/void`, `POST /api/admin/close-open`, `POST /api/admin/merge`, `GET /api/admin/imports`, `GET /api/admin/notifications`, `GET /api/admin/report/summary`, `GET /api/admin/export/{attendance,summary,open,overrides,visitors}.csv`, `POST /api/admin/backup`, `GET /api/admin/status`. Report/export filters: `from`, `to` (dates, inclusive), `event_id`, `person_id`.
+Admin: `GET/PATCH /api/admin/people[/:id]`, `POST/DELETE /api/admin/people/:id/photo`, `POST /api/admin/people/:yid/guardians[/new]`, `PATCH/DELETE /api/admin/people/:yid/guardians/:gid`, `GET/PATCH/DELETE /api/admin/events[/:id]`, `POST /api/admin/sync-ical`, `GET /api/admin/txns[/:id]`, `POST /api/admin/txns/:id/void`, `POST /api/admin/close-open`, `POST /api/admin/merge`, `GET /api/admin/imports`, `GET /api/admin/notifications`, `GET /api/admin/report/summary`, `GET /api/admin/expiring` (`days` = 30/60/90…), `GET /api/admin/export/{attendance,summary,open,overrides,visitors,expiring}.csv`, `POST /api/admin/backup`, `GET /api/admin/status`. Report/export filters: `from`, `to` (dates, inclusive), `event_id`, `person_id`.
 
 Webhook: `POST /api/sms/inbound` (Twilio signature).
 

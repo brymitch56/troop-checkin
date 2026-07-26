@@ -5,12 +5,12 @@ Two layers: the automated suite (run it after any change), and manual walkthroug
 ## Automated tests
 
 ```bash
-npm test                      # 46 node:test cases across 5 files
+npm test                      # 64 node:test cases across 6 files
 npm install --no-save puppeteer
-node test/e2e-browser.js      # 19-step real-browser E2E (kiosk + admin + offline)
+node test/e2e-browser.js      # 21-step real-browser E2E (kiosk + admin + offline)
 ```
 
-What they cover: roster parser and guardian-link rules; import idempotency, deactivation scoping, field locks; every API endpoint over HTTP including all `/txn` business rules (signer requirements, authorization + override, 409 races, dedupe, FR-12 adults); admin flows (guardian authority, void/close corrections, merge, CSVs, iCal apply rules, backup restore); Twilio signature validation and Y/STOP webhook flows; report filters; photo upload and gating. The E2E drives a real Chrome through login, wedge scanning, badge enrollment, cart, signature canvas, override confirm, station mode, the admin UI, and a full offline round-trip (queue → reconnect → sync).
+What they cover: roster parser and guardian-link rules; import idempotency, deactivation scoping, field locks; every API endpoint over HTTP including all `/txn` business rules (signer requirements, authorization + override, 409 races, dedupe, FR-12 adults); admin flows (guardian authority, void/close corrections, merge, CSVs, iCal apply rules, backup restore); Twilio signature validation and Y/STOP webhook flows; report filters; photo upload and gating; membership-expiration rules (date normalization, the 30-day boundary — expires today / day 29 in, day 31 out — lock interaction, the admin expiring list/CSV, snapshot inclusion). The E2E drives a real Chrome through login, wedge scanning, badge enrollment, cart, signature canvas, override confirm, station mode, the admin UI, and a full offline round-trip (queue → reconnect → sync).
 
 Everything runs against a throwaway `DATA_DIR` in `/tmp` — your real database is never touched. A fresh-clone check (`git clone … && npm ci && npm run migrate && npm start`) should also pass after any dependency change; this is what the Pi installer does.
 
@@ -82,6 +82,13 @@ Setup once: `npm run migrate`, create one door and one admin account (`npm run c
 ### 11. Backup & restore (do once now, not during a crisis)
 1. Admin → Tools → Back up now → confirm files in `data/backups/`.
 2. Stop the server; copy the snapshot over `data/troop.db` (delete `-wal`/`-shm`); untar signatures; start; verify history intact.
+
+### 12. Membership renewals
+1. Admin → People → open a youth → set "Membership expires" to a date ~2 weeks out → Save (the field locks against imports like any hand edit).
+2. Kiosk → add that youth to the cart → an orange "⚠ Membership expiring" tag shows on their row; tap Sign IN → the sign modal repeats "Membership expires MMM D — renewal due". **Check-in must complete normally** — the warning never blocks.
+3. Admin → Reports → "Membership renewals": the youth is listed at 30 days; switch to 60/90 to widen; download the Renewals CSV.
+4. Dashboard shows a "renewals due ≤30 days" card (orange when non-zero).
+5. Offline check: with the youth's date still near, load the kiosk on a phone, enable airplane mode, re-open, add them to the cart — the tag must still appear (it comes from the offline snapshot).
 
 ## When something fails
 
