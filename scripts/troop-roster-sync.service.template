@@ -19,3 +19,8 @@ Nice=10
 NoNewPrivileges=true
 PrivateTmp=true
 Environment=NODE_ENV=production
+# Defense-in-depth only: the script self-loads .env via server/lib/env.js
+# (the source of truth — systemd's EnvironmentFile is not a shell parser and
+# handles quotes/#/expansion differently, and env.js never overrides values
+# systemd already set). Leading "-" = non-fatal if .env is absent.
+EnvironmentFile=-@APP_DIR@/.env

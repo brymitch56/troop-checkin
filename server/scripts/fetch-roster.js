@@ -35,6 +35,11 @@
 
 const fs = require('fs');
 const path = require('path');
+// Self-load .env exactly like the app does (same proven parser; values
+// already in process.env win). Without this, a plain `node fetch-roster.js`
+// and the systemd timer had no credentials — found in the 2026-07-26 live
+// test, where only a manual `-r ./server/lib/env.js` preload worked.
+require('../lib/env');
 
 // ---------------------------------------------------------------- errors ---
 class FetchError extends Error {
@@ -300,8 +305,16 @@ async function runFetch(env = process.env) {
   if (!cfg.enabled) return { skipped: true, reason: 'TLC_ENABLED=false' };
 
   fs.mkdirSync(cfg.outDir, { recursive: true });
-  const jar = new CookieJar();
 
+  // Admin-saved credentials (DB, entered in Admin → Import) take precedence
+  // over .env; .env stays the fallback. Guarded: if the DB is unreachable in
+  // this context, fall back to env values rather than failing differently.
+  try {
+    const saved = require('../lib/rosterSync').getTlcCredentials();
+    if (saved) { cfg.email = saved.email; cfg.password = saved.password; }
+  } catch { /* no DB here — env credentials apply */ }
+
+  const jar = new CookieJar();
   const token = await login(cfg, jar);
   const buf = await fetchExport(cfg, jar, token);
   const prev = readState(cfg).last_rows || null;

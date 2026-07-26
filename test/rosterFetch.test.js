@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fetch-'));
 
@@ -162,6 +163,43 @@ test('makeConfig: defaults are the safe ones', () => {
   assert.equal(off.enabled, false);
   const tuned = F.makeConfig({ TLC_ROW_TOLERANCE: '0.05', DATA_DIR: '/tmp/x' });
   assert.equal(tuned.rowTolerance, 0.05);
+});
+
+// Regression for the 2026-07-26 live-test bug: as first shipped, a plain
+// `node server/scripts/fetch-roster.js` (CLI or systemd timer) never loaded
+// .env, so the scheduled path always failed "TLC_EMAIL / TLC_PASSWORD not
+// set" — only a manual `-r ./server/lib/env.js` preload worked.
+test('standalone invocation self-loads .env (the systemd/CLI path)', () => {
+  // stage a minimal repo-shaped copy: env.js resolves .env two levels above
+  // its own file, so the layout must mirror server/lib + server/scripts.
+  // Never touches the real repo's .env (which must not exist in git anyway).
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-envfix-'));
+  fs.mkdirSync(path.join(tmp, 'server', 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'server', 'lib'), { recursive: true });
+  const root = path.join(__dirname, '..');
+  fs.copyFileSync(path.join(root, 'server', 'scripts', 'fetch-roster.js'),
+    path.join(tmp, 'server', 'scripts', 'fetch-roster.js'));
+  fs.copyFileSync(path.join(root, 'server', 'lib', 'env.js'),
+    path.join(tmp, 'server', 'lib', 'env.js'));
+  fs.writeFileSync(path.join(tmp, '.env'), '# fixture — fake values only\nTLC_ENABLED=false\n');
+
+  const env = { ...process.env };
+  delete env.TLC_ENABLED; delete env.TLC_EMAIL; delete env.TLC_PASSWORD; delete env.TLC_BASE;
+  env.DATA_DIR = path.join(tmp, 'data');
+  const r = spawnSync(process.execPath, ['server/scripts/fetch-roster.js'],
+    { cwd: tmp, env, encoding: 'utf8', timeout: 15000 });
+  assert.equal(r.status, 0, `expected clean skip; stderr: ${r.stderr}`);
+  assert.match(r.stdout, /skipped: TLC_ENABLED=false/); // .env WAS read
+  assert.doesNotMatch(r.stderr, /TLC_EMAIL/);
+
+  // negative control — exactly the shipped bug's symptom: same invocation
+  // with no .env must fail wanting credentials, proving this test would
+  // have caught the regression (and still guards the require('../lib/env'))
+  fs.rmSync(path.join(tmp, '.env'));
+  const r2 = spawnSync(process.execPath, ['server/scripts/fetch-roster.js'],
+    { cwd: tmp, env, encoding: 'utf8', timeout: 15000 });
+  assert.equal(r2.status, 1);
+  assert.match(r2.stderr, /TLC_EMAIL \/ TLC_PASSWORD not set/);
 });
 
 test('pruneOldExports: removes only files older than the retention window', () => {
