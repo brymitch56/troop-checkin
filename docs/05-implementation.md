@@ -39,7 +39,9 @@ public/
   index.html/app.js/styles.css   kiosk PWA
   admin.html/admin.js/admin.css  admin SPA
   offline.js          IndexedDB snapshot + txn queue + conflict store
-  sw.js               app-shell cache (VERSION tc-v12 — bump on every deploy)
+  guide.html          in-app user guide (kiosk + admin, print CSS; troop-generic,
+                      brand injected from /api/config; in the SW shell so it works offline)
+  sw.js               app-shell cache (VERSION tc-v13 — bump when public/ changes)
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
   install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd
