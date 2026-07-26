@@ -676,19 +676,31 @@ $('onsite-notify').onclick = async () => {
 };
 $('notify-close').onclick = closeModal;
 
-// custom broadcast (ETA updates etc.)
+// custom broadcast (ETA updates etc.) — to on-site youth's guardians, or to
+// everyone who attended the current event (even if already picked up)
 $('onsite-message').onclick = () => {
   $('msg-text').value = '';
   $('msg-error').textContent = '';
-  $('msg-scope').textContent = state.patrol ? `Sends to guardians of on-site youth in ${state.patrol}.` : 'Sends to guardians of everyone on site.';
+  $('msg-scope-onsite').checked = true;
+  $('msg-scope-attended').disabled = !state.event;
+  $('msg-scope-attended-label').textContent = state.event
+    ? `Everyone who attended: ${state.event.title}`
+    : 'Everyone who attended (pick an event first)';
+  $('msg-scope').textContent = state.patrol ? `Limited to patrol: ${state.patrol}.` : '';
   openModal('modal-message');
 };
 $('msg-cancel').onclick = closeModal;
 $('msg-send').onclick = async () => {
   const message = $('msg-text').value.trim();
   if (!message) return ($('msg-error').textContent = 'Type the message first.');
+  const attended = $('msg-scope-attended').checked;
   try {
-    renderNotifyResults(await jpost('/message-onsite', { message, patrol: state.patrol || undefined }));
+    renderNotifyResults(await jpost('/message-onsite', {
+      message,
+      patrol: state.patrol || undefined,
+      scope: attended ? 'attended' : 'onsite',
+      event_id: attended && state.event ? state.event.id : undefined,
+    }));
   } catch (e) { $('msg-error').textContent = e.message; }
 };
 

@@ -97,6 +97,15 @@
   <div id="tab-messages" class="tab" hidden>
     <div class="panel">
       <h3>SMS messages <button id="msg-refresh" class="btn ghost small">Refresh</button></h3>
+      <div id="msg-compose" class="panel" hidden>
+        <h4 id="msg-compose-to"></h4>
+        <textarea id="msg-compose-text" rows="3" maxlength="300" placeholder="Reply…"></textarea>
+        <div class="row wrap">
+          <button id="msg-compose-send" class="btn primary small">Send reply</button>
+          <button id="msg-compose-cancel" class="btn ghost small">Cancel</button>
+        </div>
+        <div id="msg-compose-error" class="error"></div>
+      </div>
       <p class="hint left">Everything sent and received: pickup alerts, broadcasts, and parent replies.
       Replies to broadcasts (like "on our way") land here — check after sending an ETA update.
       This view refreshes automatically while open.</p>

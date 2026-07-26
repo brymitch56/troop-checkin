@@ -66,6 +66,10 @@
 .gadd-forms h4 { margin: 0 0 8px; }
 .gadd-forms input { font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px; }
 .msg-body { max-width: 380px; word-break: break-word; }
+#msg-compose textarea {
+  width: 100%; font-size: 15px; padding: 8px; border: 1.5px solid var(--line);
+  border-radius: 8px; font-family: inherit; resize: vertical; margin-bottom: 8px;
+}
 tr.msg-reply { background: #FDF4EC; }
 
 .filters label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }

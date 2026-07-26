@@ -482,6 +482,36 @@ router.get('/export/summary.csv', (req, res) => {
     rows);
 });
 
+// Direct reply from the Messages tab to a guardian who texted in. Honors
+// opt-out: refused when every one of their links is STOPped.
+router.post('/sms-reply', async (req, res) => {
+  const sms = require('../lib/sms');
+  if (!sms.configured()) return res.status(503).json({ error: 'SMS is not configured.' });
+  const { guardian_id } = req.body || {};
+  const message = String((req.body || {}).message || '').trim();
+  if (!guardian_id) return res.status(400).json({ error: 'guardian_id is required.' });
+  if (!message) return res.status(400).json({ error: 'Type the message first.' });
+  if (message.length > 300) return res.status(400).json({ error: 'Keep the message under 300 characters.' });
+  const g = db.prepare(`SELECT * FROM person WHERE id = ? AND is_youth = 0 AND status != 'merged'`).get(guardian_id);
+  if (!g || !g.phone_mobile) return res.status(400).json({ error: 'No mobile number on file for that adult.' });
+  const links = db.prepare('SELECT sms_opt_in FROM person_guardian WHERE guardian_id = ?').all(g.id);
+  if (links.length && links.every((l) => l.sms_opt_in === 'stop')) {
+    return res.status(422).json({ error: 'They texted STOP — replies are blocked until they text START.' });
+  }
+  const body = `${require('../lib/env').TROOP_ID}: ${message}`;
+  let status = 'failed', sid = null, err = null;
+  try {
+    const r = await sms.send(g.phone_mobile, body);
+    status = 'sent'; sid = r.sid;
+  } catch (e) { err = e.message; }
+  db.prepare(
+    `INSERT INTO sms_message (direction, kind, guardian_id, phone, body, twilio_sid, status)
+     VALUES ('out', 'reply', ?, ?, ?, ?, ?)`
+  ).run(g.id, g.phone_mobile, body, sid, status);
+  if (status !== 'sent') return res.status(502).json({ error: `Send failed: ${err}` });
+  res.json({ ok: true });
+});
+
 // Full SMS message log: broadcasts, alerts, and every inbound reply.
 router.get('/messages', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 1000);

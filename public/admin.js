@@ -571,15 +571,26 @@ async function loadMessages() {
     ? (m.kind === 'reply' ? '<span class="tag warn">reply</span>' : '<span class="tag off">keyword</span>')
     : (m.kind === 'custom' ? '<span class="tag youth">broadcast</span>' : '<span class="tag off">pickup alert</span>');
   $('msg-list').innerHTML = rows.length
-    ? `<table><tr><th></th><th>When</th><th>Who</th><th>Type</th><th>Message</th><th>Status</th></tr>` +
+    ? `<table><tr><th></th><th>When</th><th>Who</th><th>Type</th><th>Message</th><th>Status</th><th></th></tr>` +
       rows.map((m) => `<tr class="${m.direction === 'in' && m.kind === 'reply' ? 'msg-reply' : ''}">
         <td>${m.direction === 'in' ? '📥' : '📤'}</td>
         <td>${fmtDT(m.at)}</td>
         <td>${esc(m.guardian_name || m.phone || '?')}</td>
         <td>${kindTag(m)}</td>
         <td class="msg-body">${esc(m.body || '')}</td>
-        <td>${esc(m.status || '')}</td></tr>`).join('') + '</table>'
+        <td>${esc(m.status || '')}</td>
+        <td>${m.direction === 'in' && m.guardian_id
+          ? `<button class="btn ghost small" data-msgreply="${m.guardian_id}" data-msgname="${esc(m.guardian_name || m.phone)}">Reply</button>` : ''}</td>
+      </tr>`).join('') + '</table>'
     : '<p class="hint left">No messages yet.</p>';
+  $('msg-list').querySelectorAll('button[data-msgreply]').forEach((b) => (b.onclick = () => {
+    $('msg-compose').hidden = false;
+    $('msg-compose').dataset.gid = b.dataset.msgreply;
+    $('msg-compose-to').textContent = `Reply to ${b.dataset.msgname}`;
+    $('msg-compose-text').value = '';
+    $('msg-compose-error').textContent = '';
+    $('msg-compose-text').focus();
+  }));
   // live-ish refresh while the tab is open
   clearInterval(msgTimer);
   msgTimer = setInterval(() => {
@@ -587,7 +598,20 @@ async function loadMessages() {
     loadMessages();
   }, 15000);
 }
-document.addEventListener('click', (e) => { if (e.target.id === 'msg-refresh') loadMessages(); });
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'msg-refresh') loadMessages();
+  if (e.target.id === 'msg-compose-cancel') $('msg-compose').hidden = true;
+  if (e.target.id === 'msg-compose-send') {
+    const message = $('msg-compose-text').value.trim();
+    if (!message) return ($('msg-compose-error').textContent = 'Type the reply first.');
+    try {
+      await jpost('/admin/sms-reply', { guardian_id: Number($('msg-compose').dataset.gid), message });
+      $('msg-compose').hidden = true;
+      toast('Reply sent');
+      loadMessages();
+    } catch (err) { $('msg-compose-error').textContent = err.message; }
+  }
+});
 
 // -------------------------------------------------------------- reports ----
 let rpPersonId = null;

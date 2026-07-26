@@ -355,6 +355,51 @@ test('message log: all traffic stored; broadcast replies logged, not robo-answer
   assert.equal(forged.status, 403);
 });
 
+test('attended-scope broadcast reaches guardians of already-picked-up youth; admin reply honors STOP', async () => {
+  const emma = person('Emma'), bob = person('Bob');
+  // Emma attended the Notify Test event earlier and was admin-closed (signed out).
+  const evId = db.prepare(`SELECT id FROM event WHERE title = 'Notify Test'`).get().id;
+  assert.equal(db.prepare(
+    `SELECT COUNT(*) c FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
+      WHERE t.event_id = ? AND tp.open = 1`).get(evId).c, 0, 'precondition: nobody on site');
+  // onsite scope: nobody to text
+  const onsite = await req('POST', '/api/message-onsite', {
+    cookie: doorCookie, body: { message: 'Water bottle left behind!' },
+  });
+  assert.equal(onsite.json.youth, 0);
+  // attended scope: reaches Emma's guardian even though she's signed out
+  const attended = await req('POST', '/api/message-onsite', {
+    cookie: doorCookie, body: { message: 'Water bottle left behind!', scope: 'attended', event_id: evId },
+  });
+  assert.equal(attended.status, 200);
+  assert.ok(attended.json.youth >= 2, 'attended scope covers signed-out youth');
+  const grp = [...attended.json.sent, ...attended.json.skipped].find((x) => x.youths);
+  assert.ok(grp && grp.youths.some((n) => n.includes('Emma')));
+  // scope requires an event id
+  assert.equal((await req('POST', '/api/message-onsite', {
+    cookie: doorCookie, body: { message: 'x', scope: 'attended' },
+  })).status, 400);
+
+  // admin direct reply: logs an outbound 'reply' row
+  const rep = await req('POST', '/api/admin/sms-reply', {
+    cookie: adminCookie, body: { guardian_id: bob.id, message: 'Got it — see you soon.' },
+  });
+  // fake Twilio creds -> send fails with 502, but the attempt is still logged
+  assert.equal(rep.status, 502);
+  const logged = db.prepare(
+    `SELECT * FROM sms_message WHERE direction = 'out' AND kind = 'reply' ORDER BY id DESC LIMIT 1`).get();
+  assert.equal(logged.guardian_id, bob.id);
+  assert.match(logged.body, /Got it/);
+  // STOP everywhere -> replies blocked with a clear message
+  db.prepare(`UPDATE person_guardian SET sms_opt_in = 'stop' WHERE guardian_id = ?`).run(bob.id);
+  const blocked = await req('POST', '/api/admin/sms-reply', {
+    cookie: adminCookie, body: { guardian_id: bob.id, message: 'hello?' },
+  });
+  assert.equal(blocked.status, 422);
+  assert.match(blocked.json.error, /STOP/);
+  db.prepare(`UPDATE person_guardian SET sms_opt_in = 'yes' WHERE guardian_id = ? AND consent_form_id IS NOT NULL`).run(bob.id);
+});
+
 // ---------------------------------------------------------------- reports ----
 test('report summary + CSVs honor date-range/person/event filters', async () => {
   const sum = await req('GET', '/api/admin/report/summary', { cookie: adminCookie });

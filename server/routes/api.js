@@ -393,21 +393,40 @@ router.post('/notify-onsite', express.json(), async (req, res) => {
   res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
 });
 
-// Custom broadcast to opted-in guardians of on-site youth (ETA updates on the
-// way back from a trip, etc.). Repeatable; never closes sign-ins.
+// Custom broadcast (ETA updates, "left a water bottle", etc.). Repeatable;
+// never closes sign-ins. Two scopes:
+//   onsite (default)  — guardians of youth currently checked in
+//   attended          — guardians of every youth who signed into event_id
+//                       today's run, even if already picked up
 router.post('/message-onsite', express.json(), async (req, res) => {
   const sms = require('../lib/sms');
   const { messageGuardians } = require('../lib/notifySweep');
   if (!sms.configured()) {
     return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
   }
-  const message = String((req.body && req.body.message) || '').trim();
+  const b = req.body || {};
+  const message = String(b.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Type the message first.' });
   if (message.length > 300) return res.status(400).json({ error: 'Keep the message under 300 characters.' });
-  const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
-  const rows = onsiteYouthRows(patrol);
+  const patrol = b.patrol ? String(b.patrol) : null;
+  let rows;
+  if (b.scope === 'attended') {
+    if (!b.event_id) return res.status(400).json({ error: 'Pick an event for an all-attendees message.' });
+    rows = db.prepare(
+      `SELECT DISTINCT p.id AS person_id, p.first_name, p.last_name, p.nickname,
+              e.id AS event_id, e.title
+         FROM txn_person tp
+         JOIN txn t ON t.id = tp.txn_id
+         JOIN person p ON p.id = tp.person_id
+         JOIN event e ON e.id = t.event_id
+        WHERE t.event_id = ? AND t.direction = 'in' AND t.voided_by_txn_id IS NULL
+          AND p.is_youth = 1 AND (? IS NULL OR p.patrol = ?)`
+    ).all(b.event_id, patrol, patrol);
+  } else {
+    rows = onsiteYouthRows(patrol);
+  }
   const r = await messageGuardians(rows, message);
-  res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
+  res.json({ scope: b.scope === 'attended' ? 'attended' : 'onsite', youth: rows.length, onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
 });
 
 router.get('/patrols', (req, res) => {
