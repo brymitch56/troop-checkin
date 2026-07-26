@@ -31,6 +31,30 @@ test('parseWorkbook: youth Email is a TLC username, not an email', () => {
   assert.equal(alice.tlc_username, null);
 });
 
+test('parseWorkbook: captures "Membership Exp." and normalizes to ISO', () => {
+  const rows = DEFAULT_ROWS.map((row) => [...row]);
+  rows.find((r) => r[2] === 'Danny')[16] = '9/30/2027';       // US M/D/YYYY
+  rows.find((r) => r[2] === 'Emma')[16] = '2027-10-05';       // already ISO
+  rows.find((r) => r[2] === 'Frank')[16] = 'pending renewal'; // unrecognized -> raw
+  const people = roster.parseWorkbook(buildWorkbookBuffer(rows));
+  assert.equal(people.find((p) => p.first_name === 'Danny').membership_expires, '2027-09-30');
+  assert.equal(people.find((p) => p.first_name === 'Emma').membership_expires, '2027-10-05');
+  assert.equal(people.find((p) => p.first_name === 'Frank').membership_expires, 'pending renewal');
+  assert.equal(people.find((p) => p.first_name === 'Bob').membership_expires, null); // empty cell
+  assert.ok(roster.UPDATABLE.includes('membership_expires')); // import-managed, lockable
+});
+
+test('parseWorkbook: file without a "Membership Exp." column still parses', () => {
+  const XLSX = require('xlsx');
+  const headers = ['Member Number', 'Last Name', 'First Name', 'Youth'];
+  const ws = XLSX.utils.aoa_to_sheet([['Title'], headers, ['Y-9', 'Test', 'Old', 'Y']]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'S');
+  const people = roster.parseWorkbook(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+  assert.equal(people.length, 1);
+  assert.equal(people[0].membership_expires, null);
+});
+
 test('parseWorkbook: rejects a non-TLC workbook', () => {
   const XLSX = require('xlsx');
   const ws = XLSX.utils.aoa_to_sheet([['Name', 'Phone'], ['X', 'Y']]);
@@ -107,6 +131,32 @@ test('deactivation: scoped to classes present in the file, reactivates returners
   const all = roster.parseWorkbook(buildWorkbookBuffer());
   roster.applyImport(all, [], null, 'full.xlsx', null);
   assert.equal(db.prepare(`SELECT status FROM person WHERE member_id = 'Y-2002'`).get().status, 'active');
+});
+
+test('membership_expires: imported, updated by re-import, and lockable', () => {
+  // Danny was inserted from DEFAULT_ROWS (far-future US-format date -> ISO)
+  const before = db.prepare(`SELECT membership_expires FROM person WHERE member_id = 'Y-2001'`).get();
+  assert.match(before.membership_expires, /^\d{4}-\d{2}-\d{2}$/);
+
+  // a re-import with a changed date updates it...
+  const rows = DEFAULT_ROWS.map((row) => [...row]);
+  rows.find((r) => r[2] === 'Danny')[16] = '3/1/2099';
+  roster.applyImport(roster.parseWorkbook(buildWorkbookBuffer(rows)), [], null, 'exp1.xlsx', null);
+  assert.equal(db.prepare(`SELECT membership_expires FROM person WHERE member_id = 'Y-2001'`)
+    .get().membership_expires, '2099-03-01');
+
+  // ...unless the admin hand-edited the field (manual lock wins, always)
+  db.prepare(`UPDATE person SET manual_fields = '["membership_expires"]' WHERE member_id = 'Y-2001'`).run();
+  rows.find((r) => r[2] === 'Danny')[16] = '4/1/2099';
+  rows.find((r) => r[2] === 'Danny')[3] = 'Dan-o'; // unlocked field still updates
+  const r = roster.applyImport(roster.parseWorkbook(buildWorkbookBuffer(rows)), [], null, 'exp2.xlsx', null);
+  assert.equal(r.updated, 1);
+  const d = db.prepare(`SELECT membership_expires, nickname FROM person WHERE member_id = 'Y-2001'`).get();
+  assert.equal(d.membership_expires, '2099-03-01'); // locked: file value ignored
+  assert.equal(d.nickname, 'Dan-o');                // unlocked: file value applied
+  // cleanup for later tests: unlock + restore the default-row value
+  db.prepare(`UPDATE person SET manual_fields = NULL WHERE member_id = 'Y-2001'`).run();
+  roster.applyImport(roster.parseWorkbook(buildWorkbookBuffer()), [], null, 'exp3.xlsx', null);
 });
 
 test('manual guardian links are never duplicated by import', () => {

@@ -9,6 +9,7 @@
 //     fallback last name OR normalized address+zip (remaining 5/50)
 const XLSX = require('xlsx');
 const { db } = require('../db');
+const { normalizeDateCell } = require('./membership');
 
 const norm = (v) => (v == null ? '' : String(v).trim());
 const lower = (v) => norm(v).toLowerCase();
@@ -52,6 +53,10 @@ function parseWorkbook(buffer) {
       phone_home: g(r, 'Home Phone') || null,
       phone_work: g(r, 'Work Phone') || null,
       birthdate: g(r, 'Birthdate') || null,
+      // "Membership Exp." (trailing period in the real export). raw:false
+      // delivers a formatted string — normalize to ISO when recognizable,
+      // keep the raw value otherwise (compare-time code parses defensively).
+      membership_expires: normalizeDateCell(g(r, 'Membership Exp.')),
       // used only for guardian-link fallback, not persisted:
       _cc_email: lower(g(r, 'Adult Cc Email')),
       _addr: normAddr(g(r, 'Address Line 1'), g(r, 'Zip')),
@@ -109,7 +114,8 @@ function findExisting(p) {
 }
 
 const UPDATABLE = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
-  'email', 'tlc_username', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate'];
+  'email', 'tlc_username', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate',
+  'membership_expires'];
 
 function diffFields(existing, p) {
   // fields the admin edited by hand are locked against imports (person.manual_fields)
@@ -158,9 +164,9 @@ const applyImport = (people, links, staffId, filename, rawPath) => {
 
     const ins = db.prepare(
       `INSERT INTO person (is_youth, member_id, first_name, last_name, nickname, role, patrol,
-        level, email, tlc_username, phone_mobile, phone_home, phone_work, birthdate)
+        level, email, tlc_username, phone_mobile, phone_home, phone_work, birthdate, membership_expires)
        VALUES (@is_youth, @member_id, @first_name, @last_name, @nickname, @role, @patrol,
-        @level, @email, @tlc_username, @phone_mobile, @phone_home, @phone_work, @birthdate)`
+        @level, @email, @tlc_username, @phone_mobile, @phone_home, @phone_work, @birthdate, @membership_expires)`
     );
     people.forEach((p, i) => {
       const ex = findExisting(p);
