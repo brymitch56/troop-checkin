@@ -63,6 +63,7 @@ function personView(p) {
     id: p.id, is_youth: !!p.is_youth, member_id: p.member_id,
     first_name: p.first_name, last_name: p.last_name, nickname: p.nickname,
     patrol: p.patrol, level: p.level, status: p.status, photo_path: p.photo_path,
+    membership_expires: p.membership_expires, // kiosk expiry warning (also in the offline snapshot)
     last_emerg_phone_1: p.last_emerg_phone_1, last_emerg_phone_2: p.last_emerg_phone_2,
     open, // null = not on site; else {in_txn_id, event_id, event_title}
   };

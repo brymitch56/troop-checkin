@@ -112,6 +112,13 @@ async function main() {
   await page.waitForFunction(() => document.querySelectorAll('#cart-list li').length === 2);
   step('reprinted badge links and adds Emma');
 
+  // Emma's synthetic membership expires ~20 days out -> orange warning tag on
+  // her cart row (non-blocking); Danny's is far-future -> no tag on his
+  const expTags = await page.$$eval('#cart-list .exp-tag', (els) => els.map((e) => e.textContent));
+  assert.equal(expTags.length, 1, 'exactly one membership-expiry tag expected');
+  assert.match(expTags[0], /Membership expiring/);
+  step('membership-expiry warning tag on cart row (non-blocking)');
+
   // -- search adds a third youth --------------------------------------------
   await page.type('#search-input', 'Frank', { delay: 60 });
   await searchHit(page, 'Frank');
@@ -121,6 +128,11 @@ async function main() {
   // -- sign modal: signer union, signature pad, staff override ---------------
   await click('#btn-sign');
   await page.waitForSelector('#modal-sign:not([hidden])');
+  // Emma's expiry note appears in the sign modal (informational, never blocks)
+  const expLine = await page.$eval('#sign-membership', (el) => ({ hidden: el.hidden, text: el.textContent }));
+  assert.equal(expLine.hidden, false);
+  assert.match(expLine.text, /Emma.*Membership expires .* renewal due/);
+  step('membership-expiry note in sign modal');
   // pick Alice (authorized only for Danny -> partial warning, then 422 -> confirm override)
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('#signer-list button')]

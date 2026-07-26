@@ -178,6 +178,11 @@ input[type="password"], input[type="datetime-local"] {
   border-radius: var(--radius); font-family: inherit; resize: vertical;
 }
 .warn-text { color: var(--blaze); }
+/* membership-expiry warning: clearly visible, non-blocking */
+.exp-tag { display: inline-block; background: var(--blaze); color: #fff; border-radius: 999px;
+  padding: 1px 9px; font-size: 12px; font-weight: 700; margin-left: 6px; vertical-align: 1px; }
+.sign-membership { color: var(--blaze); font-weight: 600; font-size: 14px;
+  margin: 2px 0 10px; line-height: 1.5; }
 #modal-notify h4 { margin: 12px 0 4px; }
 
 .foot-links { text-align: center; margin: 18px 0 0; }

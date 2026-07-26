@@ -407,6 +407,31 @@ $('search-input').addEventListener('input', () => {
   }, 200);
 });
 
+// ------------------------------------------- membership expiry warning ----
+// Warn (never block) when a youth's Trail Life membership has expired or
+// expires within 30 days. Day-granular like the events past-rule. The date
+// is normalized to ISO on import but parsed defensively here; works offline
+// because membership_expires rides along in the roster snapshot.
+function membershipExpiry(p) {
+  if (!p || !p.is_youth || !p.membership_expires) return null;
+  const v = String(p.membership_expires);
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(v);
+  const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(v);
+  if (isNaN(d)) return null;
+  const now = new Date();
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+  if (days > 30) return null;
+  const when = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return {
+    days,
+    tag: days < 0 ? 'Membership expired' : 'Membership expiring',
+    line: days < 0
+      ? `Membership expired ${when} — renewal overdue`
+      : `Membership expires ${when} — renewal due`,
+  };
+}
+
 // ---------------------------------------------------------------- cart ----
 async function addToCart(person) {
   if (state.cart.some((c) => c.person.id === person.id)) return toast(`${displayName(person)} is already in the cart.`);
@@ -453,9 +478,10 @@ function renderCart() {
   state.cart.forEach((c, i) => {
     const li = document.createElement('li');
     const p = c.person;
+    const exp = membershipExpiry(p); // orange, clearly visible, never blocks
     li.innerHTML = `
       <span class="dir-chip ${state.direction}">${state.direction.toUpperCase()}</span>
-      <span><span class="cart-name">${displayName(p)}</span><br>
+      <span><span class="cart-name">${displayName(p)}</span>${exp ? ` <span class="exp-tag">⚠ ${exp.tag}</span>` : ''}<br>
         <span class="cart-sub">${p.is_youth ? (p.patrol || 'Youth') : 'Adult'}${p.open ? ` · in: ${p.open.event_title}` : ''}</span></span>
       <button class="cart-remove" aria-label="Remove">✕</button>`;
     li.querySelector('.cart-remove').onclick = () => {
@@ -496,6 +522,13 @@ function openSignModal() {
     const p = c.person;
     return `<span class="sign-person">${p.photo_path ? `<img src="/photos/${p.photo_path}" alt="">` : ''}<span>${displayName(p)}</span></span>`;
   }).join('');
+  // membership expiry notes (informational only — check-in is never blocked)
+  const expLines = state.cart
+    .map((c) => ({ p: c.person, exp: membershipExpiry(c.person) }))
+    .filter((x) => x.exp)
+    .map((x) => `⚠ ${displayName(x.p)}: ${x.exp.line}`);
+  $('sign-membership').innerHTML = expLines.join('<br>');
+  $('sign-membership').hidden = !expLines.length;
   $('sign-error').textContent = '';
   $('signer-other').hidden = true; $('signer-other').value = '';
 
