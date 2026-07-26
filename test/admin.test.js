@@ -340,6 +340,54 @@ test('staff management: create, PIN-overrides-password, guards', async () => {
   assert.ok(!(await req('GET', '/api/staff-list')).json.some((s) => s.name === 'Second Admin'));
 });
 
+test('guardian-bulk: one adult + consent applied to several youth at once', async () => {
+  const danny = person('Danny'), emma = person('Emma');
+  const cf = db.prepare(`INSERT INTO consent_form (file_path, signed_by) VALUES ('fam.pdf', 'Nora Neighbor')`).run();
+  const formId = Number(cf.lastInsertRowid);
+  // opt-in without a form is refused before anything is written
+  const gate = await req('POST', '/api/admin/guardian-bulk', {
+    cookie: adminCookie,
+    body: { new_guardian: { first_name: 'Nora', last_name: 'Neighbor' }, youth_ids: [danny.id, emma.id], opt_in: true },
+  });
+  assert.equal(gate.status, 422);
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM person WHERE first_name = 'Nora'`).get().c, 0);
+  // new adult -> linked + primary + opted in on BOTH youth in one call
+  const r = await req('POST', '/api/admin/guardian-bulk', {
+    cookie: adminCookie,
+    body: {
+      new_guardian: { first_name: 'Nora', last_name: 'Neighbor', phone_mobile: '555-0888' },
+      youth_ids: [danny.id, emma.id], relationship: 'neighbor',
+      is_primary: true, opt_in: true, consent_form_id: formId,
+    },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.applied, 2);
+  for (const y of [danny, emma]) {
+    const link = db.prepare(
+      'SELECT * FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(y.id, r.json.guardian_id);
+    assert.equal(link.authorized, 1);
+    assert.equal(link.is_primary, 1);
+    assert.equal(link.sms_opt_in, 'yes');
+    assert.equal(link.consent_form_id, formId);
+    assert.equal(link.source, 'manual');
+    // exactly one primary per youth (previous primaries demoted)
+    assert.equal(db.prepare(
+      'SELECT COUNT(*) c FROM person_guardian WHERE youth_id = ? AND is_primary = 1').get(y.id).c, 1);
+  }
+  // re-applying to an existing link updates instead of duplicating
+  const again = await req('POST', '/api/admin/guardian-bulk', {
+    cookie: adminCookie,
+    body: { guardian_id: r.json.guardian_id, youth_ids: [danny.id], relationship: 'family friend' },
+  });
+  assert.equal(again.json.results[0].action, 'updated');
+  assert.equal(db.prepare(
+    'SELECT COUNT(*) c FROM person_guardian WHERE youth_id = ? AND guardian_id = ?')
+    .get(danny.id, r.json.guardian_id).c, 1);
+  assert.equal(db.prepare(
+    'SELECT relationship, sms_opt_in FROM person_guardian WHERE youth_id = ? AND guardian_id = ?')
+    .get(danny.id, r.json.guardian_id).relationship, 'family friend');
+});
+
 test('backup: VACUUM INTO snapshot restores onto a scratch DB (exit test)', async () => {
   const r = await req('POST', '/api/admin/backup', { cookie: adminCookie });
   assert.equal(r.status, 200);

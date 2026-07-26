@@ -171,6 +171,73 @@ router.post('/people/:youthId/guardians/new', (req, res) => {
   res.json({ ok: true, guardian_id: run() });
 });
 
+// Family setup in one shot: apply a guardian (existing or brand-new adult) to
+// MULTIPLE youth at once — link, relationship, primary, and SMS opt-in with
+// its consent form. One signed family form covers all the pairs it names.
+router.post('/guardian-bulk', (req, res) => {
+  const b = req.body || {};
+  const youthIds = Array.isArray(b.youth_ids) ? b.youth_ids.map(Number).filter(Boolean) : [];
+  if (!youthIds.length) return res.status(400).json({ error: 'Select at least one youth.' });
+  if (b.opt_in && !b.consent_form_id) {
+    return res.status(422).json({ error: 'Opt-in requires attaching the signed consent form.' });
+  }
+  if (b.consent_form_id && !db.prepare('SELECT 1 FROM consent_form WHERE id = ?').get(b.consent_form_id)) {
+    return res.status(400).json({ error: 'No such consent form.' });
+  }
+  const youths = youthIds.map((id) =>
+    db.prepare(`SELECT * FROM person WHERE id = ? AND is_youth = 1 AND status != 'merged'`).get(id));
+  if (youths.some((y) => !y)) return res.status(400).json({ error: 'One of the selected youth was not found.' });
+
+  const run = db.transaction(() => {
+    // resolve the adult
+    let guardianId = b.guardian_id ? Number(b.guardian_id) : null;
+    if (!guardianId) {
+      const ng = b.new_guardian || {};
+      if (!ng.first_name || !ng.last_name) throw Object.assign(new Error('Guardian first and last name are required.'), { code: 400 });
+      const r = db.prepare(
+        `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, status, notes)
+         VALUES (0, ?, ?, ?, 'active', 'Added as authorized pickup (consent form)')`
+      ).run(String(ng.first_name).trim(), String(ng.last_name).trim(), ng.phone_mobile || null);
+      guardianId = Number(r.lastInsertRowid);
+    } else if (!db.prepare(`SELECT 1 FROM person WHERE id = ? AND is_youth = 0 AND status != 'merged'`).get(guardianId)) {
+      throw Object.assign(new Error('No such adult.'), { code: 400 });
+    }
+    const results = [];
+    for (const y of youths) {
+      const existing = db.prepare(
+        'SELECT * FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(y.id, guardianId);
+      if (b.is_primary) db.prepare('UPDATE person_guardian SET is_primary = 0 WHERE youth_id = ?').run(y.id);
+      if (existing) {
+        db.prepare(
+          `UPDATE person_guardian SET authorized = 1, source = 'manual',
+                  relationship = COALESCE(?, relationship),
+                  is_primary = CASE WHEN ? THEN 1 ELSE is_primary END,
+                  sms_opt_in = CASE WHEN ? THEN 'yes' ELSE sms_opt_in END,
+                  consent_form_id = COALESCE(?, consent_form_id)
+            WHERE youth_id = ? AND guardian_id = ?`
+        ).run(b.relationship || null, b.is_primary ? 1 : 0, b.opt_in ? 1 : 0,
+              b.consent_form_id || null, y.id, guardianId);
+        results.push({ youth_id: y.id, action: 'updated' });
+      } else {
+        db.prepare(
+          `INSERT INTO person_guardian (youth_id, guardian_id, relationship, authorized, is_primary,
+                                        source, sms_opt_in, consent_form_id)
+           VALUES (?, ?, ?, 1, ?, 'manual', ?, ?)`
+        ).run(y.id, guardianId, b.relationship || null, b.is_primary ? 1 : 0,
+              b.opt_in ? 'yes' : 'unknown', b.consent_form_id || null);
+        results.push({ youth_id: y.id, action: 'linked' });
+      }
+    }
+    return { guardian_id: guardianId, results };
+  });
+  try {
+    const out = run();
+    res.json({ ok: true, ...out, applied: out.results.length });
+  } catch (e) {
+    res.status(e.code || 500).json({ error: e.message });
+  }
+});
+
 router.patch('/people/:youthId/guardians/:guardianId', (req, res) => {
   const { youthId, guardianId } = req.params;
   const link = db.prepare(

@@ -179,6 +179,58 @@
   </div>
 </section>
 
+<!-- ============ FAMILY GUARDIAN/CONSENT MODAL ============ -->
+<div id="adm-modal" class="modal-root" hidden>
+  <div class="modal adm-modal" role="dialog" aria-modal="true">
+    <div class="modal-page">
+      <div class="fam-head">
+        <h3>Guardian &amp; SMS consent</h3>
+        <button id="fam-close" class="btn ghost small" aria-label="Close">✕ Close</button>
+      </div>
+
+      <h4>1 · The adult</h4>
+      <label class="check"><input type="radio" name="fam-gmode" id="fam-gmode-existing" checked> Adult already in the system</label>
+      <div id="fam-existing-wrap">
+        <input id="fam-gsearch" type="search" placeholder="Search adults…">
+        <div id="fam-gresults" class="signer-list"></div>
+        <p id="fam-gpicked" class="hint left" hidden></p>
+      </div>
+      <label class="check"><input type="radio" name="fam-gmode" id="fam-gmode-new"> New adult (consent-form designee)</label>
+      <div id="fam-new-wrap" class="row wrap" hidden>
+        <input id="fam-nfirst" type="text" placeholder="First name">
+        <input id="fam-nlast" type="text" placeholder="Last name">
+        <input id="fam-nphone" type="tel" placeholder="Mobile (needed for SMS)">
+      </div>
+      <div class="row wrap">
+        <input id="fam-rel" type="text" placeholder="Relationship, e.g. mother, grandfather">
+        <label class="check"><input id="fam-primary" type="checkbox"> Make primary guardian (for each selected youth)</label>
+      </div>
+
+      <h4>2 · Apply to which youth</h4>
+      <input id="fam-ysearch" type="search" placeholder="Filter youth…">
+      <div id="fam-ylist" class="fam-ylist"></div>
+
+      <h4>3 · SMS opt-in (optional)</h4>
+      <label class="check"><input id="fam-optin" type="checkbox"> Opt in for SMS — requires the signed consent form</label>
+      <div id="fam-consent-wrap" hidden>
+        <select id="fam-form"><option value="">— pick an uploaded form —</option></select>
+        <p class="hint left">…or upload the scanned form now:</p>
+        <div class="row wrap">
+          <input id="fam-file" type="file" accept=".pdf,image/*">
+          <input id="fam-signed-by" type="text" placeholder="Signed by">
+          <input id="fam-signed-on" type="date">
+        </div>
+      </div>
+
+      <div id="fam-error" class="error" role="alert"></div>
+      <div class="row">
+        <button id="fam-cancel" class="btn ghost">Cancel</button>
+        <button id="fam-apply" class="btn primary">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 <script src="admin.js"></script>
 </body>

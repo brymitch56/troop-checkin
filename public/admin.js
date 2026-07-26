@@ -259,94 +259,139 @@ function guardianBlock(p, forms) {
     <td>${g.source === 'manual' ? `<button class="btn ghost small" data-gact="del" data-gid="${g.id}">remove</button>` : ''}</td>
   </tr>`).join('')}</table></div>
 
-  <div class="panel">
-    <h4>Upload a signed consent form</h4>
-    <div class="row wrap">
-      <input id="cf-file" type="file" accept=".pdf,image/*">
-      <input id="cf-signed-by" type="text" placeholder="Signed by (parent name)">
-      <input id="cf-signed-on" type="date">
-      <button id="cf-upload" class="btn ghost small">Upload</button>
-    </div>
-    <p class="hint left">After uploading, pick the form in a guardian's row above and press "opt in".
-    Do the same on each of that family's other youth — the same form can be attached everywhere it applies.</p>
-  </div>
-
-  <div class="gadd-forms">
-    <div class="panel">
-      <h4>Link an adult already in the system</h4>
-      <div class="row wrap">
-        <input id="ga-search" type="search" placeholder="Search adults…">
-        <input id="ga-rel" type="text" placeholder="Relationship (optional)">
-      </div>
-      <div id="ga-results" class="signer-list"></div>
-    </div>
-    <div class="panel">
-      <h4>Add a new authorized adult (consent form)</h4>
-      <div class="row wrap">
-        <input id="gn-first" type="text" placeholder="First name">
-        <input id="gn-last" type="text" placeholder="Last name">
-        <input id="gn-phone" type="tel" placeholder="Mobile (for SMS alerts)">
-        <input id="gn-rel" type="text" placeholder="Relationship, e.g. grandmother">
-      </div>
-      <label class="check"><input id="gn-primary" type="checkbox"> Make primary guardian</label>
-      <button class="btn primary small" id="gn-add">Add authorized adult</button>
-    </div>
-  </div>`;
+  <button class="btn primary small" id="pp-family">＋ Add guardian / consent (one or many youth)…</button>
+  <p class="hint left">Opens a form where you pick or create the adult, tick every youth it applies to,
+  and attach the signed consent form once for all of them.</p>`;
 }
 
 function wireGuardianForms(p) {
-  if ($('cf-upload')) $('cf-upload').onclick = async () => {
-    const file = $('cf-file').files[0];
-    if (!file) return toast('Choose the scanned form file first.', true);
-    const form = new FormData();
-    form.append('file', file);
-    form.append('signed_by', $('cf-signed-by').value.trim());
-    form.append('signed_on', $('cf-signed-on').value);
-    const r = await fetch('/api/admin/consent-forms', { method: 'POST', body: form, credentials: 'same-origin' });
-    const body = await r.json();
-    if (!r.ok) return toast(body.error || 'Upload failed', true);
-    toast(`Consent form #${body.id} stored`);
-    openPerson(p.id); // reload so the new form appears in the dropdowns
-  };
-  if (!$('ga-search')) return;
-  let t;
-  $('ga-search').oninput = () => {
-    clearTimeout(t);
-    t = setTimeout(async () => {
-      const q = $('ga-search').value.trim();
-      const box = $('ga-results'); box.innerHTML = '';
+  if ($('pp-family')) $('pp-family').onclick = () => openFamilyModal(p);
+}
+
+// ------------------------------------- family guardian/consent modal ----
+// Apply one adult + opt-in + consent form to any number of youth at once.
+// Convention: closes automatically on a successful save (with a toast);
+// stays open showing the error otherwise.
+const fam = { fromPerson: null, guardianId: null, youths: [] };
+
+async function openFamilyModal(p) {
+  fam.fromPerson = p;
+  fam.guardianId = null;
+  $('fam-error').textContent = '';
+  $('fam-gsearch').value = ''; $('fam-gresults').innerHTML = '';
+  $('fam-gpicked').hidden = true;
+  $('fam-nfirst').value = ''; $('fam-nlast').value = ''; $('fam-nphone').value = '';
+  $('fam-rel').value = ''; $('fam-primary').checked = false;
+  $('fam-optin').checked = false; $('fam-consent-wrap').hidden = true;
+  $('fam-file').value = ''; $('fam-signed-by').value = ''; $('fam-signed-on').value = '';
+  $('fam-gmode-existing').checked = true;
+  $('fam-existing-wrap').hidden = false; $('fam-new-wrap').hidden = true;
+  $('fam-ysearch').value = '';
+
+  const [youths, forms] = await Promise.all([
+    api('/admin/people?type=youth'),
+    api('/admin/consent-forms').catch(() => []),
+  ]);
+  fam.youths = youths.filter((y) => y.status !== 'merged');
+  $('fam-form').innerHTML = '<option value="">— pick an uploaded form —</option>' +
+    forms.map((f) => `<option value="${f.id}">#${f.id} ${esc(f.signed_by || f.file_path)}${f.signed_on ? ` (${esc(f.signed_on)})` : ''}</option>`).join('');
+  renderFamYouthList(p ? [p.id] : []);
+  $('adm-modal').hidden = false;
+}
+
+function renderFamYouthList(preChecked) {
+  const q = $('fam-ysearch').value.trim().toLowerCase();
+  const checked = new Set(preChecked ||
+    [...document.querySelectorAll('#fam-ylist input:checked')].map((c) => Number(c.value)));
+  $('fam-ylist').innerHTML = fam.youths
+    .filter((y) => !q || `${y.first_name} ${y.last_name} ${y.nickname || ''}`.toLowerCase().includes(q))
+    .map((y) => `<label><input type="checkbox" value="${y.id}" ${checked.has(y.id) ? 'checked' : ''}>
+      ${esc(y.last_name)}, ${esc(y.first_name)}${y.patrol ? ` <span class="tag off">${esc(y.patrol)}</span>` : ''}</label>`)
+    .join('') || '<p class="hint left">No youth match.</p>';
+}
+
+function closeFamilyModal() { $('adm-modal').hidden = true; }
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'fam-ysearch') renderFamYouthList();
+  if (e.target.id === 'fam-gsearch') {
+    clearTimeout(fam.timer);
+    fam.timer = setTimeout(async () => {
+      const q = $('fam-gsearch').value.trim();
+      const box = $('fam-gresults'); box.innerHTML = '';
       if (q.length < 2) return;
-      const hits = (await api('/admin/people?type=adult&q=' + encodeURIComponent(q)))
-        .filter((a) => !p.guardians.some((g) => g.id === a.id));
-      for (const a of hits.slice(0, 6)) {
+      for (const a of (await api('/admin/people?type=adult&q=' + encodeURIComponent(q))).slice(0, 6)) {
         const b = document.createElement('button');
-        b.textContent = `${a.first_name} ${a.last_name}${a.member_id ? ` (#${a.member_id})` : ''} — link`;
-        b.onclick = async () => {
-          try {
-            await jpost(`/admin/people/${p.id}/guardians`, {
-              guardian_id: a.id, relationship: $('ga-rel').value.trim() || null,
-            });
-            toast('Linked'); openPerson(p.id);
-          } catch (e) { toast(e.message, true); }
+        b.type = 'button';
+        b.textContent = `${a.first_name} ${a.last_name}${a.member_id ? ` (#${a.member_id})` : ''}`;
+        b.onclick = () => {
+          fam.guardianId = a.id;
+          $('fam-gpicked').textContent = `Selected: ${a.first_name} ${a.last_name}`;
+          $('fam-gpicked').hidden = false;
+          box.innerHTML = ''; $('fam-gsearch').value = '';
         };
         box.appendChild(b);
       }
-      if (!hits.length) box.innerHTML = '<p class="hint left">No matching adults — use the consent-form box instead.</p>';
     }, 250);
-  };
-  $('gn-add').onclick = async () => {
-    try {
-      await jpost(`/admin/people/${p.id}/guardians/new`, {
-        first_name: $('gn-first').value.trim(),
-        last_name: $('gn-last').value.trim(),
-        phone_mobile: $('gn-phone').value.trim() || null,
-        relationship: $('gn-rel').value.trim() || null,
-        is_primary: $('gn-primary').checked,
-      });
-      toast('Authorized adult added'); openPerson(p.id);
-    } catch (e) { toast(e.message, true); }
-  };
-}
+  }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'fam-gmode-existing' || e.target.id === 'fam-gmode-new') {
+    const useNew = $('fam-gmode-new').checked;
+    $('fam-existing-wrap').hidden = useNew;
+    $('fam-new-wrap').hidden = !useNew;
+  }
+  if (e.target.id === 'fam-optin') $('fam-consent-wrap').hidden = !$('fam-optin').checked;
+});
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'fam-close' || e.target.id === 'fam-cancel') closeFamilyModal();
+  if (e.target.id !== 'fam-apply') return;
+  const err = (m) => ($('fam-error').textContent = m);
+  const youthIds = [...document.querySelectorAll('#fam-ylist input:checked')].map((c) => Number(c.value));
+  if (!youthIds.length) return err('Tick at least one youth.');
+  const useNew = $('fam-gmode-new').checked;
+  if (!useNew && !fam.guardianId) return err('Search and select the adult (or switch to "New adult").');
+  if (useNew && (!$('fam-nfirst').value.trim() || !$('fam-nlast').value.trim())) {
+    return err('Enter the new adult\'s first and last name.');
+  }
+  let consentFormId = null;
+  if ($('fam-optin').checked) {
+    const file = $('fam-file').files[0];
+    if (file) {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('signed_by', $('fam-signed-by').value.trim());
+      form.append('signed_on', $('fam-signed-on').value);
+      const r = await fetch('/api/admin/consent-forms', { method: 'POST', body: form, credentials: 'same-origin' });
+      const body = await r.json();
+      if (!r.ok) return err(body.error || 'Consent form upload failed.');
+      consentFormId = body.id;
+    } else if ($('fam-form').value) {
+      consentFormId = Number($('fam-form').value);
+    } else {
+      return err('Opt-in needs a consent form — pick one or upload the scan.');
+    }
+  }
+  try {
+    const r = await jpost('/admin/guardian-bulk', {
+      guardian_id: useNew ? undefined : fam.guardianId,
+      new_guardian: useNew ? {
+        first_name: $('fam-nfirst').value.trim(),
+        last_name: $('fam-nlast').value.trim(),
+        phone_mobile: $('fam-nphone').value.trim() || null,
+      } : undefined,
+      youth_ids: youthIds,
+      relationship: $('fam-rel').value.trim() || undefined,
+      is_primary: $('fam-primary').checked,
+      opt_in: $('fam-optin').checked,
+      consent_form_id: consentFormId || undefined,
+    });
+    closeFamilyModal();
+    toast(`Applied to ${r.applied} youth ✓`);
+    if (fam.fromPerson) openPerson(fam.fromPerson.id);
+    loadPeople();
+  } catch (e2) { err(e2.message); }
+});
 function wardBlock(p) {
   if (!p.wards.length) return '';
   return `<h3>Authorized for</h3><div class="tbl"><table><tr><th>Youth</th><th>Patrol</th><th>Authorized</th></tr>
