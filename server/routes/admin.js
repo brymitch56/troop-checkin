@@ -492,8 +492,10 @@ router.get('/roster-sync', (req, res) => {
   try {
     state = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'roster-fetch-state.json'), 'utf8'));
   } catch { /* no runs yet */ }
+  const cred = rosterSync.credentialInfo(); // never includes the password
   res.json({
-    configured: !!(process.env.TLC_EMAIL && process.env.TLC_PASSWORD),
+    configured: !!cred.source,
+    credentials: cred, // {source: 'admin'|'env'|null, email, updated_at}
     enabled: String(process.env.TLC_ENABLED || 'true').toLowerCase() !== 'false',
     running: !!syncChild,
     started_at: syncChild ? syncChild.startedAt : null,
@@ -507,8 +509,8 @@ router.get('/roster-sync', (req, res) => {
 
 router.post('/roster-sync/run', (req, res) => {
   if (syncChild) return res.status(409).json({ error: 'A sync is already running.' });
-  if (!process.env.TLC_EMAIL || !process.env.TLC_PASSWORD) {
-    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured (TLC_EMAIL / TLC_PASSWORD in .env).' });
+  if (!rosterSync.credentialInfo().source) {
+    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them below (or set TLC_EMAIL / TLC_PASSWORD in .env).' });
   }
   const { spawn } = require('child_process');
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'scripts', 'fetch-roster.js')],
@@ -534,6 +536,23 @@ router.post('/roster-sync/approve', (req, res) => {
 
 router.post('/roster-sync/discard', (req, res) => {
   res.json({ ok: true, ...rosterSync.discardPending() });
+});
+
+// Credentials are WRITE-ONLY through the API: saved/updated here, never read
+// back (responses carry email + updated_at only). Blank password on an
+// update means "keep the stored one".
+router.put('/roster-sync/credentials', (req, res) => {
+  const b = req.body || {};
+  try {
+    const saved = rosterSync.saveTlcCredentials({ email: b.email, password: b.password });
+    res.json({ ok: true, ...saved });
+  } catch (e) {
+    res.status(e.code || 500).json({ error: e.message });
+  }
+});
+
+router.delete('/roster-sync/credentials', (req, res) => {
+  res.json({ ok: true, ...rosterSync.clearTlcCredentials() });
 });
 
 // -------------------------------------------------------------- reports ----

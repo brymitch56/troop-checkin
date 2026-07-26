@@ -67,4 +67,58 @@ function discardPending() {
   return { discarded: r.changes };
 }
 
-module.exports = { stagePending, getPending, approvePending, discardPending };
+// ------------------------------------------------------- TLC credentials ---
+// Admin-entered credentials so nobody has to edit .env on the Pi. Stored in
+// the meta table (same protection as everything else under data/: file perms
+// + the encrypted off-site backup). They must be stored retrievable — TLC
+// needs the real password at login — but they are WRITE-ONLY toward the
+// browser: no API response ever includes the password. Resolution order for
+// the fetcher: admin-saved (DB) wins over .env; .env remains the fallback so
+// existing installs keep working untouched.
+const CRED_KEY = 'tlc_credentials';
+
+function getTlcCredentials() {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(CRED_KEY);
+  if (!row) return null;
+  try {
+    const c = JSON.parse(row.value);
+    return c && c.email && c.password ? c : null;
+  } catch { return null; }
+}
+
+function saveTlcCredentials({ email, password }) {
+  const e = String(email || '').trim();
+  if (!e) { const err = new Error('Email is required.'); err.code = 400; throw err; }
+  const existing = getTlcCredentials();
+  const p = String(password || '');
+  if (!p && !existing) {
+    const err = new Error('Password is required the first time.'); err.code = 400; throw err;
+  }
+  const value = JSON.stringify({
+    email: e,
+    password: p || existing.password, // blank password = keep the stored one
+    updated_at: new Date().toISOString(),
+  });
+  db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(CRED_KEY, value);
+  return { email: e, updated_at: JSON.parse(value).updated_at };
+}
+
+function clearTlcCredentials() {
+  const r = db.prepare('DELETE FROM meta WHERE key = ?').run(CRED_KEY);
+  return { cleared: r.changes > 0 };
+}
+
+// What the admin UI shows (never the password): where the effective
+// credentials come from, and enough to recognize them.
+function credentialInfo(env = process.env) {
+  const saved = getTlcCredentials();
+  if (saved) return { source: 'admin', email: saved.email, updated_at: saved.updated_at };
+  if (env.TLC_EMAIL && env.TLC_PASSWORD) return { source: 'env', email: env.TLC_EMAIL, updated_at: null };
+  return { source: null, email: null, updated_at: null };
+}
+
+module.exports = {
+  stagePending, getPending, approvePending, discardPending,
+  getTlcCredentials, saveTlcCredentials, clearTlcCredentials, credentialInfo,
+};

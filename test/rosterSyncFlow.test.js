@@ -273,6 +273,70 @@ test('row-count guard end to end: a shrunken export aborts the run and stages no
   m.server.close();
 });
 
+// ------------------------------------------------- admin-saved credentials --
+test('credentials API: write-only save, source reporting, blank-password keep, delete', async () => {
+  // starts on env-style: none saved
+  let st = await req('GET', '/api/admin/roster-sync', { cookie: adminCookie });
+  assert.equal(st.json.credentials.source, null);
+  assert.equal(st.json.configured, false); // this test env has no TLC_* vars
+
+  // first save requires a password
+  const bad = await req('PUT', '/api/admin/roster-sync/credentials',
+    { cookie: adminCookie, body: { email: EMAIL } });
+  assert.equal(bad.status, 400);
+
+  const ok = await req('PUT', '/api/admin/roster-sync/credentials',
+    { cookie: adminCookie, body: { email: EMAIL, password: PASSWORD } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.email, EMAIL);
+  assert.ok(!('password' in ok.json)); // never echoed back
+
+  st = await req('GET', '/api/admin/roster-sync', { cookie: adminCookie });
+  assert.equal(st.json.credentials.source, 'admin');
+  assert.equal(st.json.credentials.email, EMAIL);
+  assert.equal(st.json.configured, true);
+  assert.ok(!JSON.stringify(st.json).includes(PASSWORD)); // write-only, always
+
+  // blank password on update keeps the stored one
+  const upd = await req('PUT', '/api/admin/roster-sync/credentials',
+    { cookie: adminCookie, body: { email: EMAIL } });
+  assert.equal(upd.status, 200);
+  const { getTlcCredentials } = require('../server/lib/rosterSync');
+  assert.equal(getTlcCredentials().password, PASSWORD);
+
+  // and they require an admin session
+  assert.equal((await req('PUT', '/api/admin/roster-sync/credentials',
+    { body: { email: 'x@x', password: 'y' } })).status, 401);
+});
+
+test('fetcher uses admin-saved credentials (DB wins over env) — no TLC_* in env at all', async () => {
+  // credentials saved by the previous test; run a fetch with NONE in env
+  const m = makeMockTlc({ pendingPolls: 0 });
+  await new Promise((r) => m.server.listen(0, r));
+  const base = `http://127.0.0.1:${m.server.address().port}`;
+  const env = fetchEnv(base);
+  delete env.TLC_EMAIL; delete env.TLC_PASSWORD;
+  const r = await F.runFetch(env);
+  assert.equal(r.rows, 7);
+  assert.equal(m.state.loginPosts, 1);
+  await req('POST', '/api/admin/roster-sync/discard', { cookie: adminCookie });
+
+  // DB beats env: env has a WRONG password, DB has the right one → success
+  const m2 = makeMockTlc({ pendingPolls: 0 });
+  await new Promise((r2) => m2.server.listen(0, r2));
+  const base2 = `http://127.0.0.1:${m2.server.address().port}`;
+  const r2 = await F.runFetch(fetchEnv(base2, { TLC_PASSWORD: 'wrong-env-password' }));
+  assert.equal(r2.rows, 7);
+  await req('POST', '/api/admin/roster-sync/discard', { cookie: adminCookie });
+
+  // delete → fetch with no env creds now fails at config, not at login
+  const del = await req('DELETE', '/api/admin/roster-sync/credentials', { cookie: adminCookie });
+  assert.equal(del.json.cleared, true);
+  await assert.rejects(() => F.runFetch(env),
+    (e) => e instanceof F.FetchError && e.code === 1);
+  m.server.close(); m2.server.close();
+});
+
 test('TLC_ENABLED=false is a clean no-op', async () => {
   const r = await F.runFetch(fetchEnv('http://127.0.0.1:1', { TLC_ENABLED: 'false' }));
   assert.deepEqual(r, { skipped: true, reason: 'TLC_ENABLED=false' });

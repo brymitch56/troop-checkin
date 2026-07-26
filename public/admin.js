@@ -15,6 +15,7 @@ async function api(path, opts = {}) {
   return body;
 }
 const jpost = (p, d) => api(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+const jput = (p, d) => api(p, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
 const jpatch = (p, d) => api(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
 const jdel = (p) => api(p, { method: 'DELETE' });
 
@@ -773,7 +774,7 @@ async function loadSync() {
   if (!s) return;
   // status line: make a silently-broken job visible at a glance
   const bits = [];
-  if (!s.configured) bits.push('Not configured — set TLC_EMAIL / TLC_PASSWORD in .env on the server.');
+  if (!s.configured) bits.push('Not configured — save Trail Life Connect credentials below (or set TLC_EMAIL / TLC_PASSWORD in .env on the server).');
   else if (!s.enabled) bits.push('Disabled (TLC_ENABLED=false).');
   if (s.running) bits.push(`⏳ Sync running (started ${fmtDT(s.started_at)})…`);
   if (s.last_run) {
@@ -812,6 +813,20 @@ async function loadSync() {
         </div>
       </div>`;
   }
+  // credentials block: source + email only — the password never comes back
+  const c = s.credentials || {};
+  $('sync-creds-info').innerHTML =
+    c.source === 'admin'
+      ? `Using credentials saved here: <b>${esc(c.email)}</b> (updated ${fmtDT(c.updated_at)}). Password is stored but never displayed.`
+      : c.source === 'env'
+        ? `Using credentials from <code>.env</code> on the server (<b>${esc(c.email)}</b>). Saving here will override them without touching the file.`
+        : 'No credentials yet — enter the TLC login the troop uses to view the member list.';
+  $('sync-cred-clear').hidden = c.source !== 'admin';
+  if (document.activeElement !== $('sync-cred-email') && c.source === 'admin') {
+    $('sync-cred-email').value = $('sync-cred-email').value || c.email || '';
+  }
+  $('sync-cred-pass').placeholder = c.source === 'admin' ? 'New password (blank = keep current)' : 'TLC password';
+
   // poll while a sync is running so the result appears without a manual refresh
   clearTimeout(syncTimer);
   if (s.running && !$('tab-import').hidden) syncTimer = setTimeout(loadSync, 5000);
@@ -834,6 +849,26 @@ document.addEventListener('click', async (e) => {
     if (!confirm('Discard this pending import? The fetched file stays archived; the next sync will stage a fresh one.')) return;
     try { await jpost('/admin/roster-sync/discard', {}); toast('Discarded'); loadSync(); }
     catch (err) { toast(err.message, true); }
+  }
+  if (e.target.id === 'sync-cred-save') {
+    const email = $('sync-cred-email').value.trim();
+    const password = $('sync-cred-pass').value;
+    if (!email) return toast('Enter the TLC login email.', true);
+    try {
+      await jput('/admin/roster-sync/credentials', { email, password: password || undefined });
+      $('sync-cred-pass').value = '';
+      toast('Credentials saved — try a Sync now to verify them.');
+      loadSync();
+    } catch (err) { toast(err.message, true); }
+  }
+  if (e.target.id === 'sync-cred-clear') {
+    if (!confirm('Remove the saved credentials? The sync falls back to .env values if the server has them, otherwise it stops working until new credentials are saved.')) return;
+    try {
+      await api('/admin/roster-sync/credentials', { method: 'DELETE' });
+      $('sync-cred-email').value = ''; $('sync-cred-pass').value = '';
+      toast('Saved credentials removed');
+      loadSync();
+    } catch (err) { toast(err.message, true); }
   }
 });
 

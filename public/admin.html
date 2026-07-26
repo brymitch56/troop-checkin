@@ -186,6 +186,20 @@
       Only one pending import exists at a time; a newer fetch replaces the old one.</p>
       <p id="sync-status" class="hint left"></p>
       <div id="sync-pending"></div>
+      <details id="sync-creds">
+        <summary>Trail Life Connect credentials</summary>
+        <p id="sync-creds-info" class="hint left"></p>
+        <div class="filters">
+          <input id="sync-cred-email" type="email" placeholder="TLC login email" autocomplete="off">
+          <input id="sync-cred-pass" type="password" placeholder="TLC password" autocomplete="new-password">
+          <button id="sync-cred-save" class="btn primary small">Save credentials</button>
+          <button id="sync-cred-clear" class="btn ghost small" hidden>Remove saved credentials</button>
+        </div>
+        <p class="hint left">Saved credentials live on the check-in server with the rest of the troop's
+        protected data and are <b>never shown again</b> here — to change the password, just type a new one
+        (leave it blank to keep the current one when changing the email). They're used for exactly one
+        thing: downloading the member export. Nothing is ever written to Trail Life Connect.</p>
+      </details>
     </div>
     <div class="panel">
       <h3>Upload Trail Life Connect export (.xlsx)</h3>
