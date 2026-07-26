@@ -1,0 +1,21 @@
+[Unit]
+Description=Troop Check-In — weekly Trail Life Connect roster fetch
+Documentation=file:@APP_DIR@/docs/10-roster-sync.md
+After=network-online.target
+Wants=network-online.target
+# never start alongside a missing app dir; the app service itself is NOT a
+# dependency — the fetch stages its result in the shared database/data dir
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=/usr/bin/node server/scripts/fetch-roster.js
+# a runaway fetch must never take down the check-in server on the same box
+MemoryMax=256M
+CPUWeight=50
+TimeoutStartSec=15min
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+Environment=NODE_ENV=production

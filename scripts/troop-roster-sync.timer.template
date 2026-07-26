@@ -1,0 +1,13 @@
+[Unit]
+Description=Troop Check-In — weekly roster sync timer
+
+[Timer]
+# Sunday 03:30 local — after the 03:15 backup, long before any meeting.
+OnCalendar=Sun *-*-* 03:30:00
+# a run missed while the Pi was powered off fires on next boot
+Persistent=true
+# spread load / avoid a thundering herd of self-hosted troops at 03:30:00
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

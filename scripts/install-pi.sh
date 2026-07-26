@@ -41,6 +41,26 @@ sed -e "s|@APP_DIR@|$APP_DIR|g" -e "s|@USER@|$RUN_USER|g" \
   scripts/troop-checkin.service.template > /etc/systemd/system/troop-checkin.service
 systemctl daemon-reload
 systemctl enable --now troop-checkin
+
+# --- OPTIONAL: weekly Trail Life Connect roster sync ------------------------
+# Skippable on purpose: a troop that doesn't want automated fetching should
+# not be forced to configure TLC credentials. Enable now with
+#   sudo bash scripts/install-pi.sh --with-roster-sync
+# or later by re-running the installer with that flag. The job only ever
+# stages a PREVIEW — an admin approves every import in the UI.
+if [[ " ${*:-} " == *" --with-roster-sync "* ]]; then
+  echo "==> Installing weekly roster-sync timer (runs Sundays 03:30)"
+  sed -e "s|@APP_DIR@|$APP_DIR|g" -e "s|@USER@|$RUN_USER|g" \
+    scripts/troop-roster-sync.service.template > /etc/systemd/system/troop-roster-sync.service
+  cp scripts/troop-roster-sync.timer.template /etc/systemd/system/troop-roster-sync.timer
+  systemctl daemon-reload
+  systemctl enable --now troop-roster-sync.timer
+  echo "    Set TLC_EMAIL / TLC_PASSWORD in $APP_DIR/.env (chmod 600) or the job will fail cleanly."
+  echo "    Disable any time: sudo systemctl disable --now troop-roster-sync.timer  (or TLC_ENABLED=false in .env)"
+else
+  echo "==> Roster-sync timer NOT installed (optional). Add later with:"
+  echo "    sudo bash scripts/install-pi.sh --with-roster-sync"
+fi
 sleep 2
 systemctl --no-pager status troop-checkin | head -8
 
