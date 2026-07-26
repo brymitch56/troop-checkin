@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v15'; // v15: TLC credentials editable in Admin → Import
+const VERSION = 'tc-v16'; // v16: TLC multi-role warning in the sync panel
 const SHELL = [
   '/', '/index.html', '/styles.css', '/app.js', '/offline.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',

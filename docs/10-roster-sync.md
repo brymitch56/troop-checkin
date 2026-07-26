@@ -30,6 +30,7 @@ Additional details:
 - **The server mislabels the CSV response** as `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Never trust the content type — sniff the bytes. A real xlsx begins `50 4b 03 04` (`PK`, a zip signature); the CSV begins with plain text.
 - **Use the xlsx export.** It matches the format the import parser was built and validated against (FR-10), so nothing downstream changes.
 - No MFA or CAPTCHA on the login form as of this writing. If TLC adds MFA, unattended login breaks and this feature must fall back to manual upload — design for that failure, don't fight it.
+- **Multi-role accounts (found in live use, 2026-07-26):** TLC signs a session in under the account's **last-used role**, and the export requires a role with member-list access (e.g. Troopmaster). There is no verified way to detect or switch the active role over HTTP, so the fetcher can't check it — instead, every sanity-check failure message names the wrong-role possibility, and the admin credentials panel carries a standing warning. Mitigations: switch the account to the permitted role in a browser before relying on the sync, or use a dedicated single-role account. If the role marker / role-switch request is ever captured from DevTools (like the findings above), automated detection can be added.
 - The `new=0` parameter's meaning is unconfirmed. Verify it does not mean "changes since last export."
 
 ### Open question — export filtering — **RESOLVED SAFE (2026-07-26)**

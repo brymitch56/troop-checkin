@@ -233,6 +233,15 @@ function detectFormat(buf) {
   return 'csv';
 }
 
+// TLC multi-role accounts resume their LAST-USED role at login, and the
+// member export needs a role with member-list access (e.g. Troopmaster).
+// We have no verified way to detect/switch the active role over HTTP, so a
+// wrong role surfaces as one of the sanity failures below — every message
+// points at it as a likely cause.
+const ROLE_HINT = ' If the TLC account has multiple roles: TLC signs in under the LAST-USED role, ' +
+  'and the export needs one with member-list access (e.g. Troopmaster) — log into TLC in a browser, ' +
+  'switch to that role, and try again.';
+
 // Throws FetchError(4) on anything suspicious. prevRows comes from the last
 // successful fetch; the guard exists because the realistic failure mode is a
 // PARTIAL export (stale TLC filter) parsing cleanly and mass-deactivating
@@ -241,7 +250,7 @@ function sanityCheck(buf, { prevRows = null, rowTolerance = 0.2 } = {}) {
   if (buf.length < 512) fail(4, `File is only ${buf.length} bytes — almost certainly an error page.`);
 
   const format = detectFormat(buf);
-  if (format === 'html') fail(4, 'Got HTML, not a roster — the session probably expired or the login flow changed.');
+  if (format === 'html') fail(4, 'Got HTML, not a roster — the session probably expired or the login flow changed.' + ROLE_HINT);
 
   let rows;
   if (format === 'xlsx') {
@@ -255,21 +264,21 @@ function sanityCheck(buf, { prevRows = null, rowTolerance = 0.2 } = {}) {
     // header row located by "Member Number" — the same rule as the importer,
     // so a TLC format change breaks both together, never silently.
     const headerIdx = grid.findIndex((r) => r.some((c) => /member number/i.test(String(c))));
-    if (headerIdx < 0) fail(4, 'No "Member Number" header found — export format changed.');
+    if (headerIdx < 0) fail(4, 'No "Member Number" header found — export format changed?' + ROLE_HINT);
     rows = grid.length - headerIdx - 1;
   } else {
     const lines = buf.toString('utf8').split(/\r?\n/).filter((l) => l.trim() !== '');
     const headerIdx = lines.findIndex((l) => /member number/i.test(l));
-    if (headerIdx < 0) fail(4, 'No "Member Number" header found — export format changed.');
+    if (headerIdx < 0) fail(4, 'No "Member Number" header found — export format changed?' + ROLE_HINT);
     rows = lines.length - headerIdx - 1;
   }
 
-  if (rows < 5) fail(4, `Only ${rows} data rows — refusing to import.`);
+  if (rows < 5) fail(4, `Only ${rows} data rows — refusing to import.` + ROLE_HINT);
 
   if (prevRows && rows < prevRows * (1 - rowTolerance)) {
     fail(4, `Row count dropped from ${prevRows} to ${rows} (more than ${Math.round(rowTolerance * 100)}%). ` +
-            'Refusing — this would mass-deactivate the roster (stale TLC filter?). ' +
-            'If the drop is real, upload the export by hand in Admin → Import.');
+            'Refusing — this would mass-deactivate the roster (stale TLC filter? wrong TLC role?). ' +
+            'If the drop is real, upload the export by hand in Admin → Import.' + ROLE_HINT);
   }
   return { rows, format };
 }

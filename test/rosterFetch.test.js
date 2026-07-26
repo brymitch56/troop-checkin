@@ -94,6 +94,13 @@ test('sanityCheck: rejects tiny files and HTML pages', () => {
   expectFail(() => F.sanityCheck(Buffer.from('<!doctype html>' + 'x'.repeat(600))), 4, /HTML/);
 });
 
+test('sanity failures name the multi-role possibility (TLC resumes last-used role)', () => {
+  // wrong role most likely surfaces as one of these — each must say so
+  expectFail(() => F.sanityCheck(Buffer.from('<!doctype html>' + 'x'.repeat(600))), 4, /LAST-USED role/);
+  expectFail(() => F.sanityCheck(Buffer.from('a,b,c\n'.repeat(200))), 4, /LAST-USED role/);
+  expectFail(() => F.sanityCheck(buildWorkbookBuffer(), { prevRows: 113, rowTolerance: 0.2 }), 4, /LAST-USED role/);
+});
+
 test('sanityCheck: accepts the synthetic xlsx and counts data rows', () => {
   const { rows, format } = F.sanityCheck(buildWorkbookBuffer());
   assert.equal(format, 'xlsx');
