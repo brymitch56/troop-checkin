@@ -1,12 +1,14 @@
 # 07 — Project Status
 
-**Date:** 2026-07-26 (rev 5) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `1302ab4`, schema through 007, sw `tc-v12`, real roster with membership dates (81/113) — **deploy-integrity hardening (startup self-check + CI + repo deploy-verify script) AND the in-app user guide (sw tc-v13) are pushed but NOT yet deployed**
+**Date:** 2026-07-26 (rev 6) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `1302ab4`, schema through 007, sw `tc-v12`, real roster with membership dates (81/113) — **pushed but NOT yet deployed: integrity hardening + user guide (tc-v13) + automated roster sync (migration 008, sw tc-v14)**
 
 ## Where things stand
 
 The app is deployed and in early real-world testing. Two field bugs were found and fixed during deployment (modal-scrim CSS overriding `hidden`; `crypto.randomUUID` missing in plain-HTTP contexts — both now regression-tested). The SMS system is fully built and **strictly opt-in** (per youth↔guardian pair, gated on stored signed consent forms); it awaits Twilio `.env` values + webhook, which in turn await the **Cloudflare Tunnel**, which awaits the **ny2911.org DNS move to Cloudflare** (in progress via Bryan's friend; HostGator keeps hosting). The A2P campaign is **approved**.
 
-## Feature inventory (all built, tested: 71 node:test + 21-step browser E2E incl. offline round-trip)
+## Feature inventory (all built, tested: 97 node:test + 21-step browser E2E incl. offline round-trip)
+
+- **Automated roster sync** (NEW, rev 6; spec `05-roster-sync.md` = repo `docs/10-roster-sync.md`): weekly systemd timer (`troop-roster-sync.timer`, Sun 03:30, Persistent, MemoryMax 256M, optional via `install-pi.sh --with-roster-sync`) or admin "Sync now" runs `server/scripts/fetch-roster.js` — Yii2 CSRF login (single attempt, no retry), 503-kickoff + status polling, byte sniffing (never trusts Content-Type), sanity gates + configurable row-count guard (`TLC_ROW_TOLERANCE` 20% default, strict while the TLC filter-persistence question is open). Success stages a **pending import** (migration 008; one at a time, newer replaces older and says so) shown in Admin → Import with the full diff + Approve/Discard; **the job never commits**. Last-run status/error surfaced in the UI; exports under `data/roster-exports/` mode 600, pruned at 56 days; `TLC_ENABLED=false` kill switch; no new dependencies. NOT yet enabled in production — needs TLC credentials in `.env` and the timer install, and the TLC filter-persistence question resolved before scheduling (Bryan testing separately).
 
 Everything from rev 2, plus the deployment-era additions:
 
@@ -36,7 +38,7 @@ Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-chec
 
 ## Next step
 
-**Deploy the integrity hardening + user guide** (Claude Code / Pi session): `git pull` (no new migration — expect migrate "up to date"), restart, then `bash ~/troop-deploy-verify.sh <new-head> tc-v13` → RESULT: PASS. First deploy with the startup self-check active, so explicitly confirm the service starts (healthz ok). sw bumped to tc-v13 (guide.html added) → phones reload twice. Then: first live meeting night alongside paper.
+**Deploy hardening + guide + roster sync** (Claude Code / Pi session): `git pull`, `npm run migrate` (**migration 008 is new** — expect "applied 008_pending_import.sql"), restart, `bash ~/troop-deploy-verify.sh <new-head> tc-v14` → RESULT: PASS; first deploy with the startup self-check active, so confirm the service starts (healthz ok); phones reload twice (tc-v14). Roster-sync stays dormant until TLC credentials land in `.env` + `TLC_ENABLED=true` + `install-pi.sh --with-roster-sync` — and do NOT schedule it until the TLC filter-persistence test is resolved. Then: first live meeting night alongside paper.
 
 ## Backlog (unchanged)
 
