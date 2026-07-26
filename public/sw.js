@@ -2,12 +2,12 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v12'; // v12: membership-expiration warning at check-in
+const VERSION = 'tc-v13'; // v13: in-app user guide (guide.html)
 const SHELL = [
   '/', '/index.html', '/styles.css', '/app.js', '/offline.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
   '/icon-192.png', '/icon-512.png',
-  '/admin.html', '/admin.css', '/admin.js',
+  '/admin.html', '/admin.css', '/admin.js', '/guide.html',
 ];
 
 self.addEventListener('install', (e) => {

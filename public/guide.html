@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>User Guide · Troop Check-In</title>
+<style>
+  :root {
+    --pine: #17402C; --pine-2: #235B3F; --paper: #F4F3EC; --card: #FFFFFF;
+    --ink: #1C241E; --muted: #5C6A60; --line: #D7D9CE;
+    --blaze: #DF5A12; --in: #2E7D4F; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
+  header.guide {
+    background: var(--pine); color: #fff; border-radius: var(--radius);
+    padding: 22px 26px; margin-bottom: 20px;
+  }
+  header.guide h1 { margin: 0 0 6px; font-size: 26px; }
+  header.guide p { margin: 0; opacity: .85; }
+  nav.toc {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 22px; margin-bottom: 20px; columns: 2; column-gap: 30px;
+  }
+  nav.toc a { display: block; color: var(--pine-2); text-decoration: none; padding: 3px 0; font-size: 15px; }
+  nav.toc a:hover { text-decoration: underline; }
+  nav.toc .part { font-weight: 700; color: var(--ink); margin-top: 6px; break-after: avoid; }
+  section {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 8px 26px 18px; margin-bottom: 18px;
+  }
+  h2 {
+    color: var(--pine); font-size: 22px; border-bottom: 2px solid var(--line);
+    padding-bottom: 8px; margin: 18px 0 12px;
+  }
+  h3 { color: var(--pine-2); font-size: 17px; margin: 20px 0 6px; }
+  p, li { font-size: 15px; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .tip, .warn-box, .rule {
+    border-radius: 10px; padding: 10px 14px; margin: 12px 0; font-size: 14.5px;
+  }
+  .tip { background: #E3EFE7; border-left: 4px solid var(--in); }
+  .warn-box { background: #FBE6D9; border-left: 4px solid var(--blaze); }
+  .rule { background: #EEF0E9; border-left: 4px solid var(--pine); }
+  .tag {
+    display: inline-block; padding: 0 8px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 700; vertical-align: 1px;
+  }
+  .tag.orange { background: var(--blaze); color: #fff; }
+  .tag.green { background: #E3EFE7; color: var(--in); }
+  .tag.gray { background: #EEE; color: #777; }
+  kbd, code {
+    background: #EEF0E9; border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 6px; font-size: 13.5px; font-family: ui-monospace, Consolas, monospace;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #EEF0E9; }
+  .btn-print {
+    position: fixed; right: 18px; bottom: 18px; background: var(--pine); color: #fff;
+    border: 0; border-radius: 999px; padding: 12px 22px; font-size: 15px; font-weight: 600;
+    cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,.25);
+  }
+  .btn-print:hover { background: var(--pine-2); }
+  .backlinks { text-align: center; margin-top: 10px; }
+  .backlinks a { color: var(--muted); font-size: 14px; margin: 0 10px; }
+  @media print {
+    body { background: #fff; font-size: 12px; }
+    .wrap { max-width: none; padding: 0; }
+    header.guide { border-radius: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    section, nav.toc { border: 0; padding: 0 2px; break-inside: auto; }
+    h2 { break-after: avoid; page-break-after: avoid; }
+    h3 { break-after: avoid; page-break-after: avoid; }
+    .btn-print, .backlinks { display: none; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="guide">
+  <h1><span data-brand-id>Troop</span> Check-In — User Guide</h1>
+  <p><span data-brand-name>Trail Life troop</span> youth sign-in/out kiosk · for door staff and admins</p>
+</header>
+
+<nav class="toc">
+  <span class="part">Part 1 — The kiosk (door staff)</span>
+  <a href="#login">Signing in to the kiosk</a>
+  <a href="#events">Choosing the event</a>
+  <a href="#adding">Adding people: scan, search, visitor</a>
+  <a href="#cart">The cart &amp; emergency phones</a>
+  <a href="#signing">Signing youth in and out</a>
+  <a href="#membership">Membership-expiration warnings</a>
+  <a href="#onsite">The "On site" screen &amp; texting guardians</a>
+  <a href="#station">Station mode (per-patrol devices)</a>
+  <a href="#offline">Working offline</a>
+  <span class="part">Part 2 — Admin</span>
+  <a href="#admin-login">Admin sign-in &amp; dashboard</a>
+  <a href="#people">People &amp; the person editor</a>
+  <a href="#guardians">Guardians, pickup authorization &amp; consent forms</a>
+  <a href="#sms">SMS: alerts, broadcasts &amp; the message log</a>
+  <a href="#admin-events">Events &amp; calendar sync</a>
+  <a href="#txns">Transactions, voids &amp; corrections</a>
+  <a href="#reports">Reports, renewals &amp; CSV exports</a>
+  <a href="#import">Roster import</a>
+  <a href="#staff">Staff accounts</a>
+  <a href="#backups">Backups</a>
+  <span class="part">Reference</span>
+  <a href="#quickref">Quick reference</a>
+  <a href="#trouble">Troubleshooting</a>
+</nav>
+
+<!-- ================= PART 1 — KIOSK ================= -->
+
+<section id="login">
+  <h2>Part 1 · The kiosk (door staff)</h2>
+  <h3>Signing in to the kiosk</h3>
+  <ol>
+    <li>Open the app on a phone or tablet on the meeting-place Wi-Fi (install it once with the browser's <b>Add to Home Screen</b> so it launches like an app).</li>
+    <li>Tap your name on the staff list.</li>
+    <li>Door staff enter their <b>PIN</b>; admins without a PIN type their password. (An admin who has been given a PIN uses the PIN.)</li>
+  </ol>
+  <p>Your name shows in the top-right pill; tap it to sign out. The kiosk signs itself out after ~20 minutes of inactivity — but never while a cart is in progress or while offline.</p>
+  <div class="rule">Every check-in records <em>which staff member ran it</em>, so each person should use their own account.</div>
+</section>
+
+<section id="events">
+  <h3>Choosing the event</h3>
+  <p>Sign-ins always attach to an event. The kiosk picks the event automatically when exactly one is happening right now; otherwise tap the <b>event pill</b> (top of the screen) to choose. Events come from the troop calendar (synced nightly) — you can also create one on the spot from the same picker.</p>
+  <ul>
+    <li>Events are listed soonest-first; past events are tucked behind a "Show past events" toggle.</li>
+    <li>Multi-day events (campouts) stay current through their final day — sign-outs days after the sign-in attach to the right event automatically.</li>
+    <li><b>Sign-out never needs the event</b>: it follows the person's open sign-in.</li>
+  </ul>
+</section>
+
+<section id="adding">
+  <h3>Adding people: scan, search, visitor</h3>
+  <p>Three ways to put someone in the cart:</p>
+  <ul>
+    <li><b>Badge scan.</b> A Bluetooth scanner works any time — just scan, even mid-typing (the kiosk recognizes scanner bursts and keeps typed text clean). Or tap <b>📷 Scan badge</b> to use the camera.</li>
+    <li><b>Name search.</b> Type 2+ letters of a first name, last name, or nickname.</li>
+    <li><b>+ Visitor.</b> A youth or adult who isn't on the roster. Youth visitors take a guardian name/phone, and that guardian becomes their authorized signer immediately.</li>
+  </ul>
+  <h3>Badge enrollment &amp; reprints</h3>
+  <p>The first scan of a new badge whose member number matches the roster asks "Link badge?" — confirm and it's enrolled for good. A reprinted badge (same member, new code) triggers the same prompt; confirming re-links it. A badge that matches nothing gets a friendly "not recognized" message — use search instead.</p>
+</section>
+
+<section id="cart">
+  <h3>The cart &amp; emergency phones</h3>
+  <p>People you add stack up in the <b>cart</b> so one guardian signature can cover several kids. The kiosk sets the direction automatically: someone currently on site goes <b>OUT</b>, everyone else goes <b>IN</b> — and one cart is all-IN or all-OUT (finish one direction before starting the other).</p>
+  <ul>
+    <li>Each youth signing IN shows an <b>emergency phone</b> field, pre-filled from last time (or the primary guardian's mobile). Confirm or update it — it's snapshotted onto the record.</li>
+    <li>Adults are only tracked at events marked "Track adult attendance"; at youth-only meetings the kiosk politely refuses to add them.</li>
+    <li>Tap ✕ on a row to remove it; <b>Clear</b> empties the cart.</li>
+  </ul>
+</section>
+
+<section id="signing">
+  <h3>Signing youth in and out</h3>
+  <ol>
+    <li>Tap <b>Sign IN (n)</b> / <b>Sign OUT (n)</b>.</li>
+    <li>Pick <b>who is signing</b> — the list is the union of authorized adults for everyone in the cart. A yellow note flags an adult who isn't on the list for <em>every</em> youth in the cart.</li>
+    <li>"Other adult…" lets any adult sign with their name typed in — use for one-off situations, with staff judgment.</li>
+    <li>The signer draws their <b>signature</b> and you save. Done.</li>
+  </ol>
+  <p>If the chosen signer isn't authorized for someone in the cart, the kiosk asks for a <b>staff override</b> confirmation. Overrides are allowed — you're in charge at the door — but each one is flagged and appears in the admin's override report.</p>
+  <div class="tip">Adult-only carts skip the signer and signature entirely — arrivals/departures are just recorded.</div>
+  <div class="warn-box"><b>Race protection:</b> if another station beat you to it ("already signed in/out"), the kiosk tells you and clears the cart — nothing is double-recorded.</div>
+</section>
+
+<section id="membership">
+  <h3>Membership-expiration warnings</h3>
+  <p>If a youth's Trail Life membership has expired or expires within 30 days, their cart row shows an orange <span class="tag orange">⚠ Membership expiring</span> tag, and the sign modal repeats it with the date: <em>"Membership expires Sep 16 — renewal due."</em></p>
+  <div class="rule"><b>The warning never blocks check-in.</b> It's a nudge for the family and leadership — sign the youth in normally and mention the renewal to the parent at pickup.</div>
+  <p>Admins can see everyone expiring soon under Reports → Membership renewals (see Part 2).</p>
+</section>
+
+<section id="onsite">
+  <h3>The "On site" screen &amp; texting guardians</h3>
+  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, filterable by patrol. From this screen (once SMS is set up):</p>
+  <ul>
+    <li><b>🔔 Text guardians</b> — one message per family listing all their youth still on site ("please pick up"). A guardian with three kids on site gets <em>one</em> text, not three. The results screen lists exactly who was <em>not</em> contacted and why (no consent, no mobile, STOPped) so you can phone those families instead.</li>
+    <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up).</li>
+  </ul>
+  <div class="rule">Texts go <b>only</b> to guardians whose family signed the SMS consent form and was opted in by an admin. Nobody else can be texted from the kiosk, ever.</div>
+</section>
+
+<section id="station">
+  <h3>Station mode (per-patrol devices)</h3>
+  <p>Tap the <b>station pill</b> (top bar) to cycle a device through patrol scopes: "All patrols" → each patrol in turn. A patrol-scoped station narrows name search and the on-site view to that patrol — handy when each patrol leader carries a sign-out phone. <b>Badge scans always work regardless of scope.</b> The setting sticks per device.</p>
+</section>
+
+<section id="offline">
+  <h3>Working offline</h3>
+  <p>The kiosk keeps working when the Wi-Fi or server drops (requires HTTPS or an installed PWA; it caches the roster at every login):</p>
+  <ul>
+    <li>Search, badge lookup, and guardian lists come from the last-saved roster snapshot — including membership-expiry warnings.</li>
+    <li>Sign-ins/outs are saved locally with a <b>⏳ queued</b> pill and sync automatically when the connection returns (usually within 20 seconds).</li>
+    <li>If a queued record is rejected on sync (e.g. another station already signed that youth out), it moves to a <b>⚠ conflicts</b> pill — tap it to review and clear. The server's version of events is the truth.</li>
+  </ul>
+  <div class="tip">Before a campout at a no-signal site: open the app once on Wi-Fi while signed in — that refreshes the offline roster.</div>
+</section>
+
+<!-- ================= PART 2 — ADMIN ================= -->
+
+<section id="admin-login">
+  <h2>Part 2 · Admin</h2>
+  <h3>Admin sign-in &amp; dashboard</h3>
+  <p>Open <code>/admin.html</code> (link at the bottom of the kiosk). Admins sign in with their password (or their PIN if one is set). The <b>Dashboard</b> shows count cards — active youth/adults, visitors, on site now, events, transactions, and <b>renewals due ≤30 days</b> (orange when non-zero) — plus tools (backup now, iCal sync, quick CSVs) and the live "still on site" list with an <b>Admin close</b> button for stragglers (see Corrections).</p>
+</section>
+
+<section id="people">
+  <h3>People &amp; the person editor</h3>
+  <p><b>People tab</b>: search by name or member number, filter youth/adults and active/inactive/visitor. Click a row to open the person editor.</p>
+  <ul>
+    <li>Edit names, nickname, patrol/level (youth) or role (adults), phones, birthdate, <b>membership expires</b>, email, status, notes.</li>
+    <li><b>Photos</b> (youth): add a photo for visual confirmation at pickup — it appears in the kiosk sign modal.</li>
+    <li><b>Merge</b>: a visitor youth who later joins the troop can be merged into their roster record — attendance history moves with them.</li>
+  </ul>
+  <h3>Field locks — your edits beat the roster file</h3>
+  <div class="rule">Any import-managed field you edit by hand gets a 🔒 and is <b>never overwritten by future roster imports</b>. The editor lists the locked fields; "let imports manage these again" unlocks them all.</div>
+</section>
+
+<section id="guardians">
+  <h3>Guardians, pickup authorization &amp; consent forms</h3>
+  <p>Each youth's editor lists their guardians/authorized adults with: relationship, <b>Authorized</b> (may sign this youth in/out), <b>Primary</b> (first choice for texts), <b>SMS consent</b> state, and source (import vs manual).</p>
+  <ul>
+    <li>Roster imports suggest guardian links automatically (family email, then same last name or address). <b>Your manual edits are permanent</b> — imports never change or duplicate them.</li>
+    <li>Import-created links can't be deleted (they'd come back next import) — mark them <b>Not authorized</b> instead.</li>
+    <li><b>Consent-form designees</b>: grandparents, neighbors — any adult a family authorizes in writing can be added as a brand-new person and linked in one step. They appear in the kiosk signer picker immediately.</li>
+    <li><b>＋ Add guardian / consent (one or many youth)</b> opens the family dialog: pick or create the adult, tick every youth it applies to, set relationship/primary, and (optionally) attach the signed consent form and opt in — all in one save.</li>
+  </ul>
+  <div class="warn-box"><b>SMS opt-in is strict:</b> a guardian can only be opted in with a stored signed consent form attached to that youth↔guardian pair. One uploaded family form can cover several pairs. Opt-in can be revoked any time; a guardian texting STOP is honored automatically.</div>
+</section>
+
+<section id="sms">
+  <h3>SMS: alerts, broadcasts &amp; the message log</h3>
+  <ul>
+    <li><b>Pickup alerts</b>: a background sweep (every 5 min) texts the primary opted-in guardian of any youth still on site past the event's end + grace period (default 30 min, adjustable per event). One text per guardian covers all their youth; replying <b>Y</b> signs them all out (recorded as an SMS confirmation with the guardian as signer).</li>
+    <li><b>Broadcasts</b> from the kiosk (see Part 1) are logged and repeatable; replies to a broadcast do <em>not</em> trigger sign-outs.</li>
+    <li><b>Messages tab</b>: every SMS in and out — alerts, broadcasts, guardian replies, delivery status — refreshing every 15 s while open. You can reply directly to a guardian from here (blocked if they've texted STOP).</li>
+    <li><b>Compliance export</b>: every youth↔guardian pair with its consent state and form → <code>sms-consent.csv</code>.</li>
+  </ul>
+</section>
+
+<section id="admin-events">
+  <h3>Events &amp; calendar sync</h3>
+  <ul>
+    <li>Events sync nightly from the troop calendar feed (or on demand: Dashboard → Sync iCal now). Calendar times re-assert on each sync; other edits stick.</li>
+    <li>Edit title/location/times, <b>Track adult attendance</b> (off = youth-only, adults refused at the kiosk), and the <b>SMS reminder delay</b>.</li>
+    <li>An event that disappears from the calendar feed is deleted if unused, or kept and flagged "gone from feed" if it has attendance records.</li>
+    <li>Events with transactions can't be deleted — history is permanent.</li>
+  </ul>
+</section>
+
+<section id="txns">
+  <h3>Transactions, voids &amp; corrections</h3>
+  <p><b>Transactions tab</b>: every sign-in/out with people, event, signer, staff, flags (override, voided, admin) — click one for details including the signature image. Filter by event; export CSV.</p>
+  <h3>Fixing mistakes — nothing is ever deleted</h3>
+  <ul>
+    <li><b>Void</b> a transaction: a correcting record is added and linked. Voiding a sign-IN takes the youth off site; voiding a sign-OUT puts them back on site.</li>
+    <li><b>Admin close</b> (Dashboard): closes a lingering open sign-in without a guardian signature — e.g. a family that walked out without signing. Recorded as an admin action under your name.</li>
+  </ul>
+</section>
+
+<section id="reports">
+  <h3>Reports, renewals &amp; CSV exports</h3>
+  <ul>
+    <li><b>Attendance summary</b>: pick a date range, event, and/or one person → events attended, sign-in counts, first/last seen. Records are kept forever, so a 3-year lookback is just a wider range. Detail + summary CSVs.</li>
+    <li><b>Membership renewals</b>: everyone (youth <em>and</em> registered adults) whose membership has expired or expires within 30/60/90 days, most-urgent first — with a CSV for chasing renewals. Already-lapsed members are listed too.</li>
+    <li><b>SMS notification log</b>: every pickup alert with its status (sent, replied-Y, failed).</li>
+    <li>Dashboard quick CSVs: open sign-ins, overrides, visitors.</li>
+  </ul>
+</section>
+
+<section id="import">
+  <h3>Roster import</h3>
+  <ol>
+    <li>Export the member list from Trail Life Connect (.xlsx).</li>
+    <li>Import tab → choose the file → <b>Preview</b>: see exactly who would be added, updated (and which fields), or deactivated. Nothing changes yet.</li>
+    <li><b>Commit</b> when the preview looks right.</li>
+  </ol>
+  <ul>
+    <li>Re-import as often as you like — it's idempotent. Blank cells never wipe existing data; your hand-edited (🔒) fields and guardian edits are never touched.</li>
+    <li>People missing from the new file are marked inactive (never deleted) — scoped to the classes in the file, so a youth-only export leaves adults alone. Visitors are never deactivated. Returning members reactivate automatically.</li>
+    <li>Membership expiration dates come in from the export's "Membership Exp." column automatically.</li>
+    <li>Every upload is archived, and the import log shows who imported what, when, with counts.</li>
+  </ul>
+</section>
+
+<section id="staff">
+  <h3>Staff accounts</h3>
+  <ul>
+    <li><b>Door</b> staff sign in with a short PIN; <b>admins</b> with a password. Giving an admin a PIN makes the PIN their login (handy for door duty); clearing it restores the password.</li>
+    <li>Create, rename, deactivate, reactivate — deactivation signs them out everywhere instantly. Guard rails: you can't deactivate yourself or the last active admin.</li>
+  </ul>
+</section>
+
+<section id="backups">
+  <h3>Backups</h3>
+  <p>Nightly automatic backups (database snapshot + signatures), kept 14 deep, plus an optional encrypted off-site push. <b>Back up now</b> is on the Dashboard — use it before anything risky. Restore instructions live with the server documentation.</p>
+</section>
+
+<!-- ================= REFERENCE ================= -->
+
+<section id="quickref">
+  <h2>Quick reference</h2>
+  <table>
+    <tr><th>I want to…</th><th>Do this</th></tr>
+    <tr><td>Sign a youth in</td><td>Scan badge or search name → confirm emergency phone → Sign IN → guardian picks self → signature → Save</td></tr>
+    <tr><td>Sign several siblings out at once</td><td>Add each to the cart → Sign OUT → one guardian, one signature</td></tr>
+    <tr><td>Handle "signer not on the list"</td><td>Pick "Other adult…" or confirm the staff override — it's recorded for review</td></tr>
+    <tr><td>Check in a first-time visitor</td><td>+ Visitor → name + guardian name/phone → they're in the cart</td></tr>
+    <tr><td>See who's still here</td><td>Tap the On site pill (filter by patrol)</td></tr>
+    <tr><td>Text families at pickup time</td><td>On site screen → 🔔 Text guardians (opt-in families only)</td></tr>
+    <tr><td>Announce "we're running late"</td><td>On site screen → ✉️ Message → type it → send</td></tr>
+    <tr><td>Fix a wrong sign-in/out</td><td>Admin → Transactions → open it → Void</td></tr>
+    <tr><td>Close a stale open sign-in</td><td>Admin → Dashboard → Still on site → Admin close</td></tr>
+    <tr><td>Add grandma as a pickup person</td><td>Admin → People → youth → ＋ Add guardian / consent</td></tr>
+    <tr><td>Enable texts for a family</td><td>Upload their signed consent form and opt in the pair(s) — same dialog</td></tr>
+    <tr><td>Load a new roster export</td><td>Admin → Import → Preview → Commit</td></tr>
+    <tr><td>See who needs to renew membership</td><td>Admin → Reports → Membership renewals (30/60/90 + CSV)</td></tr>
+    <tr><td>Pull attendance for the year</td><td>Admin → Reports → date range → Run summary / CSVs</td></tr>
+  </table>
+</section>
+
+<section id="trouble">
+  <h3>Troubleshooting</h3>
+  <table>
+    <tr><th>Symptom</th><th>What it means / what to do</th></tr>
+    <tr><td>"Already signed in/out" when signing the cart</td><td>Another station handled them first. The cart clears; re-check the On site list.</td></tr>
+    <tr><td>Badge scan says "not recognized"</td><td>Badge isn't linked and its member number isn't on the roster — use name search, or import the newest roster.</td></tr>
+    <tr><td>⏳ pill with a number</td><td>Records saved offline, waiting to sync. They'll go automatically when the connection returns.</td></tr>
+    <tr><td>⚠ pill</td><td>An offline record was rejected on sync (usually a race with another station). Tap it, read, clear.</td></tr>
+    <tr><td>Adult can't be added to the cart</td><td>This event doesn't track adults. That's per-event: Admin → Events → Track adult attendance.</td></tr>
+    <tr><td>Guardian didn't get the pickup text</td><td>Check the kiosk's "not contacted" list or Admin → Messages: no consent/opt-in, no mobile number, or they texted STOP.</td></tr>
+    <tr><td>Orange membership tag on a youth</td><td>Renewal due within 30 days (or lapsed). Check-in is unaffected; mention it to the family.</td></tr>
+    <tr><td>App looks stale after an update</td><td>Reload twice (the app shell is cached for offline use; the second reload activates the new version).</td></tr>
+    <tr><td>Something looks wrong server-side</td><td>Contact the troop's app administrator — the server keeps full logs, and nightly backups mean nothing is lost.</td></tr>
+  </table>
+  <p class="backlinks"><a href="/">← Back to check-in</a> · <a href="/admin.html">Admin</a></p>
+</section>
+
+</div>
+<button class="btn-print" onclick="window.print()">Print this guide</button>
+<script>
+  // Brand from server config (.env) — same pattern as the kiosk; falls back to
+  // generic wording offline/unbranded. No session needed (/api/config is public).
+  fetch('/api/config', { credentials: 'same-origin' })
+    .then((r) => r.json())
+    .then((cfg) => {
+      document.querySelectorAll('[data-brand-id]').forEach((el) => (el.textContent = cfg.troop_id));
+      document.querySelectorAll('[data-brand-name]').forEach((el) => (el.textContent = cfg.troop_name));
+      document.title = `User Guide · ${cfg.troop_id} Check-In`;
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>
