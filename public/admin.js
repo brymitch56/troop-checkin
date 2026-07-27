@@ -4,7 +4,17 @@
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v == null ? '' : v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const fmtDT = (s) => s ? new Date(s).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+// SQLite's datetime('now') defaults (audit timestamps: imports, fetches,
+// messages…) are UTC but carry NO zone marker; parsing them as local shifted
+// every such time into the future ("fetched tomorrow"). Detect the naive
+// "YYYY-MM-DD HH:MM[:SS]" shape and pin it to UTC; client-generated ISO
+// strings (with Z/offset) parse as before. Rendering is the viewer's local.
+const fmtDT = (s) => {
+  if (!s) return '';
+  const naive = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s);
+  const d = new Date(naive ? s.replace(' ', 'T') + 'Z' : s);
+  return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 
 let me = null;
 

@@ -294,6 +294,13 @@ const writeState = (cfg, patch) => {
   return s;
 };
 
+// Filename stamp in LOCAL time (honors TZ from .env, falls back to the OS
+// zone) — a Saturday-evening fetch must not be named for Sunday's UTC date.
+function localStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
 function pruneOldExports(cfg) {
   const cutoff = Date.now() - cfg.retainDays * 86400000;
   let pruned = 0;
@@ -329,8 +336,7 @@ async function runFetch(env = process.env) {
   const prev = readState(cfg).last_rows || null;
   const { rows, format } = sanityCheck(buf, { prevRows: prev, rowTolerance: cfg.rowTolerance });
 
-  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
-  const outFile = path.join(cfg.outDir, `roster-${stamp}.${format}`);
+  const outFile = path.join(cfg.outDir, `roster-${localStamp()}.${format}`);
   fs.writeFileSync(outFile, buf, { mode: 0o600 });
   const pruned = pruneOldExports(cfg);
 
@@ -360,7 +366,7 @@ async function runFetch(env = process.env) {
 module.exports = {
   FetchError, makeConfig, CookieJar, request, csrfFrom, decodeHtml,
   login, pollUntilReady, fetchExport, detectFormat, sanityCheck,
-  readState, writeState, pruneOldExports, runFetch,
+  readState, writeState, pruneOldExports, localStamp, runFetch,
 };
 
 if (require.main === module) {

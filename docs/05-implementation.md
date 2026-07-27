@@ -46,7 +46,7 @@ public/
   offline.js          IndexedDB snapshot + txn queue + conflict store
   guide.html          in-app user guide (kiosk + admin, print CSS; troop-generic,
                       brand injected from /api/config; in the SW shell so it works offline)
-  sw.js               app-shell cache (VERSION tc-v18 — bump when public/ changes)
+  sw.js               app-shell cache (VERSION tc-v19 — bump when public/ changes)
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
   install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd
@@ -54,7 +54,7 @@ scripts/
                       exports, migrations reconciled, service/healthz/sw) -> RESULT: PASS/FAIL
   troop-checkin.service.template
 .github/workflows/ci.yml   required node:test gate on push/PR to main + advisory browser-E2E job
-test/                 100 node:test cases (9 files) + e2e-browser.js (puppeteer, 21 steps)
+test/                 105 node:test cases (10 files) + e2e-browser.js (puppeteer, 21 steps)
 ```
 
 ## Data model highlights
@@ -95,7 +95,7 @@ Webhook: `POST /api/sms/inbound` (Twilio signature).
 
 ## Configuration (.env)
 
-`PORT`, `DATA_DIR`, `DB_PATH`, `TROOP_ID`, `TROOP_NAME` (drive all branding — nothing troop-specific in source), `ICAL_URL`, `SMS_ENABLED`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `PUBLIC_URL`. See `.env.example` for documentation of each.
+`PORT`, `DATA_DIR`, `DB_PATH`, `TROOP_ID`, `TROOP_NAME` (drive all branding — nothing troop-specific in source), `TZ` (IANA zone; env.js sets it before any Date/SQLite use, so JS local time AND SQL `date(...,'localtime')` follow it with automatic DST — falls back to the OS zone; storage stays UTC, phones render in their own zone), `ICAL_URL`, `SMS_ENABLED`, `TWILIO_*`, `PUBLIC_URL`, `TLC_*`, `HEALTHCHECK_URL`. See `.env.example` for documentation of each.
 
 ## Known deferred items
 

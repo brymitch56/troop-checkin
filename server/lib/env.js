@@ -1,5 +1,13 @@
 'use strict';
 // Minimal .env loader (no dependency). Values already in process.env win.
+//
+// Timezone: putting `TZ=America/New_York` (any IANA zone) in .env sets
+// process.env.TZ here — BEFORE anything constructs a Date or touches SQLite —
+// so both JavaScript local time and SQLite's 'localtime' modifier (used by
+// the day-granular event past-rules) follow it, with DST handled
+// automatically. Without it, the host OS timezone applies (set the Pi's with
+// `sudo timedatectl set-timezone America/New_York`). Absolute-time logic
+// (notification sweep timing, txn timestamps) is UTC-based and unaffected.
 const fs = require('fs');
 const path = require('path');
 

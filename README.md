@@ -21,7 +21,7 @@ Your troop's number and name live in `.env` — nothing troop-specific is hardco
    sudo bash scripts/install-pi.sh
    ```
 
-3. Edit `.env`: set `TROOP_ID` (e.g. `NY-2911`), `TROOP_NAME`, and `ICAL_URL` (your Trail Life Connect calendar feed) — then `sudo systemctl restart troop-checkin`.
+3. Edit `.env`: set `TROOP_ID` (e.g. `NY-2911`), `TROOP_NAME`, `TZ` (your IANA timezone, e.g. `America/New_York` — daylight saving is automatic), and `ICAL_URL` (your Trail Life Connect calendar feed) — then `sudo systemctl restart troop-checkin`.
 4. Create staff accounts — door staff get a short PIN, admins a real password:
 
    ```bash
