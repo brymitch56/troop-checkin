@@ -46,7 +46,7 @@ public/
   offline.js          IndexedDB snapshot + txn queue + conflict store
   guide.html          in-app user guide (kiosk + admin, print CSS; troop-generic,
                       brand injected from /api/config; in the SW shell so it works offline)
-  sw.js               app-shell cache (VERSION tc-v17 — bump when public/ changes)
+  sw.js               app-shell cache (VERSION tc-v18 — bump when public/ changes)
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
   install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd

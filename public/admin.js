@@ -324,10 +324,18 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('adm-modal').hidden) closeFamilyModal();
   else if (!$('person-modal').hidden) closePersonModal();
+  else if (!$('event-modal').hidden) closeEventModal();
+  else if (!$('txn-modal').hidden) closeTxnModal();
 });
 document.addEventListener('mousedown', (e) => {
   if (e.target.id === 'adm-modal') closeFamilyModal();
   if (e.target.id === 'person-modal') closePersonModal();
+  if (e.target.id === 'event-modal') closeEventModal();
+  if (e.target.id === 'txn-modal') closeTxnModal();
+});
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'ev-modal-close') closeEventModal();
+  if (e.target.id === 'tx-modal-close') closeTxnModal();
 });
 
 document.addEventListener('input', (e) => {
@@ -467,8 +475,11 @@ const toLocal = (iso) => {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
 function openEvent(e) {
-  const d = $('ev-detail'); d.hidden = false;
-  d.innerHTML = `<h3>${e ? 'Edit' : 'New'} event ${e && e.source === 'ical' ? '<span class="tag off">from iCal — times resync nightly</span>' : ''}</h3>
+  // popout dialog like the person editor — no more inline panel under the list
+  $('ev-modal-title').innerHTML =
+    `${e ? 'Edit' : 'New'} event ${e && e.source === 'ical' ? '<span class="tag off">from iCal — times resync nightly</span>' : ''}`;
+  const d = $('ev-detail');
+  d.innerHTML = `
     <div class="kv">
       <div><label>Title</label><input id="evf-title" value="${esc(e?.title || '')}"></div>
       <div><label>Location</label><input id="evf-loc" value="${esc(e?.location || '')}"></div>
@@ -484,7 +495,9 @@ function openEvent(e) {
       <button class="btn primary small" id="evf-save">Save</button>
       <button class="btn ghost small" id="evf-close">Close</button>
     </div>`;
-  $('evf-close').onclick = () => (d.hidden = true);
+  d.hidden = false;
+  $('event-modal').hidden = false;
+  $('evf-close').onclick = closeEventModal;
   $('evf-save').onclick = async () => {
     const body = {
       title: $('evf-title').value.trim(), location: $('evf-loc').value.trim(),
@@ -496,10 +509,11 @@ function openEvent(e) {
     try {
       if (e) await jpatch(`/admin/events/${e.id}`, body);
       else await jpost('/events', body);
-      d.hidden = true; loadEvents(); toast('Saved');
+      closeEventModal(); loadEvents(); toast('Saved');
     } catch (err) { toast(err.message, true); }
   };
 }
+function closeEventModal() { $('event-modal').hidden = true; $('ev-detail').hidden = true; }
 $('ev-new').onclick = () => openEvent(null);
 $('ev-past').onchange = loadEvents;
 
@@ -602,8 +616,10 @@ async function renderTxns() {
 }
 async function openTxn(id) {
   const t = await api(`/admin/txns/${id}`);
-  const d = $('tx-detail'); d.hidden = false;
-  d.innerHTML = `<h3>Transaction #${t.id} — ${t.direction.toUpperCase()} · ${esc(t.event_title)}</h3>
+  // popout dialog like the person editor — no more inline panel under the list
+  $('tx-modal-title').textContent = `Transaction #${t.id} — ${t.direction.toUpperCase()} · ${t.event_title}`;
+  const d = $('tx-detail');
+  d.innerHTML = `
     <div class="kv">
       <div><label>Signed at</label><div>${fmtDT(t.signed_at)}</div></div>
       <div><label>Staff</label><div>${esc(t.staff_name)}</div></div>
@@ -619,13 +635,16 @@ async function openTxn(id) {
       ${!t.voided_by_txn_id && !t.client_uuid.startsWith('void-') ? '<button class="btn ghost small" id="tx-void">Void (append-only correction)</button>' : ''}
       <button class="btn ghost small" id="tx-close">Close</button>
     </div>`;
-  $('tx-close').onclick = () => (d.hidden = true);
+  d.hidden = false;
+  $('txn-modal').hidden = false;
+  $('tx-close').onclick = closeTxnModal;
   if ($('tx-void')) $('tx-void').onclick = async () => {
     if (!confirm('Void this transaction? A correcting record is added; nothing is deleted.')) return;
-    try { await jpost(`/admin/txns/${id}/void`, {}); toast('Voided'); d.hidden = true; renderTxns(); }
+    try { await jpost(`/admin/txns/${id}/void`, {}); toast('Voided'); closeTxnModal(); renderTxns(); }
     catch (e) { toast(e.message, true); }
   };
 }
+function closeTxnModal() { $('txn-modal').hidden = true; $('tx-detail').hidden = true; }
 
 // ------------------------------------------------------------- messages ----
 let msgTimer = null;

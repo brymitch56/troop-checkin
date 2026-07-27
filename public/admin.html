@@ -84,7 +84,6 @@
       <label class="check"><input id="ev-past" type="checkbox"> Show past events</label>
     </div>
     <div id="ev-list" class="tbl"></div>
-    <div id="ev-detail" class="panel" hidden></div>
   </div>
 
   <!-- ---- transactions ---- -->
@@ -94,7 +93,6 @@
       <a id="tx-csv" class="btn ghost small" href="/api/admin/export/attendance.csv">Attendance CSV</a>
     </div>
     <div id="tx-list" class="tbl"></div>
-    <div id="tx-detail" class="panel" hidden></div>
   </div>
 
   <!-- ---- messages ---- -->
@@ -226,6 +224,32 @@
     </div>
   </div>
 </section>
+
+<!-- ============ EVENT EDITOR MODAL ============ -->
+<div id="event-modal" class="modal-root" hidden>
+  <div class="modal adm-modal">
+    <div class="modal-page">
+      <div class="fam-head">
+        <h3 id="ev-modal-title">Event</h3>
+        <button id="ev-modal-close" class="btn ghost small" aria-label="Close">✕ Close</button>
+      </div>
+      <div id="ev-detail" hidden></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TRANSACTION DETAIL MODAL ============ -->
+<div id="txn-modal" class="modal-root" hidden>
+  <div class="modal adm-modal">
+    <div class="modal-page">
+      <div class="fam-head">
+        <h3 id="tx-modal-title">Transaction</h3>
+        <button id="tx-modal-close" class="btn ghost small" aria-label="Close">✕ Close</button>
+      </div>
+      <div id="tx-detail" hidden></div>
+    </div>
+  </div>
+</div>
 
 <!-- ============ PERSON DETAIL MODAL ============ -->
 <div id="person-modal" class="modal-root" hidden>
