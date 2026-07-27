@@ -284,7 +284,11 @@ test('events: past hidden by default (day-granular), include_past reveals; kiosk
     `INSERT INTO event (source, title, start_at, end_at) VALUES ('manual', ?, ?, ?)`
   ).run(title, new Date(s).toISOString(), new Date(e).toISOString());
   mk('Ended Yesterday', Date.now() - 2 * day, Date.now() - day);
-  mk('Ends Today Earlier', Date.now() - 5 * 3600e3, Date.now() - 3600e3); // finish DATE is today -> not past
+  // Anchor "today" to local midnight, NOT now-minus-hours: at 00:50 the old
+  // fixture (now − 1h) landed on yesterday's date and correctly counted as
+  // past, failing this test — caught by a CI run at 00:50 UTC (2026-07-27).
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  mk('Ends Today Earlier', todayStart.getTime() + 60e3, todayStart.getTime() + 2 * 60e3); // 00:01–00:02 today -> finish DATE is today -> not past
   mk('Next Month', Date.now() + 30 * day, Date.now() + 30 * day + 3600e3);
 
   const def = await req('GET', '/api/admin/events', { cookie: adminCookie });
