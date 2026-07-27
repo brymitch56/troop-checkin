@@ -4,15 +4,28 @@ Goal: `https://checkin.ny2911.org` reaches the Pi from anywhere, with no port fo
 
 **Division of labor:** you do the Cloudflare dashboard and Twilio console parts (browser); Claude Code does the Pi parts (marked 🖥️). HostGator keeps hosting ny2911.org unchanged — only DNS moves to Cloudflare; the website and any @ny2911.org email stay where they are.
 
-## Part A — Verify the DNS move (prerequisite, in progress)
+## Part A — Move the DNS from HostGator to Cloudflare
 
-The domain's *nameservers* point at Cloudflare; Cloudflare then serves the same records that point at HostGator. When your friend finishes the switch, verify before going further:
+How this works: the domain's *nameservers* switch to Cloudflare, and Cloudflare then serves the same records that still point at HostGator — so the website and any @ny2911.org email stay exactly where they are. Nothing is "moved" except who answers DNS questions. If your friend is already doing this, skip to **A2 — Verify**; otherwise A1 is the full procedure.
+
+### A1 — Do the migration (browser only, ~20 minutes + propagation wait)
+
+1. **Inventory what exists.** HostGator cPanel → **Zone Editor** (or "Advanced DNS Zone Editor") → ny2911.org → **Manage**. Screenshot or copy EVERY record: A, AAAA, CNAME, **MX**, and **TXT** (SPF/DKIM/DMARC live in TXT — losing them breaks or spam-flags email). Also note the **Shared IP Address** from the cPanel sidebar — that's what the site's A record points at.
+2. **Record the current nameservers before touching anything** (your rollback path). cPanel or the HostGator customer portal → Domains → the ns values currently set (typically `ns1/ns2.hostgator.com` or similar). Write them down.
+3. **DNSSEC check.** In the domain's registrar settings, if **DNSSEC is enabled, disable it first** and wait an hour — switching nameservers with stale DNSSEC keys makes the domain unresolvable everywhere. (Most HostGator domains have it off; check anyway.)
+4. **Add the site to Cloudflare.** cloudflare.com → free account → **Add a site** → `ny2911.org` → **Free plan**. Cloudflare scans and imports the records it can find.
+5. **Compare the import against your step-1 inventory.** Add anything missing — MX and TXT records are the usual casualties, plus less-obvious ones like `mail`, `webmail`, `ftp`, `autodiscover`, `cpanel`. Every record HostGator had should exist in Cloudflare before you switch.
+6. **Set proxy status per record.** The `ny2911.org` and `www` A/CNAME records may be **Proxied** (orange cloud — free HTTPS + hides the IP) or **DNS only**; either works for the website. **Everything mail-related (MX targets, `mail`, SPF/DKIM hosts) must be DNS only (grey cloud)** — proxied mail records silently break email.
+7. **Switch the nameservers.** Cloudflare shows the two nameservers assigned to your zone. At the **registrar** (wherever ny2911.org is *registered* — likely HostGator: portal → Domains → ny2911.org → Name Servers → "Custom", replace with Cloudflare's pair; if it's registered elsewhere like GoDaddy/Namecheap, change it there instead) → save.
+8. **Wait.** Propagation is usually under an hour, occasionally up to 24–48. Cloudflare emails you and the zone flips from "Pending nameserver update" to **Active**. Don't delete anything at HostGator — the hosting, files, and email accounts are untouched, and the old zone sitting there idle is harmless.
+9. **Rollback if anything goes wrong:** put the step-2 nameservers back at the registrar. Everything returns to exactly how it was.
+
+### A2 — Verify (do this even if someone else did A1)
 
 1. In the Cloudflare dashboard, the ny2911.org zone shows **Active** (not "Pending nameserver update").
-2. Cloudflare → ny2911.org → **DNS → Records**: confirm the imported records match what HostGator had — especially:
-   - the **A record** for `ny2911.org` (and `www`) pointing at HostGator's server IP (find it in HostGator cPanel under "Shared IP Address" if unsure);
-   - **MX records** if anyone has @ny2911.org email — and set any mail-related records (`mail`, MX targets) to **DNS only** (grey cloud, not orange). Proxied mail records silently break email.
+2. Cloudflare → ny2911.org → **DNS → Records**: confirm the records match what HostGator had — especially the **A record** for `ny2911.org` (and `www`) pointing at HostGator's server IP, and **MX records** if anyone has @ny2911.org email, with all mail-related records **DNS only** (grey cloud).
 3. Sanity test: the ny2911.org website loads, and a test email to any @ny2911.org address arrives.
+4. Spot-check from outside: `nslookup ny2911.org` and `nslookup -type=mx ny2911.org` from any machine return the expected values.
 
 Nothing about the check-in app touches these records — the tunnel adds a new `checkin` subdomain alongside them.
 
@@ -80,8 +93,9 @@ The HTTPS address is a new origin, so treat it as a fresh install on each leader
 - **Error 1033** at checkin.ny2911.org: tunnel down — 🖥️ `sudo systemctl status cloudflared` on the Pi.
 - **502**: tunnel up, app down — 🖥️ `sudo systemctl status troop-checkin`.
 - **Admin page's own API calls blocked / login loop**: the Access app path config is off — it must cover `/admin.html` and `/api/admin/*` and nothing else.
-- **Site "pending" / not resolving**: DNS move (Part A) not complete yet; nothing else will work until the zone is Active.
-- **Email to @ny2911.org broke after the move**: MX/mail records missing or proxied (orange-clouded) in Cloudflare DNS — fix per Part A step 2.
+- **Site "pending" / not resolving**: DNS move (Part A) not complete yet; nothing else will work until the zone is Active. If it's been >48h, re-check the nameservers at the registrar and that DNSSEC was off (A1 step 3).
+- **Email to @ny2911.org broke after the move**: MX/mail records missing or proxied (orange-clouded) in Cloudflare DNS — fix per A1 steps 5–6. Worst case, roll back the nameservers (A1 step 9) and re-inventory.
+- **Whole domain unresolvable right after the switch**: almost always DNSSEC left enabled at the registrar with the old keys — disable it there and wait for the negative caches to expire (up to a few hours).
 
 ## Later (optional)
 
