@@ -62,6 +62,51 @@
 }
 .filters select { font-size: 15px; padding: 8px; border-radius: var(--radius); border: 1.5px solid var(--line); background: var(--card); }
 
+/* ---------- sortable / filterable tables (tabletools.js) ---------- */
+.tbl th.tt-th { cursor: pointer; user-select: none; padding-right: 22px; position: relative; }
+.tbl th.tt-th::after {
+  content: '⌄'; position: absolute; right: 7px; top: 50%; transform: translateY(-55%);
+  opacity: .55; font-size: 12px;
+}
+.tbl th.tt-th:hover { background: var(--pine-2); }
+.tbl th.tt-sorted[data-tt-dir="asc"]::after { content: '↑'; opacity: 1; }
+.tbl th.tt-sorted[data-tt-dir="desc"]::after { content: '↓'; opacity: 1; }
+.tbl th.tt-filtered::after { content: '⛃'; opacity: 1; }
+.tbl tr.tt-hidden { display: none; }
+
+.tt-menu {
+  position: absolute; z-index: 80; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 6px 22px rgba(0,0,0,.18); padding: 8px; width: 250px;
+}
+.tt-menu .tt-sortrow { display: flex; gap: 6px; margin-bottom: 6px; }
+.tt-menu .tt-sortrow button, .tt-menu .tt-actions button {
+  flex: 1; border: 1px solid var(--line); background: #fff; border-radius: 8px;
+  padding: 6px 8px; font-size: 13px; cursor: pointer; color: var(--ink);
+}
+.tt-menu .tt-sortrow button:hover, .tt-menu .tt-actions button:hover { background: #EEF2EA; }
+.tt-menu .tt-search {
+  width: 100%; padding: 6px 8px; font-size: 14px; border: 1.5px solid var(--line);
+  border-radius: 8px; margin-bottom: 6px; background: #fff;
+}
+.tt-menu .tt-vals { max-height: 210px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.tt-menu .tt-vals label {
+  display: flex; align-items: center; gap: 7px; padding: 4px 5px; font-size: 13.5px;
+  border-radius: 6px; cursor: pointer;
+}
+.tt-menu .tt-vals label:hover { background: #EEF2EA; }
+.tt-menu .tt-vals label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-menu .tt-actions { display: flex; gap: 6px; margin-top: 7px; }
+.tt-menu .tt-actions .tt-apply { background: var(--pine); color: #fff; border-color: var(--pine); font-weight: 600; }
+
+.tt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; align-items: center; }
+.tt-chip {
+  background: #E3EFE7; color: var(--in); border-radius: 999px; padding: 3px 6px 3px 10px;
+  font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;
+}
+.tt-chip button { border: 0; background: transparent; cursor: pointer; color: inherit; font-size: 13px; padding: 0 3px; }
+.tt-clear-all { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; }
+.tt-count { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+
 .tbl table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: var(--radius); overflow: hidden; }
 .tbl th, .tbl td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .tbl th { background: var(--pine); color: #fff; font-size: 13px; }

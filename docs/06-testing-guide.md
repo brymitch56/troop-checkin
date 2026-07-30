@@ -7,7 +7,7 @@ Two layers: the automated suite (run it after any change), and manual walkthroug
 ```bash
 npm test                      # 100 node:test cases across 9 files (also the required CI gate)
 npm install --no-save puppeteer
-node test/e2e-browser.js      # 21-step real-browser E2E (kiosk + admin + offline)
+node test/e2e-browser.js      # 22-step real-browser E2E (kiosk + admin + offline)
 ```
 
 What they cover: roster parser and guardian-link rules; import idempotency, deactivation scoping, field locks; every API endpoint over HTTP including all `/txn` business rules (signer requirements, authorization + override, 409 races, dedupe, FR-12 adults); admin flows (guardian authority, void/close corrections, merge, CSVs, iCal apply rules, backup restore); Twilio signature validation and Y/STOP webhook flows; report filters; photo upload and gating; membership-expiration rules (date normalization, the 30-day boundary — expires today / day 29 in, day 31 out — lock interaction, the admin expiring list/CSV, snapshot inclusion); the roster-sync fetcher (cookie-jar semantics incl. expiry deletion, Yii2 CSRF extraction from meta/hidden-field, xlsx/CSV/HTML byte sniffing, every sanity-check branch incl. the configurable row-count guard, and the full login→503→poll→download→pending-import sequence against a mock TLC server, plus approve/discard over HTTP — no real network, synthetic people only); the startup self-check (real modules pass; stubs with missing exports fail; a truncated-to-0-bytes core module makes a real `node server/index.js` boot exit 1 while the intact copy boots). CI (`.github/workflows/ci.yml`) runs `npm test` as the required gate on every push/PR to main, plus an advisory browser-E2E job. After deploying to the Pi, always run `bash scripts/deploy-verify.sh <head> <sw-version>` → RESULT: PASS. The E2E drives a real Chrome through login, wedge scanning, badge enrollment, cart, signature canvas, override confirm, station mode, the admin UI, and a full offline round-trip (queue → reconnect → sync).
@@ -98,6 +98,12 @@ Setup once: `npm run migrate`, create one door and one admin account (`npm run c
 4. **Discard** → pending disappears; the roster is untouched.
 5. Break it on purpose: set a wrong `TLC_PASSWORD`, Sync now → last-run line shows ❌ with a clear error and no retry storm (one login attempt only). Restore the password.
 6. Timer check on the Pi: `systemctl list-timers troop-roster-sync*` shows the next Sunday 03:30 run; `TLC_ENABLED=false` in `.env` makes runs no-op cleanly.
+
+### 14. Admin table sort & filter
+1. Admin → People → click the **Name** header → Sort Z–A; the list reverses and the header shows ↓.
+2. Click **Patrol / role** → untick "Select all", tick two patrols → Apply. Only those rows remain; a green chip names the filter and the line under the table reads "N of M rows shown".
+3. Add a second filter (Type = youth) — filters combine. Click ✕ on one chip, then "Clear all filters" to restore.
+4. Repeat on Transactions (When sorts chronologically, not alphabetically) and Messages. On a phone, confirm the menu opens on-screen and is scrollable.
 
 ## When something fails
 

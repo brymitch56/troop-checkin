@@ -226,6 +226,35 @@ async function main() {
   await admin.waitForSelector('#person-modal[hidden]');
   step('admin people list + person dialog + layered family dialog');
 
+  // -- sortable / filterable tables (tabletools) ----------------------------
+  // sort the People table by name descending, then multi-select filter the
+  // type column down to youth only; both act on the rendered rows.
+  await admin.click('#pp-list th.tt-th');
+  await admin.waitForSelector('.tt-menu');
+  await admin.click('.tt-menu [data-tt-sort="desc"]');
+  const descFirst = await admin.$eval('#pp-list tr[data-id]:not(.tt-hidden) td', (td) => td.textContent.trim());
+  await admin.evaluate(() => {
+    const ths = [...document.querySelectorAll('#pp-list th.tt-th')];
+    ths[1].click(); // Type column
+  });
+  await admin.waitForSelector('.tt-menu');
+  await admin.evaluate(() => {
+    const boxes = [...document.querySelectorAll('.tt-menu .tt-vals input')];
+    boxes.forEach((b) => (b.checked = b.value === 'youth'));
+    document.querySelector('.tt-menu [data-tt-apply]').click();
+  });
+  const onlyYouth = await admin.$$eval('#pp-list tr[data-id]:not(.tt-hidden) td:nth-child(2)',
+    (tds) => tds.map((t) => t.textContent.trim()));
+  assert.ok(onlyYouth.length && onlyYouth.every((t) => t === 'youth'),
+    `type filter should leave only youth rows, got ${JSON.stringify(onlyYouth)}`);
+  const chip = await admin.$eval('#pp-list .tt-chips', (e) => e.textContent);
+  assert.match(chip, /youth/, 'active-filter chip should name the filtered value');
+  await admin.click('#pp-list .tt-clear-all');
+  const cleared = await admin.$$eval('#pp-list tr[data-id]:not(.tt-hidden)', (r) => r.length);
+  assert.ok(cleared > onlyYouth.length, 'clearing filters restores hidden rows');
+  assert.ok(descFirst.length, 'sorted table still renders rows');
+  step('admin tables: header sort + multi-select filter + clear');
+
   await admin.$eval('[data-tab="txns"]', (el) => el.click());
   await admin.waitForFunction(() => document.querySelectorAll('#tx-list tr[data-id]').length >= 2);
   await admin.$eval('#tx-list tr[data-id]', (el) => el.click());

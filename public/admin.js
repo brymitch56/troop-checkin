@@ -15,6 +15,17 @@ const fmtDT = (s) => {
   const d = new Date(naive ? s.replace(' ', 'T') + 'Z' : s);
   return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
+// A date cell: shows the friendly local string, sorts chronologically
+// (tabletools reads data-sort when present).
+const dtCell = (s) => `<td data-sort="${esc(s || '')}">${fmtDT(s)}</td>`;
+// Enhance a just-rendered table with sort + multi-select filtering.
+// `cap` (optional) explains a server-side row limit in the count line.
+function enhanceTable(id, cap) {
+  const el = $(id);
+  if (!el) return;
+  if (cap) el.dataset.ttCap = cap; else delete el.dataset.ttCap;
+  if (window.TableTools) window.TableTools.enhance(el);
+}
 
 let me = null;
 
@@ -104,11 +115,12 @@ async function loadDash() {
     : 'iCal has not synced yet.';
 
   const open = await api('/onsite');
-  $('dash-open').innerHTML = open.length ? `<table><tr><th>Name</th><th>Patrol</th><th>Event</th><th>In since</th><th></th></tr>` +
+  $('dash-open').innerHTML = open.length ? `<table><tr><th>Name</th><th>Patrol</th><th>Event</th><th>In since</th><th data-nofilter></th></tr>` +
     open.map((r) => `<tr><td>${esc(r.first_name)} ${esc(r.last_name)}</td><td>${esc(r.patrol || '')}</td>
-      <td>${esc(r.event_title)}</td><td>${fmtDT(r.signed_at)}</td>
+      <td>${esc(r.event_title)}</td>${dtCell(r.signed_at)}
       <td><button class="btn ghost small" data-close="${r.id}">Admin close</button></td></tr>`).join('') + '</table>'
     : '<p class="hint left">Nobody is on site.</p>';
+  enhanceTable('dash-open');
   $('dash-open').onclick = async (e) => {
     const b = e.target.closest('button[data-close]');
     if (!b) return;
@@ -150,6 +162,8 @@ async function loadPeople() {
     const tr = e.target.closest('tr[data-id]');
     if (tr) openPerson(Number(tr.dataset.id));
   };
+  enhanceTable('pp-list', rows.length >= 500
+    ? 'server limit 500 — narrow with the search box above' : '');
 }
 
 async function openPerson(id) {
@@ -461,13 +475,14 @@ async function guardianAction(p, btn) {
 // --------------------------------------------------------------- events ----
 async function loadEvents() {
   const rows = await api('/admin/events' + ($('ev-past').checked ? '?include_past=1' : ''));
-  $('ev-list').innerHTML = `<table><tr><th>Title</th><th>Starts</th><th>Ends</th><th>Source</th><th>Adults</th><th>Txns</th><th></th></tr>` +
+  $('ev-list').innerHTML = `<table><tr><th>Title</th><th>Starts</th><th>Ends</th><th>Source</th><th>Adults</th><th>Txns</th><th data-nofilter></th></tr>` +
     rows.map((e) => `<tr data-id="${e.id}">
       <td>${esc(e.title)}${e.removed_from_feed ? ' <span class="tag warn">gone from feed</span>' : ''}</td>
-      <td>${fmtDT(e.start_at)}</td><td>${fmtDT(e.end_at)}</td>
+      ${dtCell(e.start_at)}${dtCell(e.end_at)}
       <td>${e.source}${e.is_past ? ' <span class="tag off">past</span>' : ''}</td>
       <td>${e.track_adults ? '✓ tracked' : '—'}</td><td>${e.txn_count}</td>
       <td>${e.txn_count === 0 ? `<button class="btn ghost small" data-del="${e.id}">delete</button>` : ''}</td></tr>`).join('') + '</table>';
+  enhanceTable('ev-list');
   $('ev-list').onclick = async (ev) => {
     const del = ev.target.closest('button[data-del]');
     if (del) {
@@ -530,7 +545,7 @@ $('ev-past').onchange = loadEvents;
 // ---------------------------------------------------------------- staff ----
 async function loadStaff() {
   const rows = await api('/admin/staff');
-  $('st-list').innerHTML = `<table><tr><th>Name</th><th>Role</th><th>Signs in with</th><th>Status</th><th></th></tr>` +
+  $('st-list').innerHTML = `<table><tr><th>Name</th><th>Role</th><th>Signs in with</th><th>Status</th><th data-nofilter></th></tr>` +
     rows.map((s) => `<tr>
       <td>${esc(s.name)}</td>
       <td><span class="tag ${s.role === 'admin' ? 'warn' : 'youth'}">${s.role}</span></td>
@@ -544,6 +559,7 @@ async function loadStaff() {
         <button class="btn ghost small" data-sact="active" data-sid="${s.id}" data-val="${s.active ? 0 : 1}">${s.active ? 'Deactivate' : 'Reactivate'}</button>
       </td></tr>`).join('') + '</table>';
   $('st-list').querySelectorAll('button[data-sact]').forEach((b) => (b.onclick = () => staffAction(b, rows)));
+  enhanceTable('st-list');
 }
 async function staffAction(btn, rows) {
   const id = Number(btn.dataset.sid);
@@ -612,8 +628,8 @@ async function renderTxns() {
   const rows = await api('/admin/txns' + (evId ? `?event_id=${evId}` : ''));
   $('tx-list').innerHTML = `<table><tr><th>When</th><th>Dir</th><th>People</th><th>Event</th><th>Signer</th><th>Staff</th><th>Flags</th></tr>` +
     rows.map((t) => `<tr data-id="${t.id}">
-      <td>${fmtDT(t.signed_at)}</td>
-      <td><span class="tag ${t.direction === 'in' ? 'youth' : 'warn'}">${t.direction.toUpperCase()}</span></td>
+      ${dtCell(t.signed_at)}
+      <td data-sort="${t.direction}"><span class="tag ${t.direction === 'in' ? 'youth' : 'warn'}">${t.direction.toUpperCase()}</span></td>
       <td>${esc(t.people || '')}</td><td>${esc(t.event_title)}</td>
       <td>${esc(t.signer_name || t.signer_name_override || '')}</td><td>${esc(t.staff_name)}</td>
       <td>${t.voided_by_txn_id ? '<span class="tag warn">voided</span>' : ''}
@@ -623,6 +639,8 @@ async function renderTxns() {
     const tr = e.target.closest('tr[data-id]');
     if (tr) openTxn(Number(tr.dataset.id));
   };
+  enhanceTable('tx-list', rows.length >= 200
+    ? 'newest 200 — pick an event above to see more' : '');
 }
 async function openTxn(id) {
   const t = await api(`/admin/txns/${id}`);
@@ -664,10 +682,10 @@ async function loadMessages() {
     ? (m.kind === 'reply' ? '<span class="tag warn">reply</span>' : '<span class="tag off">keyword</span>')
     : (m.kind === 'custom' ? '<span class="tag youth">broadcast</span>' : '<span class="tag off">pickup alert</span>');
   $('msg-list').innerHTML = rows.length
-    ? `<table><tr><th></th><th>When</th><th>Who</th><th>Type</th><th>Message</th><th>Status</th><th></th></tr>` +
+    ? `<table><tr><th>In/Out</th><th>When</th><th>Who</th><th>Type</th><th>Message</th><th>Status</th><th data-nofilter></th></tr>` +
       rows.map((m) => `<tr class="${m.direction === 'in' && m.kind === 'reply' ? 'msg-reply' : ''}">
-        <td>${m.direction === 'in' ? '📥' : '📤'}</td>
-        <td>${fmtDT(m.at)}</td>
+        <td data-sort="${m.direction}">${m.direction === 'in' ? '📥' : '📤'}</td>
+        ${dtCell(m.at)}
         <td>${esc(m.guardian_name || m.phone || '?')}</td>
         <td>${kindTag(m)}</td>
         <td class="msg-body">${esc(m.body || '')}</td>
@@ -676,6 +694,7 @@ async function loadMessages() {
           ? `<button class="btn ghost small" data-msgreply="${m.guardian_id}" data-msgname="${esc(m.guardian_name || m.phone)}">Reply</button>` : ''}</td>
       </tr>`).join('') + '</table>'
     : '<p class="hint left">No messages yet.</p>';
+  enhanceTable('msg-list', rows.length >= 200 ? 'newest 200' : '');
   $('msg-list').querySelectorAll('button[data-msgreply]').forEach((b) => (b.onclick = () => {
     $('msg-compose').hidden = false;
     $('msg-compose').dataset.gid = b.dataset.msgreply;
@@ -717,10 +736,11 @@ async function loadReports() {
   const log = await api('/admin/notifications');
   $('rp-notifications').innerHTML = log.length
     ? `<table><tr><th>When</th><th>Youth</th><th>Guardian</th><th>Event</th><th>Status</th></tr>` +
-      log.map((n) => `<tr><td>${fmtDT(n.sent_at)}</td><td>${esc(n.youth_name)}</td>
+      log.map((n) => `<tr>${dtCell(n.sent_at)}<td>${esc(n.youth_name)}</td>
         <td>${esc(n.guardian_name)}</td><td>${esc(n.event_title)}</td>
-        <td><span class="tag ${n.status === 'failed' ? 'warn' : n.status === 'replied_y' ? 'youth' : 'off'}">${esc(n.status)}</span></td></tr>`).join('') + '</table>'
+        <td data-sort="${esc(n.status)}"><span class="tag ${n.status === 'failed' ? 'warn' : n.status === 'replied_y' ? 'youth' : 'off'}">${esc(n.status)}</span></td></tr>`).join('') + '</table>'
     : '<p class="hint left">No notifications yet (SMS is off until Twilio is configured).</p>';
+  enhanceTable('rp-notifications');
 }
 // membership renewals: expired or expiring within the selected window
 async function loadExpiring() {
@@ -735,9 +755,10 @@ async function loadExpiring() {
         <td>${esc(p.member_id || '')}</td>
         <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>
         <td>${esc(p.membership_expires)}</td>
-        <td>${p.days_left < 0 ? `<span class="tag warn">expired ${-p.days_left}d ago</span>` : p.days_left}</td>
+        <td data-sort="${p.days_left}">${p.days_left < 0 ? `<span class="tag warn">expired ${-p.days_left}d ago</span>` : p.days_left}</td>
       </tr>`).join('') + '</table>'
     : `<p class="hint left">Nobody expires within ${days} days. 🎉</p>`;
+  enhanceTable('mx-list');
 }
 document.addEventListener('change', (e) => {
   if (e.target.id === 'mx-days') loadExpiring();
@@ -795,8 +816,9 @@ async function runReport() {
       rows.map((r) => `<tr><td>${esc(r.last_name)}, ${esc(r.first_name)}</td>
         <td><span class="tag ${r.type}">${r.type}</span></td><td>${esc(r.patrol || '')}</td>
         <td>${r.events_attended}</td><td>${r.sign_ins}</td>
-        <td>${fmtDT(r.first_seen)}</td><td>${fmtDT(r.last_seen)}</td></tr>`).join('') + '</table>'
+        ${dtCell(r.first_seen)}${dtCell(r.last_seen)}</tr>`).join('') + '</table>'
     : '<p class="hint left">No attendance in that range.</p>';
+  enhanceTable('rp-result');
 }
 
 // ---------------------------------------------------- automated sync ----
@@ -911,9 +933,10 @@ async function loadImport() {
   loadSync();
   const log = await api('/admin/imports');
   $('imp-log').innerHTML = log.length ? `<table><tr><th>When</th><th>File</th><th>By</th><th>Added</th><th>Updated</th><th>Deactivated</th><th>Linked</th></tr>` +
-    log.map((r) => `<tr><td>${fmtDT(r.imported_at)}</td><td>${esc(r.filename)}</td><td>${esc(r.staff_name || '')}</td>
+    log.map((r) => `<tr>${dtCell(r.imported_at)}<td>${esc(r.filename)}</td><td>${esc(r.staff_name || '')}</td>
       <td>${r.added}</td><td>${r.updated}</td><td>${r.deactivated}</td><td>${r.linked_guardians}</td></tr>`).join('') + '</table>'
     : '<p class="hint left">No imports yet.</p>';
+  enhanceTable('imp-log');
 }
 async function uploadRoster(mode) {
   const file = $('imp-file').files[0];

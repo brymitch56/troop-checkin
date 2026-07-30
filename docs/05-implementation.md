@@ -46,7 +46,10 @@ public/
   offline.js          IndexedDB snapshot + txn queue + conflict store
   guide.html          in-app user guide (kiosk + admin, print CSS; troop-generic,
                       brand injected from /api/config; in the SW shell so it works offline)
-  sw.js               app-shell cache (VERSION tc-v19 — bump when public/ changes)
+  tabletools.js       Excel-style header menus on every admin table: type-aware sort +
+                      multi-select value filters (AND across columns, OR within one),
+                      filter chips, "N of M rows shown"; client-side over rendered rows
+  sw.js               app-shell cache (VERSION tc-v20 — bump when public/ changes)
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
   install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd
@@ -54,7 +57,7 @@ scripts/
                       exports, migrations reconciled, service/healthz/sw) -> RESULT: PASS/FAIL
   troop-checkin.service.template
 .github/workflows/ci.yml   required node:test gate on push/PR to main + advisory browser-E2E job
-test/                 105 node:test cases (10 files) + e2e-browser.js (puppeteer, 21 steps)
+test/                 105 node:test cases (10 files) + e2e-browser.js (puppeteer, 22 steps)
 ```
 
 ## Data model highlights
