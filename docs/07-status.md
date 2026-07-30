@@ -1,6 +1,6 @@
 # 07 — Project Status
 
-**Date:** 2026-07-26 (rev 7) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `7c3198c`, schema through 008, sw `tc-v14`, roster sync deployed dormant and live-tested with manually-preloaded creds — **pushed but NOT yet deployed: roster-sync env-loading fix + admin credentials editor (sw tc-v15, then tc-v16 multi-role warning, then tc-v17 nav cleanup, then tc-v18 popout editors, then tc-v19 timezone fixes)**
+**Date:** 2026-07-27 (rev 8) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `0b72926`, schema through 008, sw `tc-v19` — **and the Cloudflare Tunnel is LIVE**: `https://checkin.ny2911.org` reaches the Pi from anywhere, admin paths behind Cloudflare Access, Twilio inbound webhook pointed at the tunnel. Remaining: put the TWILIO_* values in `.env` + `SMS_ENABLED=true` (see `DEPLOY-PROMPT-sms-activation.md`).
 
 ## Where things stand
 
@@ -32,8 +32,8 @@ Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-chec
 
 ## Blocked / waiting
 
-1. **DNS move to Cloudflare** (friend, in progress) → then TUNNEL-SETUP-GUIDE.md end to end → unlocks HTTPS on phones (camera/PWA/offline), Twilio inbound (Y/STOP/replies), delivery receipts.
-2. **SMS activation** after tunnel: `.env` TWILIO_* + PUBLIC_URL + SMS_ENABLED, webhook URL, safe self-test (activation addendum; visitor-with-Bryan's-number needs an opt-in + placeholder consent form now).
+1. ~~DNS move + tunnel~~ **DONE 2026-07-27** — zone active on Cloudflare (mail/service records grey-clouded), Zero Trust Free (team `plain-mouse-6ef5`), tunnel `troop-checkin` → `checkin.ny2911.org` → `localhost:3000`, Access app on `/admin.html` + `/api/admin*` with one-time-PIN login (Leaders: brymitch56@gmail.com), Twilio inbound webhook → `https://checkin.ny2911.org/api/sms/inbound`. HTTPS on phones now unlocks camera/PWA/offline.
+2. **SMS activation** (only remaining step): `.env` TWILIO_* + PUBLIC_URL + SMS_ENABLED, webhook URL, safe self-test (activation addendum; visitor-with-Bryan's-number needs an opt-in + placeholder consent form now).
 3. Consent forms: printed PDF ready (`NY-2911-Pickup-Authorization-SMS-Consent.pdf`); collection + entry via the family dialog is ongoing manual work.
 4. First live meeting night alongside paper (testing-guide walkthrough #1).
 
