@@ -14,6 +14,8 @@ const os = require('os');
 const path = require('path');
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sync-'));
+// pin a credential-encryption key so tests never write a real .env
+process.env.CRED_KEY = require('crypto').randomBytes(32).toString('hex');
 
 const { buildWorkbookBuffer } = require('../server/scripts/make-synthetic-roster');
 const F = require('../server/scripts/fetch-roster');
@@ -304,6 +306,19 @@ test('credentials API: write-only save, source reporting, blank-password keep, d
   const { getTlcCredentials } = require('../server/lib/rosterSync');
   assert.equal(getTlcCredentials().password, PASSWORD);
 
+  // THE at-rest guarantee: the database row holds only ciphertext — the
+  // plaintext password appears nowhere in the stored value (so DB snapshots
+  // and nightly backups cannot leak it)
+  const raw = db.prepare(`SELECT value FROM meta WHERE key = 'tlc_credentials'`).get().value;
+  const parsed = JSON.parse(raw);
+  assert.equal(parsed.enc, 1);
+  assert.ok(parsed.password_enc && parsed.password_enc.iv && parsed.password_enc.tag);
+  assert.ok(!raw.includes(PASSWORD), 'plaintext password must not exist in the DB');
+  assert.ok(!('password' in parsed), 'no plaintext password field in the stored row');
+  const st3 = await req('GET', '/api/admin/roster-sync', { cookie: adminCookie });
+  assert.equal(st3.json.credentials.encrypted, true); // and the UI is told so
+  assert.equal(st3.json.credentials.readable, true);
+
   // and they require an admin session
   assert.equal((await req('PUT', '/api/admin/roster-sync/credentials',
     { body: { email: 'x@x', password: 'y' } })).status, 401);
@@ -335,6 +350,36 @@ test('fetcher uses admin-saved credentials (DB wins over env) — no TLC_* in en
   await assert.rejects(() => F.runFetch(env),
     (e) => e instanceof F.FetchError && e.code === 1);
   m.server.close(); m2.server.close();
+});
+
+test('legacy plaintext credential rows migrate to encrypted on first read', async () => {
+  // simulate a row saved before encryption existed
+  db.prepare(`INSERT INTO meta (key, value) VALUES ('tlc_credentials', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run(JSON.stringify({ email: EMAIL, password: PASSWORD, updated_at: '2026-07-27T00:00:00Z' }));
+  const { getTlcCredentials } = require('../server/lib/rosterSync');
+  const creds = getTlcCredentials(); // read still works…
+  assert.equal(creds.password, PASSWORD);
+  const raw = db.prepare(`SELECT value FROM meta WHERE key = 'tlc_credentials'`).get().value;
+  assert.equal(JSON.parse(raw).enc, 1); // …and the row is now encrypted
+  assert.ok(!raw.includes(PASSWORD));
+  db.prepare(`DELETE FROM meta WHERE key = 'tlc_credentials'`).run(); // restore state for later tests
+});
+
+test('a changed CRED_KEY makes credentials unreadable loudly, not silently wrong', async () => {
+  const { saveTlcCredentials, getTlcCredentials, credentialInfo } = require('../server/lib/rosterSync');
+  saveTlcCredentials({ email: EMAIL, password: PASSWORD });
+  const origKey = process.env.CRED_KEY;
+  try {
+    process.env.CRED_KEY = require('crypto').randomBytes(32).toString('hex'); // key lost/rotated
+    assert.equal(getTlcCredentials(), null); // no wrong-password login attempts
+    const info = credentialInfo({});
+    assert.equal(info.source, 'admin');
+    assert.equal(info.readable, false); // the UI can tell the admin exactly what happened
+  } finally {
+    process.env.CRED_KEY = origKey;
+    db.prepare(`DELETE FROM meta WHERE key = 'tlc_credentials'`).run();
+  }
 });
 
 test('TLC_ENABLED=false is a clean no-op', async () => {

@@ -68,22 +68,54 @@ function discardPending() {
 }
 
 // ------------------------------------------------------- TLC credentials ---
-// Admin-entered credentials so nobody has to edit .env on the Pi. Stored in
-// the meta table (same protection as everything else under data/: file perms
-// + the encrypted off-site backup). They must be stored retrievable — TLC
-// needs the real password at login — but they are WRITE-ONLY toward the
-// browser: no API response ever includes the password. Resolution order for
-// the fetcher: admin-saved (DB) wins over .env; .env remains the fallback so
-// existing installs keep working untouched.
+// Admin-entered credentials so nobody has to edit .env on the Pi. The
+// password must be stored retrievable — TLC needs the real value at login —
+// so it is ENCRYPTED AT REST (AES-256-GCM via lib/credCrypto) with a key
+// kept in .env, outside data/: database snapshots and nightly backups hold
+// only ciphertext. WRITE-ONLY toward the browser: no API response ever
+// includes the password. Resolution order for the fetcher: admin-saved (DB)
+// wins over .env; .env remains the fallback. Legacy plaintext rows (saved
+// before encryption existed) are read once and transparently re-encrypted.
+const credCrypto = require('./credCrypto');
 const CRED_KEY = 'tlc_credentials';
 
-function getTlcCredentials() {
+function readCredRow() {
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(CRED_KEY);
   if (!row) return null;
-  try {
-    const c = JSON.parse(row.value);
-    return c && c.email && c.password ? c : null;
-  } catch { return null; }
+  try { return JSON.parse(row.value); } catch { return null; }
+}
+
+function writeCredRow(email, password, { encrypt = true } = {}) {
+  const updated_at = new Date().toISOString();
+  let value;
+  if (encrypt) {
+    credCrypto.ensureKey();
+    value = { email, password_enc: credCrypto.encrypt(password), updated_at, enc: 1 };
+  } else {
+    value = { email, password, updated_at };
+  }
+  db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(CRED_KEY, JSON.stringify(value));
+  return updated_at;
+}
+
+function getTlcCredentials() {
+  const c = readCredRow();
+  if (!c || !c.email) return null;
+  if (c.enc === 1 && c.password_enc) {
+    const password = credCrypto.decrypt(c.password_enc);
+    if (password == null) {
+      console.error('[rosterSync] Stored TLC credentials cannot be decrypted — CRED_KEY missing or changed in .env. Re-enter them in Admin → Import.');
+      return null;
+    }
+    return { email: c.email, password, updated_at: c.updated_at };
+  }
+  if (c.password) {
+    // legacy plaintext row: migrate to encrypted transparently when possible
+    try { writeCredRow(c.email, c.password); } catch { /* no writable .env — keep working */ }
+    return { email: c.email, password: c.password, updated_at: c.updated_at };
+  }
+  return null;
 }
 
 function saveTlcCredentials({ email, password }) {
@@ -94,14 +126,14 @@ function saveTlcCredentials({ email, password }) {
   if (!p && !existing) {
     const err = new Error('Password is required the first time.'); err.code = 400; throw err;
   }
-  const value = JSON.stringify({
-    email: e,
-    password: p || existing.password, // blank password = keep the stored one
-    updated_at: new Date().toISOString(),
-  });
-  db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
-              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(CRED_KEY, value);
-  return { email: e, updated_at: JSON.parse(value).updated_at };
+  let updated_at;
+  try {
+    updated_at = writeCredRow(e, p || existing.password); // blank password = keep stored one
+  } catch (err) {
+    const e2 = new Error(`Could not set up credential encryption (${err.message}) — nothing was saved.`);
+    e2.code = 500; throw e2;
+  }
+  return { email: e, updated_at };
 }
 
 function clearTlcCredentials() {
@@ -110,12 +142,20 @@ function clearTlcCredentials() {
 }
 
 // What the admin UI shows (never the password): where the effective
-// credentials come from, and enough to recognize them.
+// credentials come from, whether they're encrypted at rest, and whether
+// they're currently readable (a changed/lost CRED_KEY shows up here loudly
+// instead of as a mystery fetch failure).
 function credentialInfo(env = process.env) {
-  const saved = getTlcCredentials();
-  if (saved) return { source: 'admin', email: saved.email, updated_at: saved.updated_at };
-  if (env.TLC_EMAIL && env.TLC_PASSWORD) return { source: 'env', email: env.TLC_EMAIL, updated_at: null };
-  return { source: null, email: null, updated_at: null };
+  const raw = readCredRow();
+  if (raw && raw.email) {
+    const encrypted = raw.enc === 1;
+    const readable = encrypted ? credCrypto.decrypt(raw.password_enc) != null : !!raw.password;
+    return { source: 'admin', email: raw.email, updated_at: raw.updated_at, encrypted, readable };
+  }
+  if (env.TLC_EMAIL && env.TLC_PASSWORD) {
+    return { source: 'env', email: env.TLC_EMAIL, updated_at: null, encrypted: false, readable: true };
+  }
+  return { source: null, email: null, updated_at: null, encrypted: false, readable: false };
 }
 
 module.exports = {

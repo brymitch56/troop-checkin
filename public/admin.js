@@ -871,9 +871,11 @@ async function loadSync() {
   const c = s.credentials || {};
   $('sync-creds-info').innerHTML =
     c.source === 'admin'
-      ? `Using credentials saved here: <b>${esc(c.email)}</b> (updated ${fmtDT(c.updated_at)}). Password is stored but never displayed.`
+      ? (c.readable === false
+        ? `⚠ Saved credentials for <b>${esc(c.email)}</b> can no longer be decrypted (the server's CRED_KEY changed or was lost). Re-enter the password below.`
+        : `Using credentials saved here: <b>${esc(c.email)}</b> (updated ${fmtDT(c.updated_at)}). Password is ${c.encrypted ? 'encrypted at rest 🔐 and ' : ''}never displayed.`)
       : c.source === 'env'
-        ? `Using credentials from <code>.env</code> on the server (<b>${esc(c.email)}</b>). Saving here will override them without touching the file.`
+        ? `Using credentials from <code>.env</code> on the server (<b>${esc(c.email)}</b>). Saving here will override them without touching the file (and encrypt the password at rest).`
         : 'No credentials yet — enter the TLC login the troop uses to view the member list.';
   $('sync-cred-clear').hidden = c.source !== 'admin';
   if (document.activeElement !== $('sync-cred-email') && c.source === 'admin') {
