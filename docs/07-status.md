@@ -1,6 +1,6 @@
 # 07 — Project Status
 
-**Date:** 2026-07-30 (rev 10) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `0b72926`, schema through 008, sw `tc-v19` on the Pi — **Cloudflare Tunnel LIVE** (`https://checkin.ny2911.org`, admin behind Cloudflare Access, DerbyNet at `https://derby.ny2911.org`), **SMS live and confirmed bidirectional**. **Awaiting one combined deploy:** table sort/filter (`a702e17`, tc-v20) + credential encryption (tc-v21) — see `DEPLOY-PROMPT-cred-encryption.md`. No new migration in either.
+**Date:** 2026-07-30 (rev 10) · **Repo:** github.com/brymitch56/troop-checkin (private) · **Deployed:** live on the church-bound Pi 4 ("DerbyServer", also runs DerbyNet), commit `a702e17`, schema through 008, sw `tc-v20` on the Pi (tables deployed 2026-07-30) — **Cloudflare Tunnel LIVE** (`https://checkin.ny2911.org`, admin behind Cloudflare Access, DerbyNet at `https://derby.ny2911.org`), **SMS live and confirmed bidirectional**. **Awaiting deploy:** credential encryption (`f216d17`, tc-v21) — see `DEPLOY-PROMPT-cred-encryption.md`. No new migration.
 
 ## Where things stand
 
@@ -32,7 +32,7 @@ Everything from rev 2, plus the deployment-era additions:
 
 ## Deployment facts
 
-Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-checkin`, reboot-tested, DerbyNet coexisting on :80. Backups: 03:15 local + 03:45 encrypted rclone push to Drive (`gdrive-crypt`; password in Bryan's Bitwarden). Claude Code (separate session, SSH) handles all Pi work — see `CLAUDE-CODE-PI-DEPLOY-HANDOFF.md` (deployment record + SMS-activation addendum). Service-worker cache means every deploy needs a VERSION bump (repo at **tc-v21**; Pi serves tc-v19 until the next deploy) and two reloads on phones — bump only when `public/` client assets change. **Every deploy ends with the integrity guard**: `bash ~/troop-deploy-verify.sh <head> <sw>` on the Pi (mirrored in-repo at `scripts/deploy-verify.sh`) must print RESULT: PASS — it exists because a pull once left `membership.js` 0-byte while the service booted "healthy" (see the handoff doc's integrity-catch note).
+Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-checkin`, reboot-tested, DerbyNet coexisting on :80. Backups: 03:15 local + 03:45 encrypted rclone push to Drive (`gdrive-crypt`; password in Bryan's Bitwarden). Claude Code (separate session, SSH) handles all Pi work — see `CLAUDE-CODE-PI-DEPLOY-HANDOFF.md` (deployment record + SMS-activation addendum). Service-worker cache means every deploy needs a VERSION bump (repo at **tc-v21**; Pi serves tc-v20 until the next deploy) and two reloads on phones — bump only when `public/` client assets change. **Every deploy ends with the integrity guard**: `bash ~/troop-deploy-verify.sh <head> <sw>` on the Pi (mirrored in-repo at `scripts/deploy-verify.sh`) must print RESULT: PASS — it exists because a pull once left `membership.js` 0-byte while the service booted "healthy" (see the handoff doc's integrity-catch note).
 
 ## Blocked / waiting
 
@@ -43,7 +43,7 @@ Pi 4 `DerbyServer` at `192.168.86.125:3000` (DHCP-reserved), systemd `troop-chec
 
 ## Next step
 
-**Combined deploy of tc-v20 + tc-v21** (Claude Code / Pi session, see `DEPLOY-PROMPT-cred-encryption.md`): `git pull`, migrate (expect "up to date" — no new migration in either batch), restart, verifier PASS at `tc-v21`, phones reload twice. Notes for that deploy: the first credential save afterward auto-generates `CRED_KEY` into `.env`; the currently stored plaintext credential re-encrypts transparently on its next read — verify with the admin Import tab showing "encrypted at rest". Then: cleanup-and-timer session (`DEPLOY-PROMPT-cleanup-and-timer.md`), first live meeting night alongside paper.
+**Deploy tc-v21** (Claude Code / Pi session, see `DEPLOY-PROMPT-cred-encryption.md`; tables/tc-v20 already deployed): `git pull` `a702e17..f216d17`, migrate (expect "up to date"), restart, verifier PASS at `tc-v21`, phones reload twice. Notes for that deploy: the first credential save afterward auto-generates `CRED_KEY` into `.env`; the currently stored plaintext credential re-encrypts transparently on its next read — verify with the admin Import tab showing "encrypted at rest". Then: cleanup-and-timer session (`DEPLOY-PROMPT-cleanup-and-timer.md`), first live meeting night alongside paper.
 
 ## Backlog (unchanged)
 
