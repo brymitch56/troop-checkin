@@ -316,6 +316,43 @@ async function main() {
   assert.ok(dannyOpen, 'queued sign-in reached the server after reconnect');
   step('offline: queue synced on reconnect, server has the record');
 
+  // -- admin document strategy (tc-v22) --------------------------------------
+  // The admin document must be NETWORK-first (so an expired Cloudflare Access
+  // session shows the login instead of a silently-empty cached page) while
+  // the kiosk shell stays CACHE-first (offline check-in). Prove it by editing
+  // the served files on disk: a reload must pick up the admin change but NOT
+  // the kiosk change. Files are restored immediately after.
+  const pubDir = path.join(__dirname, '..', 'public');
+  const adminPath = path.join(pubDir, 'admin.html');
+  const indexPath = path.join(pubDir, 'index.html');
+  const adminOrig = fs.readFileSync(adminPath, 'utf8');
+  const indexOrig = fs.readFileSync(indexPath, 'utf8');
+  try {
+    fs.writeFileSync(adminPath, adminOrig + '\n<!-- e2e-marker-admin -->');
+    fs.writeFileSync(indexPath, indexOrig + '\n<!-- e2e-marker-kiosk -->');
+
+    await admin.reload({ waitUntil: 'load' });
+    await admin.waitForSelector('#screen-login, #screen-app', { timeout: 8000 });
+    const adminHtml = await admin.content();
+    assert.ok(adminHtml.includes('e2e-marker-admin'), 'admin document must be served network-first');
+    step('admin document is network-first (Access re-login can happen)');
+
+    await page.reload({ waitUntil: 'load' });
+    const kioskHtml = await page.content();
+    assert.ok(!kioskHtml.includes('e2e-marker-kiosk'), 'kiosk shell must stay cache-first');
+    step('kiosk shell still cache-first');
+
+    // offline: admin falls back to the cached copy instead of failing
+    await admin.setOfflineMode(true);
+    await admin.reload({ waitUntil: 'load' }).catch(() => {});
+    await admin.waitForSelector('#screen-login, #screen-app', { timeout: 8000 });
+    step('offline: admin falls back to the cached shell');
+    await admin.setOfflineMode(false);
+  } finally {
+    fs.writeFileSync(adminPath, adminOrig);
+    fs.writeFileSync(indexPath, indexOrig);
+  }
+
   // -- plain LAN HTTP (insecure context) parity ------------------------------
   // Phones at a meeting hit http://<pi-ip>:3000 — an INSECURE context where
   // secure-context-only APIs (crypto.randomUUID, serviceWorker, camera) don't

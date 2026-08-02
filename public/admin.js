@@ -29,10 +29,41 @@ function enhanceTable(id, cap) {
 
 let me = null;
 
+// Cloudflare Access expiry: background API calls bounce to the Access login
+// (a cross-origin redirect fetch can't use) and the page silently empties.
+// Detect the bounce and force ONE full-page reload — with the network-first
+// SW (tc-v22) that navigation goes through Access and shows the login. If a
+// reload doesn't fix it, show a visible message instead of looping.
+const accessGuard = window.AccessGuard && window.AccessGuard.create({
+  storage: window.sessionStorage,
+  reload: () => window.location.reload(),
+  onStuck: () => {
+    if (document.getElementById('access-stuck')) return;
+    const b = document.createElement('div');
+    b.id = 'access-stuck';
+    b.textContent = 'Session expired or server unreachable — reload this page to sign in again.';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#B3261E;' +
+      'color:#fff;text-align:center;padding:10px 14px;font-weight:600';
+    document.body.appendChild(b);
+  },
+});
+
 async function api(path, opts = {}) {
-  const res = await fetch('/api' + path, { credentials: 'same-origin', ...opts });
+  let res;
+  try {
+    res = await fetch('/api' + path, { credentials: 'same-origin', ...opts });
+  } catch (err) {
+    // genuinely offline: keep the old behavior (offline UI, no reload loop)
+    if (accessGuard && navigator.onLine !== false) accessGuard.handleBounce();
+    throw err;
+  }
+  if (accessGuard && accessGuard.isBounce(res)) {
+    accessGuard.handleBounce();
+    const e = new Error('Session expired — signing you back in…'); e.status = 401; throw e;
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(body.error || `Request failed (${res.status})`); e.body = body; e.status = res.status; throw e; }
+  if (accessGuard) accessGuard.markGood();
   return body;
 }
 const jpost = (p, d) => api(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
