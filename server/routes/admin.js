@@ -485,7 +485,9 @@ router.post('/merge', (req, res) => {
 // "Sync now" button) stages a PENDING import; these routes surface it for
 // one-tap Approve/Discard. The job can never commit — only approve does.
 const rosterSync = require('../lib/rosterSync');
-let syncChild = null; // one sync at a time; admin UI polls `running`
+// child-process ownership lives in lib/syncRunner so the weekly in-process
+// schedule and this button share the "one sync at a time" state
+const syncRunner = require('../lib/syncRunner');
 
 router.get('/roster-sync', (req, res) => {
   let state = {};
@@ -493,12 +495,13 @@ router.get('/roster-sync', (req, res) => {
     state = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'roster-fetch-state.json'), 'utf8'));
   } catch { /* no runs yet */ }
   const cred = rosterSync.credentialInfo(); // never includes the password
+  const run = syncRunner.status();
   res.json({
     configured: !!cred.source,
     credentials: cred, // {source: 'admin'|'env'|null, email, updated_at}
     enabled: String(process.env.TLC_ENABLED || 'true').toLowerCase() !== 'false',
-    running: !!syncChild,
-    started_at: syncChild ? syncChild.startedAt : null,
+    running: run.running,
+    started_at: run.started_at,
     last_run: state.last_run || null,
     last_status: state.last_status || null,
     last_error: state.last_error || null,
@@ -508,21 +511,12 @@ router.get('/roster-sync', (req, res) => {
 });
 
 router.post('/roster-sync/run', (req, res) => {
-  if (syncChild) return res.status(409).json({ error: 'A sync is already running.' });
+  if (syncRunner.status().running) return res.status(409).json({ error: 'A sync is already running.' });
   if (!rosterSync.credentialInfo().source) {
     return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them below (or set TLC_EMAIL / TLC_PASSWORD in .env).' });
   }
-  const { spawn } = require('child_process');
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'scripts', 'fetch-roster.js')],
-    { stdio: 'ignore', env: process.env });
-  syncChild = { startedAt: new Date().toISOString() };
-  const done = () => { syncChild = null; clearTimeout(killer); };
-  child.on('exit', done);
-  child.on('error', done);
-  // hard stop: the poll loop is self-limiting, but never let a wedged child
-  // hang the "running" state forever
-  const killer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 10 * 60 * 1000);
-  killer.unref();
+  const r = syncRunner.start();
+  if (!r.started) return res.status(409).json({ error: r.reason });
   res.json({ ok: true, started: true });
 });
 
