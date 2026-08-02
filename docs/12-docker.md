@@ -62,6 +62,16 @@ git pull && docker compose up -d --build
 Migrations run automatically on container start. Data and config live on the
 volumes, so containers are disposable.
 
+## Removing the app
+
+```bash
+docker compose down        # stop + remove the container (data/config KEPT)
+docker compose down -v     # ALSO delete the volumes — all data, irreversibly
+docker rmi troop-checkin   # remove the built image
+```
+
+Copy your backups out (see "Backups" above) before `down -v`.
+
 ## Multi-arch
 
 The image builds for amd64 and arm64 from the same Dockerfile:

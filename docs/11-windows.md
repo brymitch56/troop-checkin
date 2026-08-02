@@ -99,6 +99,16 @@ Restart the app (or the scheduled task). `deploy-verify.js` must print
 `RESULT: PASS` before you trust the update — it's the same integrity gate
 the Pi deployment uses.
 
+## Removing the app
+
+Uninstalling is manual but small — nothing is installed system-wide:
+
+1. If you kept records you want, copy `data\backups\` somewhere safe first.
+2. Task Scheduler → right-click the `Troop Check-In` task → Delete.
+3. Delete the app folder (e.g. `C:\troop-checkin`) — that removes the app
+   AND all its data.
+4. Optionally uninstall Node.js from Settings → Apps if nothing else uses it.
+
 ## Optional layers
 
 Everything optional works the same as on the other platforms — HTTPS/remote
