@@ -18,9 +18,16 @@ on:
     branches: [main]
 
 jobs:
+  # Both supported host OSes (Linux covers the Pi and Docker; Windows is a
+  # first-class target). The suite must be green on BOTH — the windows leg is
+  # required, not advisory.
   test:
-    name: node:test suite (required)
-    runs-on: ubuntu-latest
+    name: node:test suite (required, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -31,6 +38,35 @@ jobs:
       - run: npm test
         env:
           DATA_DIR: ${{ runner.temp }}/tc-data
+
+  # Image builds, boots, passes /healthz, and an unconfigured container
+  # redirects to the /setup wizard — the Docker quickstart in one smoke test.
+  docker:
+    name: docker build + boot smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t troop-checkin:ci .
+      - name: boot container and probe
+        run: |
+          docker run -d --name tc -p 3000:3000 troop-checkin:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:3000/healthz && break
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/healthz | grep -q '"ok":true' || { docker logs tc; exit 1; }
+          # fresh container = unconfigured -> the wizard must answer
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/)
+          [ "$code" = "302" ] || { echo "expected 302 to /setup, got $code"; docker logs tc; exit 1; }
+          curl -fsS http://localhost:3000/setup | grep -q 'first-time setup' || { docker logs tc; exit 1; }
+      - name: container healthcheck reaches healthy
+        run: |
+          for i in $(seq 1 12); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' tc)
+            [ "$status" = "healthy" ] && exit 0
+            sleep 5
+          done
+          echo "healthcheck never turned healthy"; docker inspect tc | tail -40; exit 1
 
   e2e-browser:
     name: browser E2E (advisory, non-blocking)

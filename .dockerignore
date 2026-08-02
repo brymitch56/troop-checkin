@@ -1,0 +1,20 @@
+# keep the image free of local state, secrets, and PII
+data/
+node_modules/
+.git/
+.github/
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+*.xls
+*.csv
+signatures/
+test/
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+.dockerignore

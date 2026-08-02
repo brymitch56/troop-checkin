@@ -1,0 +1,57 @@
+# Troop Check-In — Docker Compose.
+#
+#   docker compose up -d
+#   open http://localhost:3000  ->  the first-run /setup wizard configures
+#   everything in the browser (troop name, colors, timezone, admin account).
+#
+# State lives in two named volumes:
+#   tc-data   — database, signatures, backups (all the PII). BACK THIS UP:
+#               e.g.  docker run --rm -v troop-checkin_tc-data:/data -v "$PWD":/out \
+#                       alpine tar -czf /out/tc-data-backup.tar.gz -C /data .
+#               (the app also writes its own nightly snapshots inside the
+#               volume under backups/ — copying those out is the simplest
+#               host-side strategy)
+#   tc-config — the .env written by the setup wizard (includes CRED_KEY;
+#               kept separate so data backups never contain the key)
+#
+# Upgrades: docker compose pull (or rebuild) && docker compose up -d
+# — migrations run automatically on start.
+services:
+  troop-checkin:
+    build: .
+    # or, once tagged release images are published:
+    # image: ghcr.io/brymitch56/troop-checkin:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - tc-data:/app/data
+      - tc-config:/app/config
+    environment:
+      TZ: America/New_York   # server-local timezone; the wizard sets the app's too
+      # Weekly in-process roster sync (Sun 03:30) — enable after saving portal
+      # credentials in Admin -> Import:
+      # SCHEDULE_ROSTER_SYNC: weekly
+
+  # --- optional: Cloudflare Tunnel sidecar (HTTPS from anywhere) -------------
+  # Gives leaders' phones access away from the troop Wi-Fi without opening
+  # ports. Needs a (free) Cloudflare account and a domain. Full walkthrough:
+  # docs/09-tunnel-setup.md. Steps:
+  #   1. In Cloudflare Zero Trust -> Networks -> Tunnels, create a tunnel and
+  #      copy its token.
+  #   2. Point its public hostname at http://troop-checkin:3000
+  #   3. Uncomment below and put the token in a `.env` file next to this
+  #      compose file:  TUNNEL_TOKEN=eyJ...
+  #
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run
+  #   environment:
+  #     TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+  #   depends_on:
+  #     - troop-checkin
+
+volumes:
+  tc-data:
+  tc-config:
