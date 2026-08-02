@@ -9,7 +9,7 @@
     "start": "node server/index.js",
     "migrate": "node server/migrate.js",
     "create-staff": "node server/scripts/create-staff.js",
-    "test": "node --test test/*.test.js",
+    "test": "node test/run.js",
     "make-roster": "node server/scripts/make-synthetic-roster.js",
     "backup": "node server/lib/backup.js",
     "sync-ical": "node -e \"require('./server/lib/icalSync').syncIcal().then(console.log, (e) => { console.error(e.message); process.exit(1); })\""
