@@ -18,13 +18,23 @@ function runBackup() {
 
   db.prepare('VACUUM INTO ?').run(dbOut); // consistent snapshot, WAL-safe
 
+  // Signature tarball via the system `tar` (present on Linux, macOS, Docker
+  // slim images, and Windows 10+). If tar is missing or fails, keep the DB
+  // snapshot — the primary artifact — and warn instead of failing the backup.
   const sigs = fs.existsSync(SIG_DIR) ? fs.readdirSync(SIG_DIR) : [];
+  let sigOk = false;
   if (sigs.length) {
-    execFileSync('tar', ['-czf', sigOut, '-C', SIG_DIR, '.'], { stdio: 'ignore' });
+    try {
+      execFileSync('tar', ['-czf', sigOut, '-C', SIG_DIR, '.'], { stdio: 'ignore' });
+      sigOk = true;
+    } catch (e) {
+      console.error('backup: signature tarball skipped (tar unavailable/failed):', e.message);
+      fs.rmSync(sigOut, { force: true }); // never leave a partial archive
+    }
   }
 
   prune();
-  return { db: dbOut, signatures: sigs.length ? sigOut : null, signature_count: sigs.length };
+  return { db: dbOut, signatures: sigOk ? sigOut : null, signature_count: sigs.length };
 }
 
 function prune() {
@@ -39,18 +49,13 @@ function prune() {
 }
 
 function scheduleNightly() {
-  // fire at ~03:15 local time, then every 24h
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(3, 15, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  setTimeout(() => {
-    const tick = () => {
-      try { runBackup(); } catch (e) { console.error('backup failed:', e.message); }
-    };
-    tick();
-    setInterval(tick, 24 * 60 * 60 * 1000).unref();
-  }, next - now).unref();
+  // 03:15 local nightly via the shared in-process scheduler (DST-safe).
+  // SCHEDULE_BACKUP=off disables it (e.g. when a host-side job owns backups);
+  // the default 'nightly' preserves the historic behavior on every existing
+  // install.
+  const env = require('./env');
+  if (env.SCHEDULE_BACKUP === 'off') return null;
+  return require('./scheduler').scheduleDaily('backup', 3, 15, runBackup);
 }
 
 module.exports = { runBackup, scheduleNightly, BACKUP_DIR };

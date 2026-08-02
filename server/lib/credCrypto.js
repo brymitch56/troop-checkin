@@ -11,9 +11,9 @@
 // the caller surfaces that to the admin.
 const crypto = require('crypto');
 const fs = require('fs');
-const path = require('path');
 
-const ENV_PATH = path.join(__dirname, '..', '..', '.env');
+// Single source of truth for the .env location (honors ENV_FILE — Docker).
+const { ENV_PATH } = require('./env');
 const KEY_VAR = 'CRED_KEY';
 
 function loadKey() {
