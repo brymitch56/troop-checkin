@@ -160,15 +160,18 @@ router.get('/events/current', (req, res) => {
       WHERE datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?)
       ORDER BY datetime(start_at)`
   ).all(now, now);
+  // local_date() (see server/db.js) instead of date(x,'localtime'): SQLite's
+  // 'localtime' ignores IANA TZ on Windows; the JS-backed function agrees
+  // with JavaScript local time on every platform.
   const upcoming = db.prepare(
     `SELECT * FROM event
       WHERE NOT (datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?))
-        AND date(end_at, 'localtime') >= date('now', 'localtime')
+        AND local_date(end_at) >= local_date('now')
       ORDER BY datetime(start_at) LIMIT 20`
   ).all(now, now);
   const past = db.prepare(
     `SELECT * FROM event
-      WHERE date(end_at, 'localtime') < date('now', 'localtime')
+      WHERE local_date(end_at) < local_date('now')
       ORDER BY datetime(start_at) DESC LIMIT 20`
   ).all();
   res.json({ matching, upcoming, past });

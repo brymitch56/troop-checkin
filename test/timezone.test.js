@@ -38,13 +38,25 @@ test('localStamp: DST is automatic (EST in January, EDT in July)', () => {
     '2026-07-15-1600'); // UTC-4
 });
 
-test("SQLite 'localtime' (event past-rules) honors TZ set before the DB loads", () => {
+test("local_date() in SQL (event past-rules) honors TZ on every platform", () => {
+  // Not SQLite's date(x,'localtime'): that asks the OS C runtime, which on
+  // Windows ignores IANA TZ values. local_date (server/db.js) routes the
+  // conversion through JS, where TZ works identically on all platforms.
   const code = `const { db } = require('./server/db');
-    console.log(db.prepare("SELECT datetime('2026-07-27 00:30:00', 'localtime') AS t").get().t);`;
+    console.log(db.prepare("SELECT local_date('2026-07-27 00:30:00') AS t").get().t);`;
   const ny = runNode(code, 'America/New_York');
-  assert.equal(ny.stdout.trim(), '2026-07-26 20:30:00', ny.stderr); // EDT: still Saturday
+  assert.equal(ny.stdout.trim(), '2026-07-26', ny.stderr); // EDT: still Saturday
   const utc = runNode(code, 'UTC');
-  assert.equal(utc.stdout.trim(), '2026-07-27 00:30:00');
+  assert.equal(utc.stdout.trim(), '2026-07-27');
+});
+
+test('local_date() handles both stored shapes, now, and garbage', () => {
+  const code = `const { db } = require('./server/db');
+    const q = (v) => db.prepare('SELECT local_date(?) AS t').get(v).t;
+    console.log(q('2026-07-27 00:30:00'), q('2026-07-27T00:30:00Z'),
+      db.prepare("SELECT local_date('now') AS t").get().t !== null, q('nonsense'), q(null));`;
+  const r = runNode(code, 'America/New_York');
+  assert.equal(r.stdout.trim(), '2026-07-26 2026-07-26 true null null', r.stderr);
 });
 
 test('.env TZ reaches process.env via env.js (repo-shaped temp copy)', () => {

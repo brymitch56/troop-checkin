@@ -298,9 +298,9 @@ router.get('/events', (req, res) => {
   const includePast = req.query.include_past === '1';
   const rows = db.prepare(
     `SELECT e.*, (SELECT COUNT(*) FROM txn t WHERE t.event_id = e.id) AS txn_count,
-            date(e.end_at, 'localtime') < date('now', 'localtime') AS is_past
+            local_date(e.end_at) < local_date('now') AS is_past
        FROM event e
-      WHERE ? OR date(e.end_at, 'localtime') >= date('now', 'localtime')
+      WHERE ? OR local_date(e.end_at) >= local_date('now')
       ORDER BY is_past ASC,
                CASE WHEN is_past THEN NULL ELSE datetime(start_at) END ASC,
                datetime(start_at) DESC

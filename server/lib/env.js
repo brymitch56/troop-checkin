@@ -3,8 +3,9 @@
 //
 // Timezone: putting `TZ=America/New_York` (any IANA zone) in .env sets
 // process.env.TZ here — BEFORE anything constructs a Date or touches SQLite —
-// so both JavaScript local time and SQLite's 'localtime' modifier (used by
-// the day-granular event past-rules) follow it, with DST handled
+// so JavaScript local time and the JS-backed local_date() SQL function (used
+// by the day-granular event past-rules; see server/db.js — SQLite's own
+// 'localtime' ignores IANA TZ on Windows) follow it, with DST handled
 // automatically. Without it, the host OS timezone applies (set the Pi's with
 // `sudo timedatectl set-timezone America/New_York`). Absolute-time logic
 // (notification sweep timing, txn timestamps) is UTC-based and unaffected.
