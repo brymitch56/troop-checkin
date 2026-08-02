@@ -16,18 +16,52 @@ app.disable('x-powered-by');
 // req.secure reflects the real scheme and session cookies get `Secure`
 app.set('trust proxy', 'loopback');
 
+// ---- first-run setup gate --------------------------------------------------
+// Unconfigured instance (no .env AND no staff — see lib/setupState): every
+// page redirects to the /setup wizard and every API call (except the setup
+// API and /healthz) answers 503, so nothing is usable until configured.
+// Configured instance (every existing install, incl. the Pi): this gate is a
+// single latched-boolean check per request, /setup permanently redirects
+// home, and nothing else changes.
+const setupState = require('./lib/setupState');
+const SETUP_ALLOWED = new Set(['/setup', '/setup.html', '/healthz', '/styles.css', '/theme.css',
+  '/icon-192.png', '/icon-512.png', '/favicon.ico']);
+app.use((req, res, next) => {
+  if (setupState.isConfigured()) {
+    if (req.path === '/setup' || req.path === '/setup.html') return res.redirect('/');
+    return next();
+  }
+  if (SETUP_ALLOWED.has(req.path) || req.path.startsWith('/api/setup')) return next();
+  if (req.path.startsWith('/api/')) {
+    return res.status(503).json({ error: 'This instance is not configured yet — open /setup in a browser.' });
+  }
+  return res.redirect('/setup');
+});
+app.use('/api/setup', require('./routes/setup'));
+app.get('/setup', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'setup.html')));
+
 // public branding — keeps troop identity out of the source (shareability)
 app.get('/api/config', (req, res) => {
-  res.json({ troop_id: env.TROOP_ID, troop_name: env.TROOP_NAME, ical_configured: !!env.ICAL_URL });
+  res.json({
+    troop_id: env.TROOP_ID, troop_name: env.TROOP_NAME, ical_configured: !!env.ICAL_URL,
+    theme: env.THEME,
+  });
+});
+// theme palette as CSS variables, loaded after styles.css — the 'traillife'
+// default emits exactly the values already in styles.css (pixel-identical)
+const theme = require('./lib/theme');
+app.get('/theme.css', (req, res) => {
+  res.type('text/css').set('Cache-Control', 'no-cache').send(theme.themeCss());
 });
 app.get('/manifest.webmanifest', (req, res) => {
+  const brand = theme.palette()['pine'];
   res.json({
     name: `${env.TROOP_ID} ${env.TROOP_NAME}`,
     short_name: env.TROOP_ID,
     start_url: '/',
     display: 'standalone',
-    background_color: '#17402C',
-    theme_color: '#17402C',
+    background_color: brand,
+    theme_color: brand,
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -63,7 +97,8 @@ if (require.main === module) {
   require('./lib/selfcheck').selfCheckOrExit();
   setInterval(auth.pruneSessions, 60 * 60 * 1000).unref();
   icalSync.scheduleNightly();
-  require('./lib/backup').scheduleNightly();
+  require('./lib/backup').scheduleNightly(); // in-process nightly (SCHEDULE_BACKUP=off disables)
+  require('./lib/syncRunner').scheduleWeekly(); // no-op unless SCHEDULE_ROSTER_SYNC=weekly
   require('./lib/notifySweep').scheduleSweep(); // no-op unless SMS_ENABLED=true
   app.listen(PORT, () => console.log(`troop-checkin listening on :${PORT}`));
 }

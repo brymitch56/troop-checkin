@@ -1,0 +1,283 @@
+<!doctype html>
+<!-- First-run setup wizard. Served ONLY while the instance is unconfigured
+     (see the gate in server/index.js). Deliberately self-contained — inline
+     CSS/JS, no service worker, no dependencies — so it works on a fresh
+     install before the app shell has ever been cached. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Troop Check-In — Setup</title>
+<style>
+  :root {
+    --pine:#17402C; --pine-2:#235B3F; --paper:#F4F3EC; --card:#FFFFFF; --ink:#1C241E;
+    --muted:#5C6A60; --line:#D7D9CE; --blaze:#DF5A12; --in:#2E7D4F; --focus:#123322;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:var(--paper); color:var(--ink); }
+  header { background:var(--pine); color:#fff; padding:18px 20px; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; opacity:.85; font-size:14px; }
+  main { max-width:640px; margin:0 auto; padding:20px 16px 60px; }
+  .step { background:var(--card); border:1px solid var(--line); border-radius:14px;
+          padding:20px; margin-top:16px; }
+  .step h2 { margin:0 0 4px; font-size:17px; }
+  .step .hint { color:var(--muted); font-size:14px; margin:0 0 14px; }
+  label { display:block; font-weight:600; font-size:14px; margin:12px 0 4px; }
+  input[type=text], input[type=password], select {
+    width:100%; padding:10px 12px; font-size:16px; border:1px solid var(--line);
+    border-radius:8px; background:#fff; color:var(--ink); }
+  input:focus, select:focus { outline:2px solid var(--focus); }
+  .cards { display:grid; gap:10px; }
+  .pcard { display:flex; align-items:center; gap:12px; border:2px solid var(--line);
+           border-radius:10px; padding:12px; cursor:pointer; background:#fff; }
+  .pcard.sel { border-color:var(--pine); box-shadow:0 0 0 1px var(--pine); }
+  .pcard b { font-size:15px; }
+  .pcard .sub { color:var(--muted); font-size:13px; }
+  .dots { display:flex; gap:4px; margin-left:auto; }
+  .dots i { width:18px; height:18px; border-radius:50%; border:1px solid rgba(0,0,0,.15); }
+  details { margin-top:14px; }
+  summary { cursor:pointer; font-weight:600; font-size:14px; color:var(--pine); }
+  .colors { display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; margin-top:10px; }
+  .colors label { display:flex; align-items:center; justify-content:space-between;
+                  font-weight:400; margin:0; font-size:13.5px; }
+  .colors input[type=color] { width:44px; height:30px; border:1px solid var(--line);
+                              border-radius:6px; background:#fff; padding:2px; }
+  .feature { border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:10px;
+             background:#fff; }
+  .feature b { font-size:14.5px; }
+  .feature .off { float:right; font-size:12px; font-weight:700; color:var(--muted);
+                  border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+  .feature p { margin:6px 0 0; font-size:13.5px; color:var(--muted); }
+  .feature a { color:var(--pine); }
+  .nav { display:flex; justify-content:space-between; margin-top:18px; }
+  button { font-size:16px; padding:10px 22px; border-radius:8px; border:1px solid var(--line);
+           background:#fff; color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--pine); border-color:var(--pine); color:#fff; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .error { color:#B3261E; font-size:14px; margin-top:10px; min-height:1.2em; }
+  .done { text-align:center; padding:40px 20px; }
+  .done h2 { color:var(--in); }
+  .review dt { font-weight:600; font-size:13.5px; margin-top:8px; }
+  .review dd { margin:0; color:var(--muted); font-size:14.5px; }
+  .progress { display:flex; gap:6px; margin-top:14px; }
+  .progress i { flex:1; height:4px; border-radius:2px; background:var(--line); }
+  .progress i.on { background:var(--pine); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Troop Check-In — first-time setup</h1>
+  <p>A few questions and your check-in kiosk is ready. Nothing here needs an account or subscription.</p>
+  <div class="progress" id="progress"></div>
+</header>
+<main id="main"></main>
+<script>
+'use strict';
+(async function () {
+  const main = document.getElementById('main');
+  let presets = {}, vars = [];
+  try {
+    const r = await fetch('/api/setup/state');
+    if (r.status === 403) { location.href = '/'; return; }
+    const s = await r.json();
+    presets = s.presets; vars = s.vars;
+  } catch (e) {
+    main.innerHTML = '<div class="step"><h2>Cannot reach the server</h2><p class="hint">Reload this page once the app is running.</p></div>';
+    return;
+  }
+
+  const state = {
+    troop_id: '', troop_name: '', program: 'traillife',
+    colors: {}, // effective palette (starts at preset, user may customize)
+    timezone: (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'America/New_York',
+    admin_name: '', admin_password: '',
+  };
+  state.colors = { ...presets[state.program] };
+
+  const PROGRAMS = [
+    ['traillife', 'Trail Life USA', 'Pine green & blaze orange'],
+    ['ahg', 'American Heritage Girls', 'Navy & warm paper'],
+    ['generic', 'Other / generic', 'Neutral slate'],
+  ];
+  const COLOR_LABELS = {
+    'pine':'Primary (headers, buttons)', 'pine-2':'Primary (lighter)', 'paper':'Page background',
+    'card':'Card background', 'ink':'Text', 'muted':'Secondary text', 'line':'Borders',
+    'blaze':'Attention / still on site', 'in':'Signed-in green', 'focus':'Focus outline',
+  };
+
+  const applyPalette = () => {
+    for (const v of vars) document.documentElement.style.setProperty('--' + v, state.colors[v]);
+  };
+
+  let step = 0;
+  const steps = [renderTroop, renderProgram, renderTimezone, renderAdmin, renderFeatures, renderReview];
+  const progress = document.getElementById('progress');
+  progress.innerHTML = steps.map(() => '<i></i>').join('');
+
+  function nav(backOk, nextLabel) {
+    return `<div class="nav">
+      <button id="back" ${backOk ? '' : 'style="visibility:hidden"'}>Back</button>
+      <button id="next" class="primary">${nextLabel || 'Next'}</button>
+    </div><div class="error" id="err"></div>`;
+  }
+  function show() {
+    [...progress.children].forEach((el, i) => el.classList.toggle('on', i <= step));
+    steps[step]();
+    const back = document.getElementById('back');
+    if (back) back.onclick = () => { step--; show(); };
+    window.scrollTo(0, 0);
+  }
+  const err = (m) => { document.getElementById('err').textContent = m; };
+
+  function renderTroop() {
+    main.innerHTML = `<div class="step">
+      <h2>Your troop</h2>
+      <p class="hint">Shown on every screen and on the installed app icon. You can change these later in <code>.env</code>.</p>
+      <label for="tid">Troop number / ID (e.g. NY-0000)</label>
+      <input type="text" id="tid" maxlength="40" value="${esc(state.troop_id)}" autocomplete="off">
+      <label for="tname">Troop name</label>
+      <input type="text" id="tname" maxlength="80" value="${esc(state.troop_name)}" placeholder="Troop Check-In" autocomplete="off">
+      ${nav(false)}</div>`;
+    document.getElementById('next').onclick = () => {
+      state.troop_id = document.getElementById('tid').value.trim();
+      state.troop_name = document.getElementById('tname').value.trim();
+      if (!state.troop_id) return err('Please enter your troop number or ID.');
+      if (!state.troop_name) return err('Please enter your troop name.');
+      step++; show();
+    };
+  }
+
+  function renderProgram() {
+    const cards = PROGRAMS.map(([key, name, sub]) => `
+      <div class="pcard ${state.program === key ? 'sel' : ''}" data-p="${key}">
+        <div><b>${name}</b><div class="sub">${sub}</div></div>
+        <div class="dots">${['pine','paper','blaze'].map((v) => `<i style="background:${presets[key][v]}"></i>`).join('')}</div>
+      </div>`).join('');
+    const colorInputs = vars.map((v) => `
+      <label>${COLOR_LABELS[v] || v}
+        <input type="color" data-v="${v}" value="${state.colors[v]}"></label>`).join('');
+    main.innerHTML = `<div class="step">
+      <h2>Program &amp; colors</h2>
+      <p class="hint">Picking a program sets a default color scheme — every color below can then be customized. The page previews your choices live.</p>
+      <div class="cards">${cards}</div>
+      <details><summary>Customize colors</summary><div class="colors">${colorInputs}</div></details>
+      ${nav(true)}</div>`;
+    main.querySelectorAll('.pcard').forEach((el) => {
+      el.onclick = () => {
+        state.program = el.dataset.p;
+        state.colors = { ...presets[state.program] }; // preset resets custom picks
+        applyPalette(); renderProgram();
+        document.getElementById('back').onclick = () => { step--; show(); };
+      };
+    });
+    main.querySelectorAll('input[type=color]').forEach((el) => {
+      el.oninput = () => { state.colors[el.dataset.v] = el.value.toUpperCase(); applyPalette(); };
+    });
+    document.getElementById('next').onclick = () => { step++; show(); };
+  }
+
+  function renderTimezone() {
+    let zones = [];
+    try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [state.timezone]; }
+    if (!zones.includes(state.timezone)) zones.unshift(state.timezone);
+    main.innerHTML = `<div class="step">
+      <h2>Timezone</h2>
+      <p class="hint">Drives event dates, backup times, and reports. Detected from this device — change it if the server lives somewhere else.</p>
+      <label for="tz">Timezone</label>
+      <select id="tz">${zones.map((z) => `<option ${z === state.timezone ? 'selected' : ''}>${z}</option>`).join('')}</select>
+      ${nav(true)}</div>`;
+    document.getElementById('next').onclick = () => {
+      state.timezone = document.getElementById('tz').value; step++; show();
+    };
+  }
+
+  function renderAdmin() {
+    main.innerHTML = `<div class="step">
+      <h2>Your admin account</h2>
+      <p class="hint">The admin signs in on <b>/admin.html</b> to manage the roster, events, and reports.
+      Door-staff accounts (short numeric PINs for the sign-in stations) are created afterwards in
+      Admin &rarr; Staff — the convention: admins get passwords, door staff get 4&ndash;8 digit PINs.</p>
+      <label for="aname">Your name</label>
+      <input type="text" id="aname" maxlength="80" value="${esc(state.admin_name)}" autocomplete="off">
+      <label for="apass">Password (at least 8 characters)</label>
+      <input type="password" id="apass" autocomplete="new-password">
+      <label for="apass2">Repeat password</label>
+      <input type="password" id="apass2" autocomplete="new-password">
+      ${nav(true)}</div>`;
+    document.getElementById('next').onclick = () => {
+      const name = document.getElementById('aname').value.trim();
+      const p1 = document.getElementById('apass').value, p2 = document.getElementById('apass2').value;
+      if (!name) return err('Please enter your name.');
+      if (p1.length < 8) return err('Password must be at least 8 characters.');
+      if (p1 !== p2) return err('The passwords do not match.');
+      state.admin_name = name; state.admin_password = p1; step++; show();
+    };
+  }
+
+  function renderFeatures() {
+    const gh = 'https://github.com/brymitch56/troop-checkin/blob/main/docs/';
+    const feats = [
+      ['Internet access (HTTPS via Cloudflare Tunnel)', 'Lets leaders’ phones use the app away from the troop Wi-Fi and enables the camera QR scanner over HTTPS. Free, but needs a domain name.', '09-tunnel-setup.md'],
+      ['Text-message pickup alerts (Twilio SMS)', 'Optional guardian notifications. Strictly opt-in per family, requires a Twilio account and US A2P campaign registration (the bureaucratic part).', '05-implementation.md'],
+      ['Automated weekly roster sync', 'Pulls the member export from your roster portal every week and stages it for one-tap approval. Needs portal credentials.', '10-roster-sync.md'],
+      ['Off-site backups', 'Nightly local backups are already built in. This adds an encrypted copy to cloud storage (rclone).', '08-pi-setup-guide.md'],
+    ];
+    main.innerHTML = `<div class="step">
+      <h2>Optional features</h2>
+      <p class="hint">All <b>off</b> by default — the app is fully useful on your local network without any of them
+      (check-in/out, signatures, roster, reports, offline). Each has a plain-language guide chapter for when you want it.</p>
+      ${feats.map(([t, d, doc]) => `<div class="feature"><span class="off">OFF</span><b>${t}</b>
+        <p>${d} <a href="${gh}${doc}" target="_blank" rel="noopener">Guide chapter &rarr;</a></p></div>`).join('')}
+      ${nav(true)}</div>`;
+    document.getElementById('next').onclick = () => { step++; show(); };
+  }
+
+  function renderReview() {
+    const progName = (PROGRAMS.find(([k]) => k === state.program) || [])[1] || state.program;
+    const customized = vars.filter((v) => state.colors[v].toUpperCase() !== presets[state.program][v].toUpperCase());
+    main.innerHTML = `<div class="step">
+      <h2>Ready to finish</h2>
+      <dl class="review">
+        <dt>Troop</dt><dd>${esc(state.troop_id)} — ${esc(state.troop_name)}</dd>
+        <dt>Program / colors</dt><dd>${progName}${customized.length ? ` (${customized.length} color${customized.length > 1 ? 's' : ''} customized)` : ' (default colors)'}</dd>
+        <dt>Timezone</dt><dd>${esc(state.timezone)}</dd>
+        <dt>Admin account</dt><dd>${esc(state.admin_name)}</dd>
+        <dt>Optional features</dt><dd>All off — enable any of them later via the guides</dd>
+      </dl>
+      ${nav(true, 'Finish setup')}</div>`;
+    document.getElementById('next').onclick = async () => {
+      const btn = document.getElementById('next');
+      btn.disabled = true; err('');
+      try {
+        const r = await fetch('/api/setup', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(state),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { btn.disabled = false; return err(j.error || `Setup failed (HTTP ${r.status}).`); }
+        renderDone();
+      } catch (e) { btn.disabled = false; err('Could not reach the server: ' + e.message); }
+    };
+  }
+
+  function renderDone() {
+    progress.hidden = true;
+    main.innerHTML = `<div class="step done">
+      <h2>Setup complete</h2>
+      <p>Your check-in app is configured and ready.</p>
+      <p><a href="/"><button class="primary">Open the app &amp; log in</button></a></p>
+      <p style="font-size:14px"><a href="/guide.html" target="_blank" rel="noopener">Print the door-staff quickstart guide</a></p>
+    </div>`;
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c])); }
+
+  applyPalette();
+  show();
+})();
+</script>
+</body>
+</html>
