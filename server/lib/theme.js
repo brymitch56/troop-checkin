@@ -23,13 +23,16 @@ const PRESETS = {
     'ink': '#1C241E', 'muted': '#5C6A60', 'line': '#D7D9CE', 'blaze': '#DF5A12',
     'in': '#2E7D4F', 'focus': '#123322',
   },
-  // American Heritage Girls: navy primary with warm paper. Placeholder-safe
-  // defaults — confirm exact values against AHG brand guidance; every color
-  // is customizable in the wizard.
+  // American Heritage Girls: red, white & blue from the AHG Master Brand
+  // Guidelines (2026) primary palette — PMS 2945 blue (RGB 0 97 171) and
+  // PMS 485 red (RGB 226 59 40) on white. Blue is the primary UI color,
+  // brand red takes the attention/still-on-site role (semantic meaning
+  // unchanged), signed-in green stays. pine-2 is an 80% tint of 2945;
+  // focus a darkened 2945. Every color remains customizable in the wizard.
   ahg: {
-    'pine': '#1B365D', 'pine-2': '#27497C', 'paper': '#F7F4EF', 'card': '#FFFFFF',
-    'ink': '#1D2430', 'muted': '#5C6470', 'line': '#D9D7D0', 'blaze': '#DF5A12',
-    'in': '#2E7D4F', 'focus': '#12213B',
+    'pine': '#0061AB', 'pine-2': '#3380BC', 'paper': '#F4F6F8', 'card': '#FFFFFF',
+    'ink': '#1C232B', 'muted': '#5B6570', 'line': '#D5D9DE', 'blaze': '#E23B28',
+    'in': '#2E7D4F', 'focus': '#00477E',
   },
   // Generic: neutral slate for any other troop/program
   generic: {
