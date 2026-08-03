@@ -16,6 +16,11 @@ Open `http://<host>:3000` — the first-run **setup wizard** configures
 everything in the browser (troop identity, Trail Life / AHG / custom colors,
 timezone, admin account). No files to edit.
 
+Prefer the **prebuilt multi-arch image** (no local build, faster first
+start)? In `docker-compose.yml`, replace `build: .` with
+`image: ghcr.io/brymitch56/troop-checkin:latest` — published automatically
+for every release (amd64 + arm64).
+
 ## How state is laid out
 
 | Volume      | Contents                                             | Notes |

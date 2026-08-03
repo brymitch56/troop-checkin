@@ -19,7 +19,8 @@
 services:
   troop-checkin:
     build: .
-    # or, once tagged release images are published:
+    # Prebuilt multi-arch image (skips the local build; published by the
+    # docker-publish workflow on every release) — swap `build: .` for:
     # image: ghcr.io/brymitch56/troop-checkin:latest
     restart: unless-stopped
     ports:
