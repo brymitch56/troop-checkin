@@ -1,7 +1,7 @@
 {
   "name": "troop-checkin",
-  "version": "0.1.0",
-  "description": "Trail Life Troop NY-2911 youth sign-in/out kiosk (self-hosted, Raspberry Pi)",
+  "version": "0.2.0",
+  "description": "Self-hosted youth sign-in/out kiosk for troops (Raspberry Pi, Windows, or Docker)",
   "private": true,
   "type": "commonjs",
   "main": "server/index.js",
