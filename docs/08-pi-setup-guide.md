@@ -67,8 +67,8 @@ nano .env
 Set at minimum:
 
 ```
-TROOP_ID=NY-2911
-TROOP_NAME=Trail Life Troop NY-2911
+TROOP_ID=NY-0000
+TROOP_NAME=Troop Check-In
 ICAL_URL=<your Trail Life Connect calendar feed URL>
 ```
 

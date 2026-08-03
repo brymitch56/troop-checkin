@@ -6,8 +6,8 @@
 // dynamic PWA manifest colors.
 //
 // The 'traillife' preset is byte-identical to the :root defaults in
-// public/styles.css, so the default render — including troop NY-2911's Pi —
-// is pixel-identical to before theming existed.
+// public/styles.css, so the default render on every pre-theming install is
+// pixel-identical to before theming existed.
 //
 // Semantic colors keep their meaning across presets: --blaze (orange) is
 // always "still on site / attention", --in (green) is always "signed in".

@@ -1,5 +1,5 @@
 'use strict';
-/* NY-2911 Troop Check-In kiosk */
+/* Troop Check-In kiosk (troop identity comes from /api/config) */
 
 const $ = (id) => document.getElementById(id);
 

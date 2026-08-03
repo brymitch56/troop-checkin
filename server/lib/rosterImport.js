@@ -1,6 +1,6 @@
 'use strict';
 // Trail Life Connect member-export importer.
-// Rules validated against NY-2911_Members_07-19-2026.xlsx:
+// Rules validated against a real TLC member export (July 2026):
 //   - title row above headers; header row located by the cell "Member Number"
 //   - Youth column (Y/N) discriminates youth vs adults
 //   - youth "Email" column is a TLC username, NOT an email; guardian email is "Adult Cc Email"
