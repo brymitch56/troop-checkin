@@ -57,7 +57,11 @@ function makeConfig(env = process.env) {
     base: (env.TLC_BASE || 'https://www.traillifeconnect.com').replace(/\/$/, ''),
     // xlsx by default — the format the import parser was validated against
     exportPath: env.TLC_EXPORT_PATH || '/user/index?export=xlsx&new=0',
-    statusPath: '/databuilder/get-download-status',
+    // Overridable for sibling portals on the same platform (AHGfamily.org
+    // serves its login form at /site/login; network inspection 2026-08-02
+    // confirmed the same /databuilder/get-download-status poll endpoint):
+    loginPath: env.TLC_LOGIN_PATH || '/login',
+    statusPath: env.TLC_STATUS_PATH || '/databuilder/get-download-status',
     dataDir,
     outDir: path.join(dataDir, 'roster-exports'),
     stateFile: path.join(dataDir, 'roster-fetch-state.json'),
@@ -160,7 +164,7 @@ function csrfFrom(html) {
 async function login(cfg, jar) {
   if (!cfg.email || !cfg.password) fail(1, 'TLC_EMAIL / TLC_PASSWORD not set.');
 
-  const page = await request(cfg, jar, '/login');
+  const page = await request(cfg, jar, cfg.loginPath);
   const html = await page.text();
   const token = csrfFrom(html);
   if (!token) fail(2, 'Could not find the _csrf token on the login page — the form may have changed.');
@@ -171,12 +175,12 @@ async function login(cfg, jar) {
     'LoginForm[password]': cfg.password,
     'LoginForm[rememberMe]': '1',
   });
-  const res = await request(cfg, jar, '/login', {
+  const res = await request(cfg, jar, cfg.loginPath, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       Origin: cfg.base,
-      Referer: cfg.base + '/login',
+      Referer: cfg.base + cfg.loginPath,
     },
     body: body.toString(),
   });
