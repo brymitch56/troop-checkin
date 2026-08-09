@@ -26,9 +26,11 @@ router.post('/login', express.json(), (req, res) => {
   if (!staff || !auth.verifySecret(pin, hash)) {
     return res.status(401).json({ error: 'Wrong PIN. Try again.' });
   }
-  const token = auth.createSession(staff.id, staff.role);
-  auth.setSessionCookie(res, token, req.secure); // Secure when served over the tunnel (HTTPS)
-  res.json({ id: staff.id, name: staff.name, role: staff.role });
+  const sess = auth.createSession(staff.id, staff.role);
+  auth.setSessionCookie(res, sess.token, req.secure); // Secure when served over the tunnel (HTTPS)
+  // session_expires_at: the client caches it as the offline-validity window —
+  // the kiosk may be entered without a server round-trip until then
+  res.json({ id: staff.id, name: staff.name, role: staff.role, session_expires_at: sess.expires_at });
 });
 
 router.post('/logout', (req, res) => {
@@ -41,7 +43,10 @@ router.post('/logout', (req, res) => {
 router.get('/me', (req, res) => {
   const sess = auth.sessionFromRequest(req);
   if (!sess) return res.status(401).json({ error: 'Not signed in.' });
-  res.json({ id: sess.staff_id, name: sess.name, role: sess.role });
+  res.json({
+    id: sess.staff_id, name: sess.name, role: sess.role,
+    session_expires_at: sess.expires_at.replace(' ', 'T') + 'Z',
+  });
 });
 
 // everything below requires a door session
@@ -65,6 +70,9 @@ function personView(p) {
     patrol: p.patrol, level: p.level, status: p.status, photo_path: p.photo_path,
     membership_expires: p.membership_expires, // kiosk expiry warning (also in the offline snapshot)
     last_emerg_phone_1: p.last_emerg_phone_1, last_emerg_phone_2: p.last_emerg_phone_2,
+    // adult phone numbers ride along so the on-site emergency-contact view
+    // works from the offline snapshot (staff-only, session-gated data)
+    phone_mobile: p.phone_mobile, phone_home: p.phone_home,
     open, // null = not on site; else {in_txn_id, event_id, event_title}
   };
 }

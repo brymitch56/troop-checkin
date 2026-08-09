@@ -27,14 +27,34 @@ function verifySecret(secret, stored) {
 }
 
 // -- sessions ---------------------------------------------------------------
+// Base lifetimes: door 6h, admin 2h. Field reality (weekend campout,
+// 2026-08): events run long and phones lose signal — if the door session
+// expires mid-event, staff are locked out with no network to re-login and
+// the offline kiosk is useless. So DOOR sessions extend to cover any event
+// that is ongoing or starts within the next 24h, plus 12 hours after its
+// end (queued offline records then sync on a still-valid cookie once signal
+// returns). Admin keeps the strict 2h — admin doesn't need to work offline
+// and sits behind Cloudflare Access in production.
+function eventAwareExpiry(role, hours) {
+  const dflt = db.prepare(`SELECT datetime('now', ?) d`).get(`+${hours} hours`).d;
+  if (role !== 'door') return dflt;
+  const row = db.prepare(
+    `SELECT MAX(datetime(end_at)) m FROM event
+      WHERE datetime(start_at) <= datetime('now', '+1 day')
+        AND datetime(end_at) >= datetime('now')`
+  ).get();
+  if (!row || !row.m) return dflt;
+  const cand = db.prepare(`SELECT datetime(?, '+12 hours') d`).get(row.m).d;
+  return cand > dflt ? cand : dflt; // both 'YYYY-MM-DD HH:MM:SS' UTC — string compare ok
+}
+
 function createSession(staffId, role) {
   const token = crypto.randomBytes(32).toString('hex');
-  const hours = SESSION_HOURS[role] || 2;
+  const expiresAt = eventAwareExpiry(role, SESSION_HOURS[role] || 2);
   db.prepare(
-    `INSERT INTO session (token, staff_id, expires_at)
-     VALUES (?, ?, datetime('now', ?))`
-  ).run(token, staffId, `+${hours} hours`);
-  return token;
+    `INSERT INTO session (token, staff_id, expires_at) VALUES (?, ?, ?)`
+  ).run(token, staffId, expiresAt);
+  return { token, expires_at: expiresAt.replace(' ', 'T') + 'Z' };
 }
 
 function destroySession(token) {
@@ -55,7 +75,7 @@ function sessionFromRequest(req) {
   const token = readCookies(req)[COOKIE];
   if (!token) return null;
   const row = db.prepare(
-    `SELECT s.token, s.staff_id, st.name, st.role
+    `SELECT s.token, s.staff_id, s.expires_at, st.name, st.role
        FROM session s JOIN staff st ON st.id = s.staff_id
       WHERE s.token = ? AND s.expires_at > datetime('now') AND st.active = 1`
   ).get(token);

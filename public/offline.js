@@ -104,6 +104,7 @@
   async function onsite() {
     return (await getAll('people')).filter((p) => p.open);
   }
+  const getPerson = (id) => tx('people', 'readonly', (s) => s.get(id));
 
   // ---------------------------------------------------------------- queue ----
   async function queueTxn(payload) {
@@ -157,7 +158,7 @@
 
   window.Offline = {
     saveSnapshot, searchPeople, findByBadge, guardiansOf, currentEvents,
-    markOpen, onsite, queueTxn, queueSize, flush,
+    markOpen, onsite, getPerson, queueTxn, queueSize, flush,
     conflictCount, conflictList, clearConflict,
     takenAt: () => kvGet('taken_at'),
   };

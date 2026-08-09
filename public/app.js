@@ -27,14 +27,37 @@ const state = {
 };
 
 // ---------------------------------------------------------------- utils ----
+// Every kiosk request carries a timeout (field lesson, 2026-08 campout: on a
+// WEAK signal fetch neither succeeds nor fails — it hangs, so none of the
+// offline fallbacks ever fired and the app just froze). An aborted request
+// throws without a .status, which is exactly the shape every `.catch((e) =>
+// e.status ? … : Offline.…)` fallback already treats as "network down" — so
+// slow network now behaves like no network. Writes get a longer budget than
+// lookups; queued txns are idempotent server-side (client_uuid), so a
+// timed-out POST that actually landed is safe to retry from the queue.
+const API_TIMEOUT_MS = 6000, API_WRITE_TIMEOUT_MS = 12000;
+function timeoutSignal(ms) {
+  if (AbortSignal.timeout) return AbortSignal.timeout(ms);
+  const c = new AbortController();
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
 async function api(path, opts = {}) {
-  const res = await fetch('/api' + path, { credentials: 'same-origin', ...opts });
+  const { timeoutMs, ...rest } = opts;
+  const res = await fetch('/api' + path, {
+    credentials: 'same-origin',
+    signal: timeoutSignal(timeoutMs || API_TIMEOUT_MS),
+    ...rest,
+  });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(body.error || `Request failed (${res.status})`); e.body = body; e.status = res.status; throw e; }
   return body;
 }
 const jpost = (path, data) =>
-  api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  api(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data), timeoutMs: API_WRITE_TIMEOUT_MS,
+  });
 
 let toastTimer;
 function toast(msg, isErr) {
@@ -64,26 +87,71 @@ async function boot() {
     state.me = await api('/me');
     await enterKiosk();
   } catch (e) {
-    if (!e.status && localStorage.getItem('last-me')) {
-      // network down but we had a session — enter offline kiosk mode
+    if (!e.status && offlineWindowOpen()) {
+      // network down/slow but this device has a session that the server will
+      // still honor (door sessions cover the event + 12h) — enter offline
       state.me = JSON.parse(localStorage.getItem('last-me'));
       state.offline = true;
       toast('Offline — working from the saved roster. Records will sync when back online.', true);
       await enterKiosk();
       return;
     }
-    await renderLogin();
+    await renderLogin(!e.status);
   }
 }
 
-async function renderLogin() {
+// The offline-entry window: how long this device may enter the kiosk without
+// reaching the server. It equals the cached session's server-side expiry
+// (door sessions: event end + 12h), so anything recorded offline still syncs
+// on a valid cookie once signal returns.
+function offlineWindowOpen() {
+  try {
+    const me = JSON.parse(localStorage.getItem('last-me') || 'null');
+    if (!me) return false;
+    if (!me.session_expires_at) return true; // pre-upgrade cache — keep old behavior
+    return new Date(me.session_expires_at) > new Date();
+  } catch { return false; }
+}
+
+async function renderLogin(networkDown) {
   show('screen-login');
   $('pin-panel').hidden = true;
-  const list = await api('/staff-list').catch(() => []);
+  // staff list: live when possible, cached copy when the network is down —
+  // the login screen must render offline (field lesson, 2026-08 campout)
+  const list = await api('/staff-list').then((l) => {
+    localStorage.setItem('staff-list-cache', JSON.stringify(l));
+    return l;
+  }).catch((e) => {
+    if (e.status) return [];
+    networkDown = true;
+    try { return JSON.parse(localStorage.getItem('staff-list-cache') || '[]'); } catch { return []; }
+  });
   const grid = $('staff-list');
   grid.innerHTML = '';
-  if (!list.length) {
-    grid.innerHTML = '<p class="hint">No staff yet — run the create-staff script on the Pi.</p>';
+
+  // one-tap offline entry for the person who last logged in on this device
+  if (networkDown && offlineWindowOpen()) {
+    const me = JSON.parse(localStorage.getItem('last-me'));
+    const cont = document.createElement('button');
+    cont.className = 'continue-offline';
+    cont.textContent = `Continue offline as ${me.name}`;
+    cont.onclick = async () => {
+      state.me = me; state.offline = true;
+      toast('Offline — working from the saved roster. Records will sync when back online.', true);
+      await enterKiosk();
+    };
+    grid.appendChild(cont);
+  }
+  if (networkDown) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = list.length
+      ? 'No connection — PINs can\'t be checked offline. Use "Continue offline" above if it\'s shown, or reconnect.'
+      : 'No connection and no saved roster on this device yet — connect to the network once first.';
+    grid.appendChild(hint);
+    if (!list.length) return;
+  } else if (!list.length) {
+    grid.innerHTML = '<p class="hint">No staff yet — create accounts in Admin → Staff (or the create-staff script).</p>';
     return;
   }
   for (const s of list) {
@@ -117,7 +185,12 @@ async function doLogin() {
   try {
     state.me = await jpost('/login', { staff_id: Number($('pin-input').dataset.staffId), pin: $('pin-input').value });
     await enterKiosk();
-  } catch (e) { $('login-error').textContent = e.message; }
+  } catch (e) {
+    $('login-error').textContent = e.status
+      ? e.message
+      : 'No connection — PINs can\'t be verified offline. Reconnect, or use "Continue offline" if it\'s shown.';
+    if (!e.status) renderLogin(true); // surface the continue-offline option
+  }
 }
 
 $('staff-pill').onclick = async () => {
@@ -142,7 +215,8 @@ async function enterKiosk() {
 
 // -------------------------------------------------------- offline sync ----
 async function refreshSnapshot() {
-  try { await Offline.saveSnapshot(await api('/roster-snapshot')); } catch { /* offline */ }
+  // the snapshot is the whole roster — give it the write budget on slow links
+  try { await Offline.saveSnapshot(await api('/roster-snapshot', { timeoutMs: API_WRITE_TIMEOUT_MS })); } catch { /* offline */ }
 }
 async function flushQueue() {
   const r = await Offline.flush((payload) => jpost('/txn', payload)).catch(() => null);
@@ -737,8 +811,33 @@ $('msg-send').onclick = async () => {
   } catch (e) { $('msg-error').textContent = e.message; }
 };
 
+// Offline shape adapter: Offline.onsite() returns snapshot people with
+// p.open = {in_txn_id, event_id, event_title}; map to the server row shape.
+async function onsiteRowsOffline() {
+  const local = await Offline.onsite().catch(() => []);
+  return local
+    .filter((p) => !state.patrol || (p.patrol || '') === state.patrol)
+    .map((p) => ({
+      id: p.id, first_name: p.first_name, last_name: p.last_name, nickname: p.nickname,
+      patrol: p.patrol, is_youth: p.is_youth ? 1 : 0,
+      event_id: p.open.event_id, event_title: p.open.event_title, signed_at: null,
+    }));
+}
+
 async function renderOnsite() {
-  const patrols = await api('/patrols').catch(() => []);
+  let offlineData = false;
+  const rows = await api('/onsite' + (state.patrol ? '?patrol=' + encodeURIComponent(state.patrol) : ''))
+    .catch(async (e) => {
+      if (e.status) throw e;
+      offlineData = true; // network down/slow: snapshot + queued (field lesson, 2026-08)
+      return onsiteRowsOffline();
+    });
+  const patrols = await api('/patrols').catch(async (e) => {
+    if (e.status) return [];
+    // offline: derive the filter choices from the local snapshot
+    const all = await Offline.onsite().catch(() => []);
+    return [...new Set(all.map((p) => p.patrol).filter(Boolean))].sort();
+  });
   const pf = $('patrol-filters'); pf.innerHTML = '';
   const mk = (label, val) => {
     const b = document.createElement('button');
@@ -750,9 +849,14 @@ async function renderOnsite() {
   mk('All', null);
   patrols.forEach((p) => mk(p, p));
 
-  const rows = await api('/onsite' + (state.patrol ? '?patrol=' + encodeURIComponent(state.patrol) : ''));
   const wrap = $('onsite-list'); wrap.innerHTML = '';
-  if (!rows.length) { wrap.innerHTML = '<p class="hint">Nobody is signed in right now.</p>'; return; }
+  if (offlineData) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = 'Offline — showing the saved roster plus anything recorded on this device.';
+    wrap.appendChild(note);
+  }
+  if (!rows.length) { wrap.innerHTML += '<p class="hint">Nobody is signed in right now.</p>'; return; }
   const byEvent = new Map();
   for (const r of rows) {
     if (!byEvent.has(r.event_id)) byEvent.set(r.event_id, { title: r.event_title, rows: [] });
@@ -764,16 +868,50 @@ async function renderOnsite() {
     div.innerHTML = `<h4>${g.title} · ${g.rows.length}</h4>`;
     wrap.appendChild(div);
     for (const r of g.rows) {
-      const el = document.createElement('div');
-      el.className = 'person';
-      const since = new Date(r.signed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const el = document.createElement('button');
+      el.className = 'person onsite-person';
+      el.type = 'button';
+      const since = r.signed_at
+        ? ' · in ' + new Date(r.signed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        : '';
       el.innerHTML = `<span>${r.nickname || r.first_name} ${r.last_name}
           ${r.is_youth ? '' : '<span class="adult-tag">adult</span>'}</span>
-        <span class="since">${r.patrol || ''} · in ${since}</span>`;
+        <span class="since">${r.patrol || ''}${since}</span>`;
+      el.onclick = () => showEmergencyInfo(r.id); // tap → emergency contacts
       div.appendChild(el);
     }
   }
 }
+
+// ------------------------------------------- emergency contacts (on-site) ----
+// Tap an on-site person → their emergency numbers + guardians, tap-to-call.
+// Reads the OFFLINE SNAPSHOT first (it must work with no signal — that's
+// when you need it most); the snapshot refreshes on every kiosk entry and
+// after every synced transaction.
+async function showEmergencyInfo(personId) {
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const tel = (label, num) => num
+    ? `<div class="contact-row"><span>${esc(label)}</span><a href="tel:${esc(String(num).replace(/[^+\d]/g, ''))}">${esc(num)}</a></div>`
+    : '';
+  let p = await Offline.getPerson(personId).catch(() => null);
+  if (!p) { await refreshSnapshot(); p = await Offline.getPerson(personId).catch(() => null); }
+  if (!p) { toast('No saved details for this person on this device — connect once to refresh the roster.', true); return; }
+  const guardians = await Offline.guardiansOf(personId).catch(() => []);
+  const box = $('emergency-body');
+  box.innerHTML =
+    `<h3>${esc(displayName(p))}${p.patrol ? ` <span class="since">· ${esc(p.patrol)}</span>` : ''}</h3>` +
+    `<h4>Emergency contacts (from last sign-in)</h4>` +
+    (tel('Emergency 1', p.last_emerg_phone_1) + tel('Emergency 2', p.last_emerg_phone_2) ||
+      '<p class="hint">None recorded yet — they\'re captured at sign-in.</p>') +
+    (guardians.length
+      ? `<h4>Guardians</h4>` + guardians.map((g) =>
+          `<div class="contact-guardian">${esc(displayName(g))}` +
+          `${g.is_primary ? ' ★' : ''}${g.relationship ? ` <span class="since">(${esc(g.relationship)})</span>` : ''}` +
+          tel('Mobile', g.phone_mobile) + tel('Home', g.phone_home) + `</div>`).join('')
+      : (p.is_youth ? '<p class="hint">No linked guardians in the saved roster.</p>' : ''));
+  openModal('modal-emergency');
+}
+$('emergency-close').onclick = closeModal;
 
 // ------------------------------------------------------ field debugging ----
 // A thrown error must never look like "the button does nothing" — surface it.
