@@ -201,13 +201,31 @@
         <p class="hint left">Saved credentials live on the check-in server with the rest of the troop's
         protected data and are <b>never shown again</b> here — to change the password, just type a new one
         (leave it blank to keep the current one when changing the email). They're used for exactly one
-        thing: downloading the member export. Nothing is ever written to Trail Life Connect.</p>
+        things: downloading the member export, and — only if you enable it below — marking
+        attendance on Trail Life Connect events.</p>
         <p class="hint left">⚠ <b>Multiple roles?</b> Trail Life Connect signs in under whichever role the
         account <b>used last</b>, and the export only works from a role with member-list access (e.g.
         Troopmaster). If this account has several roles, log into TLC in a browser and switch to the
         permitted role before relying on the sync — if a fetch fails or comes back suspiciously small,
         check the active role first.</p>
       </details>
+    </div>
+    <div class="panel">
+      <h3>TLC attendance write-back
+        <button id="tlca-push" class="btn ghost small">Push now</button>
+      </h3>
+      <p class="hint left">When enabled, everyone who signs in at the kiosk is also marked
+      <b>Attended</b> on the matching Trail Life Connect calendar event (matched automatically through
+      the iCal feed). With <i>advancement tracking</i> on, TLC then credits any activity plans attached
+      to that event — exactly like ticking the box on TLC's own Track Attendance page. The app only
+      ever <b>marks</b> attendance; it never un-marks anyone on TLC. Per-event overrides live in the
+      event editor on the Events tab.</p>
+      <div class="row wrap">
+        <label class="check"><input id="tlca-enabled" type="checkbox"> Push attendance to Trail Life Connect</label>
+        <label class="check"><input id="tlca-lessons" type="checkbox"> Track advancement with event activity plans</label>
+      </div>
+      <p id="tlca-status" class="hint left"></p>
+      <div id="tlca-log" class="tbl"></div>
     </div>
     <div class="panel">
       <h3>Upload Trail Life Connect export (.xlsx)</h3>

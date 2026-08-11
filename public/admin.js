@@ -546,6 +546,11 @@ function openEvent(e) {
         <option value="1" ${e?.track_adults ? 'selected' : ''}>Tracked (headcount)</option></select></div>
       <div><label>SMS reminder delay (min after end; blank = default 30)</label>
         <input id="evf-notify" type="number" min="0" value="${e?.notify_after_min ?? ''}"></div>
+      ${e ? `<div><label>TLC attendance push ${e.tlc_event_id ? '<span class="tag" title="Matched to a Trail Life Connect event through the iCal feed">linked ✓</span>' : '<span class="tag off" title="Manual events have no TLC calendar entry to push to">not linked</span>'}</label>
+        <select id="evf-tlc" ${e.tlc_event_id ? '' : 'disabled'}>
+          <option value="" ${e.tlc_push == null ? 'selected' : ''}>Follow global setting</option>
+          <option value="0" ${e.tlc_push === 0 ? 'selected' : ''}>Never push this event</option>
+          <option value="1" ${e.tlc_push === 1 ? 'selected' : ''}>Always push this event</option></select></div>` : ''}
     </div>
     <div class="row wrap">
       <button class="btn primary small" id="evf-save">Save</button>
@@ -562,6 +567,9 @@ function openEvent(e) {
       track_adults: $('evf-adults').value === '1',
       notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
+    if (e && $('evf-tlc')) {
+      body.tlc_push = $('evf-tlc').value === '' ? null : Number($('evf-tlc').value);
+    }
     try {
       if (e) await jpatch(`/admin/events/${e.id}`, body);
       else await jpost('/events', body);
@@ -959,11 +967,77 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// ------------------------------------------- TLC attendance write-back ----
+let tlcaTimer = null;
+async function loadTlca() {
+  const s = await api('/admin/tlc-attendance').catch(() => null);
+  if (!s) return;
+  if (document.activeElement !== $('tlca-enabled')) $('tlca-enabled').checked = !!s.settings.enabled;
+  if (document.activeElement !== $('tlca-lessons')) $('tlca-lessons').checked = !!s.settings.use_lesson_plans;
+
+  const bits = [];
+  if (!s.credentials_configured) bits.push('Needs the Trail Life Connect credentials saved above.');
+  if (s.running) bits.push('⏳ Push running…');
+  if (s.state.auth_failed_at) {
+    bits.push(`❌ Paused since ${fmtDT(s.state.auth_failed_at)} — the TLC login was rejected. ` +
+      'Re-save the credentials above (or press Push now after fixing the account).');
+  }
+  if (s.state.last_run) {
+    bits.push(`Last push ${fmtDT(s.state.last_run)}: ` + (s.state.last_status === 'ok'
+      ? '✅ ok' : `⚠ ${esc(s.state.last_error || s.state.last_status || '')}`));
+  }
+  bits.push(`Queue: <b>${s.queue.pending}</b> pending · ${s.queue.sent} sent · ` +
+    (s.queue.failed ? `<b class="error">${s.queue.failed} failed</b> <button id="tlca-retry" class="btn ghost small">Retry failed</button>` : '0 failed'));
+  $('tlca-status').innerHTML = bits.join('<br>');
+  $('tlca-push').disabled = !!s.running || !s.credentials_configured || !s.queue.pending;
+
+  $('tlca-log').innerHTML = s.recent.length
+    ? `<table><tr><th>When</th><th>Person</th><th>Event</th><th>Status</th><th>Detail</th></tr>` +
+      s.recent.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
+        <td>${esc(r.event_title)}</td>
+        <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed' : '⏳ pending'}</td>
+        <td>${esc(r.detail || '')}</td></tr>`).join('') + '</table>'
+    : '<p class="hint left">Nothing queued yet — sign-ins appear here once the push is enabled (or an event is set to “Always push”).</p>';
+  enhanceTable('tlca-log');
+
+  clearTimeout(tlcaTimer);
+  if ((s.running || s.queue.pending) && !$('tab-import').hidden) tlcaTimer = setTimeout(loadTlca, 5000);
+}
+async function saveTlcaSettings() {
+  try {
+    await jput('/admin/tlc-attendance/settings', {
+      enabled: $('tlca-enabled').checked, use_lesson_plans: $('tlca-lessons').checked,
+    });
+    toast('Saved'); loadTlca();
+  } catch (e) { toast(e.message, true); }
+}
+$('tlca-enabled').onchange = () => {
+  if ($('tlca-enabled').checked &&
+      !confirm('Enable attendance write-back?\n\nEvery kiosk sign-in will also mark the person Attended ' +
+        'on the matching Trail Life Connect event. The app never un-marks anyone on TLC.')) {
+    $('tlca-enabled').checked = false;
+    return;
+  }
+  saveTlcaSettings();
+};
+$('tlca-lessons').onchange = saveTlcaSettings;
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'tlca-push') {
+    try { await jpost('/admin/tlc-attendance/push', {}); toast('Push started'); loadTlca(); }
+    catch (err) { toast(err.message, true); }
+  }
+  if (e.target.id === 'tlca-retry') {
+    try { const r = await jpost('/admin/tlc-attendance/retry', {}); toast(`${r.retried} row(s) queued again`); loadTlca(); }
+    catch (err) { toast(err.message, true); }
+  }
+});
+
 // --------------------------------------------------------------- import ----
 async function loadImport() {
   $('imp-commit').disabled = true;
   $('imp-result').innerHTML = '';
   loadSync();
+  loadTlca();
   const log = await api('/admin/imports');
   $('imp-log').innerHTML = log.length ? `<table><tr><th>When</th><th>File</th><th>By</th><th>Added</th><th>Updated</th><th>Deactivated</th><th>Linked</th></tr>` +
     log.map((r) => `<tr>${dtCell(r.imported_at)}<td>${esc(r.filename)}</td><td>${esc(r.staff_name || '')}</td>

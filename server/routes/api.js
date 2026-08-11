@@ -333,6 +333,19 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
     if (sigPath) fs.rmSync(sigPath, { force: true }); // don't orphan the signature PNG
     throw err;
   }
+
+  // TLC write-back: sign-ins enqueue an Attended mark for the mapped TLC
+  // event (lib/attendanceSync — off unless enabled in Admin → Import). A
+  // background sweep does the actual network push; this is one local INSERT
+  // and must never break the kiosk response.
+  if (b.direction === 'in') {
+    try {
+      require('../lib/attendanceSync').enqueue(b.event_id, entries.map((e) => e.person_id));
+    } catch (e) {
+      console.error('[tlc-attendance] enqueue failed:', e.message);
+    }
+  }
+
   res.json({ ok: true, txn_id: txnId });
 });
 

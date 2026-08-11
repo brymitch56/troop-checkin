@@ -305,6 +305,12 @@ router.get('/events', (req, res) => {
                CASE WHEN is_past THEN NULL ELSE datetime(start_at) END ASC,
                datetime(start_at) DESC
       LIMIT 1000`).all(includePast ? 1 : 0);
+  // resolve + cache TLC event links lazily so the editor shows the real
+  // "linked" status even before the first attendance push
+  const aSync = require('../lib/attendanceSync');
+  for (const r of rows) {
+    if (!r.tlc_event_id && r.source === 'ical') r.tlc_event_id = aSync.resolveTlcEventId(r);
+  }
   res.json(rows);
 });
 
@@ -320,6 +326,11 @@ router.patch('/events/:id', (req, res) => {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
   }
   if ('notify_after_min' in b) { sets.push('notify_after_min = ?'); vals.push(b.notify_after_min ?? null); }
+  // TLC write-back override: null = follow the global setting, 0 = never, 1 = always
+  if ('tlc_push' in b) {
+    sets.push('tlc_push = ?');
+    vals.push(b.tlc_push === null || b.tlc_push === '' ? null : (b.tlc_push ? 1 : 0));
+  }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
   db.prepare(`UPDATE event SET ${sets.join(', ')} WHERE id = ?`).run(...vals, ev.id);
   res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(ev.id));
@@ -539,6 +550,8 @@ router.put('/roster-sync/credentials', (req, res) => {
   const b = req.body || {};
   try {
     const saved = rosterSync.saveTlcCredentials({ email: b.email, password: b.password });
+    // fresh credentials un-pause the attendance write-back sweep
+    try { require('../lib/attendanceSync').clearAuthFailure(); } catch { /* pre-migration */ }
     res.json({ ok: true, ...saved });
   } catch (e) {
     res.status(e.code || 500).json({ error: e.message });
@@ -547,6 +560,42 @@ router.put('/roster-sync/credentials', (req, res) => {
 
 router.delete('/roster-sync/credentials', (req, res) => {
   res.json({ ok: true, ...rosterSync.clearTlcCredentials() });
+});
+
+// ------------------------------------------- TLC attendance write-back -----
+// Check-ins can be pushed back to Trail Life Connect as Attended marks
+// (docs/12-attendance-writeback.md). Off by default; per-event override.
+const attendanceSync = require('../lib/attendanceSync');
+
+router.get('/tlc-attendance', (req, res) => {
+  res.json({
+    settings: attendanceSync.getSettings(),
+    state: attendanceSync.getState(),
+    queue: attendanceSync.queueSummary(),
+    running: attendanceSync.isRunning(),
+    credentials_configured: !!rosterSync.credentialInfo().source,
+    recent: attendanceSync.recentRows(30),
+  });
+});
+
+router.put('/tlc-attendance/settings', (req, res) => {
+  res.json({ ok: true, settings: attendanceSync.saveSettings(req.body || {}) });
+});
+
+// Manual push — the one human action that bypasses the failed-login latch.
+// Runs in-process and answers immediately; the UI polls GET for the result.
+router.post('/tlc-attendance/push', (req, res) => {
+  if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is already running.' });
+  if (!rosterSync.credentialInfo().source) {
+    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them under Automatic roster sync.' });
+  }
+  attendanceSync.runPush({ manual: true })
+    .catch((e) => console.error('[tlc-attendance] manual push failed:', e.message));
+  res.json({ ok: true, started: true });
+});
+
+router.post('/tlc-attendance/retry', (req, res) => {
+  res.json({ ok: true, ...attendanceSync.retryFailed() });
 });
 
 // -------------------------------------------------------------- reports ----
