@@ -291,8 +291,12 @@ const eventsCurrent = () =>
   api('/events/current').catch((e) => { if (e.status) throw e; return Offline.currentEvents(); });
 
 async function pickEventAuto() {
-  const { matching } = await eventsCurrent();
-  if (matching.length === 1) setEvent(matching[0]);
+  // The server suggests the best match (30 min before start → 60 min after
+  // end; overlaps resolved toward the nearest sign-in/sign-out rush). The
+  // pill always lets staff switch to any other event.
+  const { matching, suggested_id } = await eventsCurrent();
+  const pick = matching.find((e) => e.id === suggested_id) || (matching.length === 1 ? matching[0] : null);
+  if (pick) setEvent(pick);
   else if (state.event == null) openEventPicker();
 }
 function setEvent(ev) {
@@ -653,7 +657,9 @@ async function submitTxn(extra, force) {
   const payload = {
     client_uuid: newUuid(),
     direction: state.direction,
-    event_id: state.direction === 'in' ? state.event.id : undefined,
+    // 'in' requires the event; on 'out' it is a hint so someone signed into
+    // two overlapping events is signed out of the SELECTED one
+    event_id: state.event ? state.event.id : undefined,
     signed_at: new Date().toISOString(),
     entries: state.cart.map((c) => ({
       person_id: c.person.id,
@@ -686,6 +692,13 @@ async function submitTxn(extra, force) {
       $('sign-error').textContent = 'Choose a different signer.';
     } else if (e.status === 422 && e.body.adults) {
       toast(`${e.body.error} Remove: ${e.body.adults.join(', ')}.`, true);
+    } else if (e.status === 409 && e.body.multi_open && state.direction === 'in') {
+      const who = e.body.multi_open.map((m) => `${m.name} (${m.events.join(', ')})`).join('\n');
+      const ok = confirm(`Still signed into another event:\n\n${who}\n\nAlso sign into ${state.event.title}? They will be on-site in BOTH events until each is signed out.`);
+      if (ok) return submitTxn({ ...extra, allow_multi: true }, force);
+      $('sign-error').textContent = 'Sign-in cancelled.';
+    } else if (e.status === 409 && e.body.multi_open) {
+      toast(`${e.body.error} (${e.body.multi_open.map((m) => m.name).join(', ')})`, true);
     } else if (e.status === 409 && e.body.conflicts) {
       toast(`${e.body.error} ${e.body.conflicts.join(', ')} — refresh the cart.`, true);
       state.cart = []; state.direction = null; renderCart(); closeModal(); refreshOnsiteCount();

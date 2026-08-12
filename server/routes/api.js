@@ -61,6 +61,15 @@ const OPEN_INFO_SQL = `
    WHERE tp.person_id = ? AND tp.open = 1 AND t.voided_by_txn_id IS NULL
    LIMIT 1`;
 
+// all concurrent opens (someone signed into two overlapping events at once)
+const OPEN_ALL_SQL = `
+  SELECT tp.txn_id AS in_txn_id, t.event_id, e.title AS event_title
+    FROM txn_person tp
+    JOIN txn t ON t.id = tp.txn_id
+    JOIN event e ON e.id = t.event_id
+   WHERE tp.person_id = ? AND tp.open = 1 AND t.voided_by_txn_id IS NULL
+   ORDER BY datetime(e.start_at)`;
+
 function personView(p) {
   if (!p) return null;
   const open = db.prepare(OPEN_INFO_SQL).get(p.id) || null;
@@ -156,6 +165,29 @@ router.post('/visitor', express.json(), (req, res) => {
 });
 
 // -------------------------------------------------------------- events ----
+// Auto-select window: an event is "matching" from 30 min BEFORE its start
+// (early arrivals sign in) until 60 min AFTER its end (stragglers sign out).
+// When several events match, suggestEvent picks the one whose "action
+// moment" is nearest: sign-in rush before start, sign-out rush around the
+// end — so a meeting that is mid-session loses to one about to start, and a
+// meeting wrapping up (or just ended) wins back the kiosk.
+const WINDOW_BEFORE = '-30 minutes';
+const WINDOW_AFTER = '+60 minutes';
+
+function suggestEvent(matching, now = new Date()) {
+  if (!matching.length) return null;
+  let best = null, bestScore = Infinity;
+  for (const e of matching) {
+    const start = new Date(e.start_at), end = new Date(e.end_at);
+    const action = now < start ? start : end; // arriving → start; else → end
+    const score = Math.abs(action - now);
+    if (score < bestScore || (score === bestScore && start < new Date(best.start_at))) {
+      best = e; bestScore = score;
+    }
+  }
+  return best.id;
+}
+
 router.get('/events/current', (req, res) => {
   // datetime() normalizes both stored formats (ISO 'T'/'Z' and SQLite space
   // form) — raw string compares are wrong across the two.
@@ -165,24 +197,24 @@ router.get('/events/current', (req, res) => {
   const now = new Date().toISOString();
   const matching = db.prepare(
     `SELECT * FROM event
-      WHERE datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?)
+      WHERE datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?)
       ORDER BY datetime(start_at)`
-  ).all(now, now);
+  ).all(WINDOW_BEFORE, now, WINDOW_AFTER, now);
   // local_date() (see server/db.js) instead of date(x,'localtime'): SQLite's
   // 'localtime' ignores IANA TZ on Windows; the JS-backed function agrees
   // with JavaScript local time on every platform.
   const upcoming = db.prepare(
     `SELECT * FROM event
-      WHERE NOT (datetime(start_at) <= datetime(?) AND datetime(end_at) >= datetime(?))
+      WHERE NOT (datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?))
         AND local_date(end_at) >= local_date('now')
       ORDER BY datetime(start_at) LIMIT 20`
-  ).all(now, now);
+  ).all(WINDOW_BEFORE, now, WINDOW_AFTER, now);
   const past = db.prepare(
     `SELECT * FROM event
       WHERE local_date(end_at) < local_date('now')
       ORDER BY datetime(start_at) DESC LIMIT 20`
   ).all();
-  res.json({ matching, upcoming, past });
+  res.json({ matching, upcoming, past, suggested_id: suggestEvent(matching) });
 });
 
 router.post('/events', express.json(), (req, res) => {
@@ -221,13 +253,32 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
   const youthEntries = people.filter((p) => p.is_youth);
 
   // open-state validation (authoritative — protects against multi-station races)
-  const openOf = (pid) => db.prepare(OPEN_INFO_SQL).get(pid) || null;
+  const opensOf = (pid) => db.prepare(OPEN_ALL_SQL).all(pid);
+  // 'out' with several concurrent opens: which one this txn closes, per person
+  const chosenOpen = new Map();
   if (b.direction === 'in') {
-    const already = people.filter((p) => openOf(p.id));
-    if (already.length) {
+    // Same event twice is always a conflict. A DIFFERENT event is allowed —
+    // overlapping events are real (a campout with a meeting inside it) — but
+    // only after the kiosk confirms with allow_multi, so an accidental
+    // double-tap still reads as "already signed in".
+    const sameEvent = [], otherEvent = [];
+    for (const p of people) {
+      const opens = opensOf(p.id);
+      if (!opens.length) continue;
+      if (opens.some((o) => o.event_id === Number(b.event_id))) sameEvent.push(p);
+      else otherEvent.push({ p, titles: opens.map((o) => o.event_title) });
+    }
+    if (sameEvent.length) {
       return res.status(409).json({
         error: 'Already signed in.',
-        conflicts: already.map((p) => `${p.first_name} ${p.last_name}`),
+        conflicts: sameEvent.map((p) => `${p.first_name} ${p.last_name}`),
+      });
+    }
+    if (otherEvent.length && !b.allow_multi) {
+      return res.status(409).json({
+        error: 'Already signed into another event.',
+        multi_open: otherEvent.map(({ p, titles }) =>
+          ({ name: `${p.first_name} ${p.last_name}`, events: titles })),
       });
     }
     const event = b.event_id && db.prepare('SELECT * FROM event WHERE id = ?').get(b.event_id);
@@ -244,15 +295,32 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
       }
     }
   } else {
-    const opens = people.map((p) => ({ p, open: openOf(p.id) }));
-    const closed = opens.filter((o) => !o.open);
+    // Close the right open when someone is signed into several events at
+    // once: the kiosk's selected event wins; a person with exactly one open
+    // needs no hint; several opens and no matching hint is an explicit error.
+    const closed = [], ambiguous = [];
+    for (const p of people) {
+      const opens = opensOf(p.id);
+      if (!opens.length) { closed.push(p); continue; }
+      const hinted = b.event_id && opens.find((o) => o.event_id === Number(b.event_id));
+      if (hinted) chosenOpen.set(p.id, hinted);
+      else if (opens.length === 1) chosenOpen.set(p.id, opens[0]);
+      else ambiguous.push({ p, titles: opens.map((o) => o.event_title) });
+    }
     if (closed.length) {
       return res.status(409).json({
         error: 'Already signed out.',
-        conflicts: closed.map((o) => `${o.p.first_name} ${o.p.last_name}`),
+        conflicts: closed.map((p) => `${p.first_name} ${p.last_name}`),
       });
     }
-    const eventIds = [...new Set(opens.map((o) => o.open.event_id))];
+    if (ambiguous.length) {
+      return res.status(409).json({
+        error: 'Signed into more than one event — pick the event to sign out of, then try again.',
+        multi_open: ambiguous.map(({ p, titles }) =>
+          ({ name: `${p.first_name} ${p.last_name}`, events: titles })),
+      });
+    }
+    const eventIds = [...new Set([...chosenOpen.values()].map((o) => o.event_id))];
     if (eventIds.length > 1) {
       return res.status(409).json({ error: 'These youth are signed into different events — sign them out separately.' });
     }
@@ -300,7 +368,7 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
     const txnId = Number(t.lastInsertRowid);
 
     for (const e of entries) {
-      const open = b.direction === 'out' ? openOf(e.person_id) : null;
+      const open = b.direction === 'out' ? chosenOpen.get(e.person_id) : null;
       db.prepare(
         `INSERT INTO txn_person (txn_id, person_id, open, in_txn_id, emerg_phone_1, emerg_phone_2)
          VALUES (?, ?, ?, ?, ?, ?)`

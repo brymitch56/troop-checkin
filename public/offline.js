@@ -85,17 +85,32 @@
     }
     return out.filter((g) => g.authorized !== 0 || true).sort((a, b) => (b.is_primary - a.is_primary));
   }
+  // Mirrors the server's auto-select rules (routes/api.js): matching window
+  // is start−30min → end+60min, and the suggestion is the event whose
+  // "action moment" (start if not begun, else end) is nearest to now.
+  function suggestEvent(matching, now) {
+    let best = null, score = Infinity;
+    for (const e of matching) {
+      const start = new Date(e.start_at), end = new Date(e.end_at);
+      const s = Math.abs((now < start ? start : end) - now);
+      if (s < score) { best = e; score = s; }
+    }
+    return best ? best.id : null;
+  }
+
   async function currentEvents() {
     // mirror the server's shape: live / upcoming (not past yet, day-granular) / past
     const events = (await kvGet('events')) || [];
     const now = Date.now();
     const todayStart = new Date(new Date().toDateString()).getTime();
-    const matching = events.filter((e) => new Date(e.start_at) <= now && new Date(e.end_at) >= now);
+    const MIN = 60000;
+    const matching = events.filter((e) =>
+      new Date(e.start_at) - 30 * MIN <= now && new Date(e.end_at).getTime() + 60 * MIN >= now);
     const upcoming = events.filter((e) => !matching.includes(e) && new Date(e.end_at) >= todayStart)
       .sort((a, b) => new Date(a.start_at) - new Date(b.start_at)).slice(0, 20);
     const past = events.filter((e) => new Date(e.end_at) < todayStart)
       .sort((a, b) => new Date(b.start_at) - new Date(a.start_at)).slice(0, 20);
-    return { matching, upcoming, past };
+    return { matching, upcoming, past, suggested_id: suggestEvent(matching, now) };
   }
   async function markOpen(personId, open) {
     const p = await tx('people', 'readonly', (s) => s.get(personId));
