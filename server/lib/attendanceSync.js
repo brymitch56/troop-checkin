@@ -186,8 +186,15 @@ function parseUserList(html, tlcEventId) {
 // "Last, First" match, then nickname. Ambiguity is an explicit failure —
 // never guess between two people with the same name.
 function matchPerson(person, list) {
-  if (person.tlc_user_id && list.byHash.has(person.tlc_user_id)) {
-    return { hash: person.tlc_user_id };
+  // A stored id is the operator's explicit answer, so it ends the search
+  // either way. Falling through to the name match when it is missing from
+  // this event's list would silently hand a same-named relative's hashid
+  // to someone the event never invited — the exact wrong-person write the
+  // mapping was set to prevent. Absent means "not on this roster".
+  if (person.tlc_user_id) {
+    return list.byHash.has(person.tlc_user_id)
+      ? { hash: person.tlc_user_id }
+      : { error: `"${person.last_name}, ${person.first_name}" has a TLC id set but is not on this event's roster.` };
   }
   const keys = [nameKey(person.last_name, person.first_name)];
   if (person.nickname) keys.push(nameKey(person.last_name, person.nickname));

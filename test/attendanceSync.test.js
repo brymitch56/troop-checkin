@@ -174,6 +174,24 @@ test('matchPerson: cached id, exact name, nickname fallback, explicit failures',
   assert.match(A.matchPerson({ first_name: 'Zed', last_name: 'Nowhere' }, list).error, /No TLC roster entry/);
 });
 
+test('matchPerson: a stored id missing from the list fails instead of matching a namesake', () => {
+  // The event roster holds the FATHER only; the son shares his name and was
+  // mapped by hand to his own hashid, which this event never invited.
+  const list = A.parseUserList(userListHtml([
+    { hash: 'ffffffffffff', name: 'Andrews, Ben', attended: '' },
+  ]), EV);
+  const son = { first_name: 'Ben', last_name: 'Andrews', tlc_user_id: 'ssssssssssss' };
+  const m = A.matchPerson(son, list);
+  assert.equal(m.hash, undefined, 'must not fall back to the namesake on the list');
+  assert.match(m.error, /not on this event's roster/);
+  // the mapping still resolves on a roster that does include him
+  const full = A.parseUserList(userListHtml([
+    { hash: 'ffffffffffff', name: 'Andrews, Ben', attended: '' },
+    { hash: 'ssssssssssss', name: 'Andrews, Ben', attended: '' },
+  ]), EV);
+  assert.equal(A.matchPerson(son, full).hash, 'ssssssssssss');
+});
+
 // -------------------------------------------------------- unit: enqueue ----
 test('enqueue: off by default; global switch; per-event override; visitor skip; dedupe', () => {
   const p1 = mkPerson('Alice', 'Alpha');
