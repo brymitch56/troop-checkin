@@ -256,6 +256,63 @@ async function toggleAttendance(s, { userId, eventId, useLessonPlans }) {
   if (res.status !== 200) throw new Error(`toggle-attendance returned status ${res.status}.`);
 }
 
+// ------------------------------------------------------- id lookup ---------
+// Admin helper: read one TLC event roster and return every entry sharing the
+// person's last name, so the operator can pick the right hashid instead of
+// running SQL on the server. Exact-name candidates are flagged, and so is
+// any hashid already assigned to a different app person (catches the
+// youth/parent namesake traps this mapping exists to solve).
+async function lookupCandidates({ personId, eventId = null, env = process.env }) {
+  const person = db.prepare('SELECT * FROM person WHERE id = ?').get(personId);
+  if (!person) { const e = new Error('No such person.'); e.code = 404; throw e; }
+
+  let event = eventId ? db.prepare('SELECT * FROM event WHERE id = ?').get(eventId) : null;
+  if (!event) {
+    // default: the TLC-linked event nearest to now — most likely to carry a
+    // full troop roster and to be the one the operator is thinking about
+    for (const r of db.prepare(
+      `SELECT * FROM event ORDER BY ABS(julianday(start_at) - julianday('now')) LIMIT 200`).all()) {
+      if (resolveTlcEventId(r)) { event = r; break; }
+    }
+  }
+  const tlcEventId = event && resolveTlcEventId(event);
+  if (!tlcEventId) {
+    const e = new Error('No TLC-linked event to read a roster from — pick one on the calendar first.');
+    e.code = 422; throw e;
+  }
+
+  const session = await tlcSession(env);
+  const list = await fetchUserList(session, tlcEventId);
+  const lastKey = normName(person.last_name);
+  const exactKeys = new Set([nameKey(person.last_name, person.first_name)]);
+  if (person.nickname) exactKeys.add(nameKey(person.last_name, person.nickname));
+
+  const candidates = [];
+  for (const [hash, entry] of list.byHash) {
+    if (!entry.name) continue;
+    const ci = entry.name.indexOf(',');
+    if (normName(entry.name.slice(0, ci)) !== lastKey) continue;
+    const key = nameKey(entry.name.slice(0, ci), entry.name.slice(ci + 1));
+    const assigned = db.prepare(
+      `SELECT first_name, last_name, is_youth FROM person
+        WHERE tlc_user_id = ? AND id != ? AND status != 'merged'`).get(hash, person.id);
+    candidates.push({
+      hash,
+      name: entry.name,
+      exact: exactKeys.has(key),
+      current: person.tlc_user_id === hash,
+      assigned_to: assigned
+        ? `${assigned.first_name} ${assigned.last_name} (${assigned.is_youth ? 'youth' : 'adult'})`
+        : null,
+    });
+  }
+  candidates.sort((a, b) => (b.exact - a.exact) || a.name.localeCompare(b.name));
+  return {
+    event: { id: event.id, title: event.title, start_at: event.start_at },
+    candidates,
+  };
+}
+
 // ----------------------------------------------------------- the push ------
 let running = false;
 const isRunning = () => running;
@@ -350,7 +407,7 @@ function scheduleSweep(intervalMs = 10 * 60 * 1000) {
 module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
-  enqueue, queueSummary, recentRows, retryFailed,
+  enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
   normName, nameKey, parseUserList, matchPerson,
   tlcSession, fetchUserList, toggleAttendance,
   runPush, isRunning, scheduleSweep,

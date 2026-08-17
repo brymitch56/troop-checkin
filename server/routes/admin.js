@@ -73,12 +73,26 @@ router.get('/people/:id', (req, res) => {
 });
 
 const PERSON_FIELDS = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
-  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'membership_expires', 'notes'];
+  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'membership_expires', 'notes',
+  'tlc_user_id'];
 const IMPORT_FIELDS = new Set(require('../lib/rosterImport').UPDATABLE);
 router.patch('/people/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No such person.' });
   const b = req.body || {};
+  // TLC user id: the hand-set mapping is authoritative for the attendance
+  // write-back, so validate the shape and refuse an id another person holds
+  if ('tlc_user_id' in b && b.tlc_user_id) {
+    if (!/^[a-z0-9]{8,16}$/i.test(String(b.tlc_user_id))) {
+      return res.status(400).json({ error: 'A TLC user id is 8–16 letters/digits (copy it from the lookup below or a TLC profile URL).' });
+    }
+    const holder = db.prepare(
+      `SELECT first_name, last_name FROM person WHERE tlc_user_id = ? AND id != ? AND status != 'merged'`
+    ).get(b.tlc_user_id, p.id);
+    if (holder) {
+      return res.status(409).json({ error: `That TLC id is already assigned to ${holder.first_name} ${holder.last_name} — clear it there first.` });
+    }
+  }
   const sets = [], vals = [];
   let locked = [];
   try { locked = JSON.parse(p.manual_fields || '[]'); } catch { /* ignore */ }
@@ -489,6 +503,17 @@ router.post('/merge', (req, res) => {
       db.prepare('UPDATE person SET badge_code = NULL WHERE id = ?').run(from.id);
       db.prepare(`UPDATE person SET badge_code = ?, updated_at = datetime('now') WHERE id = ?`).run(from.badge_code, into.id);
     }
+    // TLC mapping follows the person (unless the target already has its own),
+    // and queued/logged attendance pushes are re-pointed with dedupe
+    if (from.tlc_user_id && !into.tlc_user_id) {
+      db.prepare('UPDATE person SET tlc_user_id = NULL WHERE id = ?').run(from.id);
+      db.prepare(`UPDATE person SET tlc_user_id = ?, updated_at = datetime('now') WHERE id = ?`).run(from.tlc_user_id, into.id);
+    }
+    for (const q of db.prepare('SELECT * FROM tlc_attendance_push WHERE person_id = ?').all(from.id)) {
+      const clash = db.prepare('SELECT 1 FROM tlc_attendance_push WHERE event_id = ? AND person_id = ?').get(q.event_id, into.id);
+      if (clash) db.prepare('DELETE FROM tlc_attendance_push WHERE id = ?').run(q.id);
+      else db.prepare('UPDATE tlc_attendance_push SET person_id = ? WHERE id = ?').run(into.id, q.id);
+    }
     db.prepare(`UPDATE person SET status = 'merged', merged_into_id = ?, badge_code = NULL,
                                   updated_at = datetime('now') WHERE id = ?`).run(into.id, from.id);
   });
@@ -601,6 +626,39 @@ router.post('/tlc-attendance/push', (req, res) => {
 
 router.post('/tlc-attendance/retry', (req, res) => {
   res.json({ ok: true, ...attendanceSync.retryFailed() });
+});
+
+// Admin helper behind the person editor's "Find TLC id" button: reads one
+// TLC event roster and returns same-surname candidates with their hashids.
+router.post('/tlc-attendance/lookup', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) {
+    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them under Automatic roster sync.' });
+  }
+  try {
+    const b = req.body || {};
+    res.json(await attendanceSync.lookupCandidates({
+      personId: b.person_id, eventId: b.event_id || null,
+    }));
+  } catch (e) {
+    res.status(e.code || 500).json({ error: e.message });
+  }
+});
+
+// Same-name records among non-merged people — the traps behind wrong-person
+// TLC pushes (youth/parent namesakes) and the duplicates worth merging.
+router.get('/duplicate-names', (req, res) => {
+  const aSync = require('../lib/attendanceSync');
+  const rows = db.prepare(
+    `SELECT id, first_name, last_name, is_youth, status, member_id, tlc_user_id, patrol, role
+       FROM person WHERE status != 'merged' ORDER BY last_name, first_name`).all();
+  const groups = new Map();
+  for (const p of rows) {
+    const key = aSync.nameKey(p.last_name, p.first_name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  res.json([...groups.values()].filter((g) => g.length > 1)
+    .map((g) => ({ name: `${g[0].last_name}, ${g[0].first_name}`, people: g })));
 });
 
 // -------------------------------------------------------------- reports ----

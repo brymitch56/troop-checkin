@@ -10,6 +10,15 @@ event" (default yes): checked → `use_lesson_plans=1` (advancement credit),
 unchecked → `use_lesson_plans=0` (attendance only, this youth only). The
 global advancement setting in Admin → Import is a master switch ANDed with
 the per-youth answer.
+
+**Same-name safety:** an operator can pin a person to one TLC profile by
+setting their TLC user id in the person editor (with a roster-lookup helper
+that reads one event's TLC list and offers same-surname candidates,
+flagging ids already assigned elsewhere). A set id is authoritative: absent
+from an event's roster means a visible `failed` row, never a fall-through
+to a same-named relative. Name-match ambiguity (two identical names on one
+TLC list) also fails explicitly. The People tab surfaces every same-name
+group so these ids get set before they ever matter.
 Event mapping needs no admin action: the TLC iCal feed UID embeds the event
 hashid (`<16>-<hashid 12>-<15>`, verified against `/databuilder/search-events`
 for events across 2024–2026), so every synced calendar event is born linked.

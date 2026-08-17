@@ -176,11 +176,34 @@ let ppTimer;
 for (const id of ['pp-q', 'pp-type', 'pp-status']) {
   $(id).addEventListener('input', () => { clearTimeout(ppTimer); ppTimer = setTimeout(loadPeople, 250); });
 }
+// Same-name records: the traps behind wrong-person TLC pushes and the
+// duplicates worth merging. Cached per session; refreshed after merges.
+let dupesAt = 0;
+async function loadDupes(force) {
+  if (!force && Date.now() - dupesAt < 60000) return; // don't refetch per keystroke
+  dupesAt = Date.now();
+  const groups = await api('/admin/duplicate-names').catch(() => []);
+  const box = $('pp-dupes');
+  if (!groups.length) { box.innerHTML = ''; return; }
+  const line = (p) => `<button class="btn ghost small" data-dup="${p.id}">
+      ${p.is_youth ? 'youth' : 'adult'}${p.member_id ? ` #${esc(p.member_id)}` : ' · no member #'}
+      · ${esc(p.is_youth ? (p.patrol || '—') : (p.role || '—'))} · ${p.status}
+      ${p.tlc_user_id ? ' · <span class="tag youth" title="TLC id set — write-back can\'t confuse this one">TLC ✓</span>' : ' · <span class="tag warn" title="No TLC id — a same-name push must fail or guess; set the id in the editor">no TLC id</span>'}
+    </button>`;
+  box.innerHTML = `<details class="panel">
+    <summary>⚠ ${groups.length} name${groups.length > 1 ? 's' : ''} shared by more than one person —
+      set TLC ids (or merge true duplicates) so the write-back can't pick the wrong one</summary>
+    ${groups.map((g) => `<p><b>${esc(g.name)}</b> ${g.people.map(line).join(' ')}</p>`).join('')}
+  </details>`;
+  box.querySelectorAll('[data-dup]').forEach((b) => (b.onclick = () => openPerson(Number(b.dataset.dup))));
+}
+
 async function loadPeople() {
   const q = new URLSearchParams();
   if ($('pp-q').value.trim()) q.set('q', $('pp-q').value.trim());
   if ($('pp-type').value) q.set('type', $('pp-type').value);
   if ($('pp-status').value) q.set('status', $('pp-status').value);
+  loadDupes(); // same-name surfacing rides along with the People tab
   const rows = await api('/admin/people?' + q);
   $('pp-list').innerHTML = `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th><th>Status</th><th>Badge</th></tr>` +
     rows.map((p) => `<tr data-id="${p.id}">
@@ -225,18 +248,28 @@ async function openPerson(id) {
       ${f('Work phone', 'phone_work', p.phone_work)}${f('Birthdate', 'birthdate', p.birthdate)}
       ${f('Email', 'email', p.email)}
       ${f('Membership expires (YYYY-MM-DD)', 'membership_expires', p.membership_expires)}
+      ${f('TLC user id (blank = match by name)', 'tlc_user_id', p.tlc_user_id)}
       <div><label>Status</label>
         <select data-f="status">
           ${['active', 'inactive', 'visitor'].map((s) => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}
         </select></div>
       <div><label>Notes</label><input data-f="notes" value="${esc(p.notes || '')}"></div>
     </div>
+    <div class="row wrap">
+      <button class="btn ghost small" id="pp-tlc-find">Find TLC id from an event roster…</button>
+      <select id="pp-tlc-event" hidden></select>
+    </div>
+    <div id="pp-tlc-results"></div>
+    <p class="hint left">The TLC user id pins this person to one Trail Life Connect profile for the
+    attendance write-back — set it whenever two people share a name (e.g. a youth and a parent).
+    When set, it is the final answer: if that profile is not on an event's TLC roster, the push
+    fails visibly instead of guessing by name.</p>
     <p class="hint left">${locked.length
       ? `🔒 Locked against imports: ${locked.join(', ')} <button class="btn ghost small" id="pp-unlock">let imports manage these again</button>`
       : 'Fields you edit here are locked so roster re-imports never overwrite them.'}</p>
     <div class="row wrap">
       <button class="btn primary small" id="pp-save">Save</button>
-      ${p.is_youth && !p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into roster member…</button>' : ''}
+      ${!p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into roster member…</button>' : ''}
       <button class="btn ghost small" id="pp-close">Close</button>
     </div>
     ${p.is_youth ? guardianBlock(p, forms) : wardBlock(p)}`;
@@ -272,16 +305,63 @@ async function openPerson(id) {
   };
 
   if ($('pp-merge')) $('pp-merge').onclick = async () => {
-    const q = prompt('Merge this visitor into which roster member? Type part of their name:');
+    const kind = p.is_youth ? 'youth' : 'adult';
+    const q = prompt(`Merge this record into which roster ${kind}? Type part of their name:\n\n(Use this when the same individual has two records — e.g. a parent record plus a registered-leader record.)`);
     if (!q) return;
-    const hits = (await api('/admin/people?type=youth&q=' + encodeURIComponent(q)))
+    const hits = (await api(`/admin/people?type=${kind}&q=` + encodeURIComponent(q)))
       .filter((x) => x.id !== id && x.member_id);
-    if (!hits.length) return toast('No matching roster youth.', true);
-    const pick = hits[0];
-    if (!confirm(`Merge into ${pick.first_name} ${pick.last_name} (#${pick.member_id})? Attendance history transfers; this cannot be undone.`)) return;
-    try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); closePersonModal(); loadPeople(); }
-    catch (e) { toast(e.message, true); }
+    if (!hits.length) return toast(`No matching roster ${kind}.`, true);
+    for (const pick of hits) {
+      if (confirm(`Merge into ${pick.first_name} ${pick.last_name} (#${pick.member_id})? Attendance history, guardian links, badge, and TLC mapping transfer; this cannot be undone.` +
+        (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : ''))) {
+        try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); closePersonModal(); loadDupes(true); loadPeople(); }
+        catch (e) { toast(e.message, true); }
+        return;
+      }
+    }
   };
+
+  // TLC id lookup: read an event roster from TLC and offer same-surname
+  // candidates; clicking one fills the field (Save still commits it).
+  $('pp-tlc-find').onclick = () => runTlcLookup(p, id, null);
+  async function runTlcLookup(person, personId, eventId) {
+    const out = $('pp-tlc-results');
+    out.innerHTML = '<p class="hint left">Reading the event roster from Trail Life Connect…</p>';
+    // populate the event picker once — linked events only
+    const sel = $('pp-tlc-event');
+    if (sel.hidden) {
+      const evs = (await api('/admin/events?include_past=1').catch(() => []))
+        .filter((e) => e.tlc_event_id);
+      sel.innerHTML = '<option value="">Auto (nearest linked event)</option>' +
+        evs.map((e) => `<option value="${e.id}">${esc(e.title)} — ${new Date(e.start_at).toLocaleDateString()}</option>`).join('');
+      sel.hidden = false;
+      sel.onchange = () => runTlcLookup(person, personId, sel.value || null);
+    }
+    try {
+      const r = await jpost('/admin/tlc-attendance/lookup', { person_id: personId, event_id: eventId });
+      if (!r.candidates.length) {
+        out.innerHTML = `<p class="hint left">No one named “${esc(person.last_name)}” on the TLC roster of
+          <b>${esc(r.event.title)}</b> — try another event above.</p>`;
+        return;
+      }
+      out.innerHTML = `<p class="hint left">On <b>${esc(r.event.title)}</b>
+        (${new Date(r.event.start_at).toLocaleDateString()}) — click to use:</p>` +
+        r.candidates.map((c) => `
+          <button class="btn ghost small tlc-cand" data-hash="${esc(c.hash)}" ${c.assigned_to ? 'disabled' : ''}>
+            ${esc(c.name)} · <code>${esc(c.hash)}</code>
+            ${c.exact ? '<span class="tag youth">name matches</span>' : '<span class="tag off">same surname</span>'}
+            ${c.current ? '<span class="tag">current</span>' : ''}
+            ${c.assigned_to ? `<span class="tag warn">already assigned to ${esc(c.assigned_to)}</span>` : ''}
+          </button>`).join(' ') +
+        (r.candidates.length > 1 ? '<p class="hint left">⚠ More than one — check which TLC profile (youth vs. adult) is really this person before picking.</p>' : '');
+      out.querySelectorAll('.tlc-cand').forEach((b) => (b.onclick = () => {
+        d.querySelector('input[data-f="tlc_user_id"]').value = b.dataset.hash;
+        toast('TLC id filled in — press Save to keep it.');
+      }));
+    } catch (e) {
+      out.innerHTML = `<p class="error">${esc(e.message)}</p>`;
+    }
+  }
 
   d.querySelectorAll('[data-gact]').forEach((b) => (b.onclick = () => guardianAction(p, b)));
   wireGuardianForms(p);

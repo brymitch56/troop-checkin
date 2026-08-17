@@ -374,4 +374,52 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   assert.equal(close.status, 200);
   assert.equal(rowFor(ev, adult2).status, 'pending');
   assert.equal(rowFor(ev, adult2).use_lesson_plans, 1);
+
+  // ---- tlc_user_id via PATCH: shape + uniqueness enforced
+  const dad = mkPerson('Sam', 'Sameson', { is_youth: 0 });
+  const son = mkPerson('Sam', 'Sameson');
+  const bad = await req('PATCH', `/api/admin/people/${dad}`, { body: { tlc_user_id: 'not valid!!' }, cookie: adminCookie });
+  assert.equal(bad.status, 400);
+  const ok = await req('PATCH', `/api/admin/people/${dad}`, { body: { tlc_user_id: 'dadhash00001' }, cookie: adminCookie });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.tlc_user_id, 'dadhash00001');
+  const dupId = await req('PATCH', `/api/admin/people/${son}`, { body: { tlc_user_id: 'dadhash00001' }, cookie: adminCookie });
+  assert.equal(dupId.status, 409);
+  assert.match(dupId.json.error, /already assigned/);
+  const clear = await req('PATCH', `/api/admin/people/${dad}`, { body: { tlc_user_id: '' }, cookie: adminCookie });
+  assert.equal(clear.json.tlc_user_id, null);
+
+  // ---- duplicate-names report groups the pair
+  const dupes = await req('GET', '/api/admin/duplicate-names', { cookie: adminCookie });
+  const grp = dupes.json.find((g) => g.name === 'Sameson, Sam');
+  assert.ok(grp && grp.people.length === 2);
+
+  // ---- TLC id lookup against the mock roster
+  process.env.TLC_BASE = base; // lookup runs in-process off process.env
+  mock.state.users = [
+    { hash: 'dadhash00001', name: 'Sameson, Sam', attended: '' },
+    { hash: 'sonhash00001', name: 'Sameson, Sam', attended: '' },
+    { hash: 'otherperson1', name: 'Elsewhere, Zed', attended: '' },
+  ];
+  await req('PATCH', `/api/admin/people/${dad}`, { body: { tlc_user_id: 'dadhash00001' }, cookie: adminCookie });
+  const lu = await req('POST', '/api/admin/tlc-attendance/lookup', { body: { person_id: son, event_id: ev }, cookie: adminCookie });
+  assert.equal(lu.status, 200);
+  assert.equal(lu.json.candidates.length, 2); // both Samesons, not Zed
+  const taken = lu.json.candidates.find((c) => c.hash === 'dadhash00001');
+  assert.match(taken.assigned_to, /Sam Sameson/); // flagged as the father's
+  const free = lu.json.candidates.find((c) => c.hash === 'sonhash00001');
+  assert.equal(free.assigned_to, null);
+  delete process.env.TLC_BASE;
+
+  // ---- merge carries the TLC mapping and queued pushes across
+  const oldRec = mkPerson('Pat', 'Parent', { is_youth: 0, tlc_user_id: 'pathash00001' });
+  const newRec = mkPerson('Pat', 'Parent', { is_youth: 0 });
+  db.prepare('UPDATE person SET member_id = ? WHERE id = ?').run('M-TEST-1', newRec);
+  db.prepare(`INSERT INTO tlc_attendance_push (event_id, person_id, tlc_event_id, use_lesson_plans, status)
+              VALUES (?, ?, ?, 1, 'pending')`).run(ev, oldRec, EV);
+  const merged = await req('POST', '/api/admin/merge', { body: { from_id: oldRec, into_id: newRec }, cookie: adminCookie });
+  assert.equal(merged.status, 200);
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(newRec).tlc_user_id, 'pathash00001');
+  assert.equal(rowFor(ev, newRec).status, 'pending'); // queue row re-pointed
+  assert.equal(rowFor(ev, oldRec), undefined);
 });
