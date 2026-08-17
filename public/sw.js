@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v30'; // v30: user guide covers write-back, auto-select window, multi-event, TLC ids
+const VERSION = 'tc-v31'; // v31: badge QR auto-fills TLC user ids (link, scan, startup backfill)
 const SHELL = [
   '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',

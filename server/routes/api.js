@@ -102,7 +102,14 @@ router.get('/search', (req, res) => {
 router.get('/badge/:code', (req, res) => {
   const code = String(req.params.code).trim();
   const exact = db.prepare(`SELECT * FROM person WHERE badge_code = ? AND status != 'merged'`).get(code);
-  if (exact) return res.json({ match: 'badge', person: personView(exact) });
+  if (exact) {
+    // the badge payload carries the member's TLC hashid — backfill the
+    // write-back mapping on scan if it's still empty (fill-only, never
+    // overwrites a hand-set id)
+    try { require('../lib/attendanceSync').adoptBadgeTlcId(exact.id, code); }
+    catch (e) { console.error('[tlc-attendance] badge adopt failed:', e.message); }
+    return res.json({ match: 'badge', person: personView(exact) });
+  }
   // payload format "<memberID> | <token>" — reprinted badge: same ID, new token
   const memberId = code.split('|')[0].trim();
   if (memberId) {
@@ -121,6 +128,9 @@ router.post('/badge/link', express.json(), (req, res) => {
   }
   db.prepare(`UPDATE person SET badge_code = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(String(code).trim(), person_id);
+  // new/reprinted badge = fresh TLC hashid straight from the card
+  try { require('../lib/attendanceSync').adoptBadgeTlcId(person_id, code); }
+  catch (e) { console.error('[tlc-attendance] badge adopt failed:', e.message); }
   res.json({ ok: true });
 });
 

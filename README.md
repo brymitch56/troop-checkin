@@ -99,7 +99,7 @@ The importer reads the standard Trail Life Connect member export: a title row, t
 
 ## Badge enrollment
 
-Badges carry a QR payload of `<memberID> | <token>`. The first scan of a new badge whose member number matches the roster prompts "Link badge" — that's normal enrollment, and it repeats automatically when a badge is reprinted (same member number, new token). Any 2D/QR Bluetooth scanner in HID keyboard mode works; phone cameras work without extra hardware.
+Badges carry a QR payload of `<memberID> | <token>`, where the token is the member's Trail Life Connect user id. The first scan of a new badge whose member number matches the roster prompts "Link badge" — that's normal enrollment, and it repeats automatically when a badge is reprinted (same member number, new token). Linking (or scanning) a badge also auto-fills the person's TLC user id for the attendance write-back — fill-only, never overwriting a hand-set mapping — and the server backfills everyone with a linked badge at startup. Any 2D/QR Bluetooth scanner in HID keyboard mode works; phone cameras work without extra hardware.
 
 ## Backups & restore
 

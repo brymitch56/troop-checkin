@@ -228,6 +228,36 @@ test('enqueue: off by default; global switch; per-event override; visitor skip; 
   assert.equal(A.enqueue(evAlways, [p1]).queued, 1); // override beats global off
 });
 
+// ------------------------------------------------- badge-derived ids -------
+test('badge TLC ids: parse, adopt fill-only, startup backfill', () => {
+  // payload parsing: "<memberID> | <TLC hashid>"
+  assert.equal(A.tlcIdFromBadge('2023-000123 | abcdef123456'), 'abcdef123456');
+  assert.equal(A.tlcIdFromBadge('2023-000123|abcdef123456'), 'abcdef123456');
+  assert.equal(A.tlcIdFromBadge('2023-000123'), null);            // no token half
+  assert.equal(A.tlcIdFromBadge('2023-000123 | not a hash!'), null);
+  assert.equal(A.tlcIdFromBadge(''), null);
+
+  // adopt: fills empty, never overwrites, never duplicates
+  const a = mkPerson('Badge', 'Bearer');
+  const b = mkPerson('Hand', 'Set', { tlc_user_id: 'handset00001' });
+  const c = mkPerson('Dupe', 'Target');
+  assert.equal(A.adoptBadgeTlcId(a, '2024-000001 | badgehash001'), true);
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(a).tlc_user_id, 'badgehash001');
+  assert.equal(A.adoptBadgeTlcId(b, '2024-000002 | otherhash002'), false); // hand-set wins
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(b).tlc_user_id, 'handset00001');
+  assert.equal(A.adoptBadgeTlcId(c, '2024-000003 | badgehash001'), false); // held by a
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(c).tlc_user_id, null);
+
+  // backfill sweep: only rows with a badge and no id
+  const d = mkPerson('Fill', 'Me');
+  db.prepare('UPDATE person SET badge_code = ? WHERE id = ?').run('2025-000004 | fillhash0004', d);
+  db.prepare('UPDATE person SET badge_code = ? WHERE id = ?').run('2025-000005 | keephash0005', b);
+  const r = A.backfillFromBadges();
+  assert.ok(r.filled >= 1);
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(d).tlc_user_id, 'fillhash0004');
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(b).tlc_user_id, 'handset00001');
+});
+
 // ------------------------------------------------------------ push flow ----
 test('runPush: marks attendees, learns hashids, skips already-attended, records failures', async () => {
   db.prepare('DELETE FROM tlc_attendance_push').run(); // isolate from enqueue tests
@@ -410,6 +440,19 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   const free = lu.json.candidates.find((c) => c.hash === 'sonhash00001');
   assert.equal(free.assigned_to, null);
   delete process.env.TLC_BASE;
+
+  // ---- badge link + scan populate the TLC id over HTTP
+  const scout = mkPerson('Badge', 'Linker');
+  db.prepare('UPDATE person SET member_id = ? WHERE id = ?').run('2024-909090', scout);
+  const link = await req('POST', '/api/badge/link',
+    { body: { person_id: scout, code: '2024-909090 | linkhash0001' }, cookie: doorCookie });
+  assert.equal(link.status, 200);
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(scout).tlc_user_id, 'linkhash0001');
+  // scanning an already-linked badge backfills a cleared mapping
+  db.prepare('UPDATE person SET tlc_user_id = NULL WHERE id = ?').run(scout);
+  const scan = await req('GET', '/api/badge/' + encodeURIComponent('2024-909090 | linkhash0001'), { cookie: doorCookie });
+  assert.equal(scan.json.match, 'badge');
+  assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(scout).tlc_user_id, 'linkhash0001');
 
   // ---- merge carries the TLC mapping and queued pushes across
   const oldRec = mkPerson('Pat', 'Parent', { is_youth: 0, tlc_user_id: 'pathash00001' });

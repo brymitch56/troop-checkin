@@ -256,6 +256,47 @@ async function toggleAttendance(s, { userId, eventId, useLessonPlans }) {
   if (res.status !== 200) throw new Error(`toggle-attendance returned status ${res.status}.`);
 }
 
+// ------------------------------------------------- badge-derived ids -------
+// Badge QR payloads are "<memberID> | <TLC user hashid>" — TLC prints its
+// own hashid on every membership card, so a linked badge already tells us
+// the mapping the write-back needs. Fill-when-empty only: a hand-set id is
+// never overwritten, and an id another person holds is never duplicated.
+function tlcIdFromBadge(code) {
+  const parts = String(code || '').split('|');
+  if (parts.length < 2) return null;
+  const token = parts[1].trim();
+  return /^[a-z0-9]{8,16}$/i.test(token) ? token : null;
+}
+
+// Set person.tlc_user_id from a badge payload if it is empty and the id is
+// free. Returns true when a value was written.
+function adoptBadgeTlcId(personId, code) {
+  const id = tlcIdFromBadge(code);
+  if (!id) return false;
+  const p = db.prepare('SELECT id, tlc_user_id FROM person WHERE id = ?').get(personId);
+  if (!p || p.tlc_user_id) return false;
+  const holder = db.prepare(
+    `SELECT id FROM person WHERE tlc_user_id = ? AND id != ? AND status != 'merged'`).get(id, personId);
+  if (holder) return false;
+  db.prepare(`UPDATE person SET tlc_user_id = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(id, personId);
+  return true;
+}
+
+// One-time-ish sweep over everyone with a linked badge but no TLC id —
+// idempotent and cheap, run at every server start so an upgrade backfills
+// the whole troop without anyone rescanning.
+function backfillFromBadges() {
+  let filled = 0;
+  for (const p of db.prepare(
+    `SELECT id, badge_code FROM person
+      WHERE badge_code IS NOT NULL AND tlc_user_id IS NULL AND status != 'merged'`).all()) {
+    if (adoptBadgeTlcId(p.id, p.badge_code)) filled++;
+  }
+  if (filled) console.log(`[tlc-attendance] backfilled ${filled} TLC id(s) from linked badges`);
+  return { filled };
+}
+
 // ------------------------------------------------------- id lookup ---------
 // Admin helper: read one TLC event roster and return every entry sharing the
 // person's last name, so the operator can pick the right hashid instead of
@@ -408,6 +449,7 @@ module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
   enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
+  tlcIdFromBadge, adoptBadgeTlcId, backfillFromBadges,
   normName, nameKey, parseUserList, matchPerson,
   tlcSession, fetchUserList, toggleAttendance,
   runPush, isRunning, scheduleSweep,
