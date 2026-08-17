@@ -108,7 +108,8 @@
   <a href="#admin-events">Events &amp; calendar sync</a>
   <a href="#txns">Transactions, voids &amp; corrections</a>
   <a href="#reports">Reports, renewals &amp; CSV exports</a>
-  <a href="#import">Roster import</a>
+  <a href="#import">Roster import &amp; sync</a>
+  <a href="#writeback">TLC attendance write-back</a>
   <a href="#staff">Staff accounts</a>
   <a href="#backups">Backups</a>
   <span class="part">Reference</span>
@@ -127,16 +128,21 @@
     <li>Door staff enter their <b>PIN</b>; admins without a PIN type their password. (An admin who has been given a PIN uses the PIN.)</li>
   </ol>
   <p>Your name shows in the top-right pill; tap it to sign out. The kiosk signs itself out after ~20 minutes of inactivity — but never while a cart is in progress or while offline.</p>
+  <ul>
+    <li><b>No signal? You can still get in.</b> The staff list is cached, and the last person who signed in on the device gets a one-tap <b>"Continue offline as &lt;name&gt;"</b> entry, valid through their session window.</li>
+    <li>Door sessions are <b>event-aware</b>: they stretch to cover an ongoing event (or one starting within 24 h) plus 12 hours after it ends — so a phone that queued records all weekend at a campout is still signed in when it reconnects. Admin sessions stay short (2 h).</li>
+  </ul>
   <div class="rule">Every check-in records <em>which staff member ran it</em>, so each person should use their own account.</div>
 </section>
 
 <section id="events">
   <h3>Choosing the event</h3>
-  <p>Sign-ins always attach to an event. The kiosk picks the event automatically when exactly one is happening right now; otherwise tap the <b>event pill</b> (top of the screen) to choose. Events come from the troop calendar (synced nightly) — you can also create one on the spot from the same picker.</p>
+  <p>Sign-ins always attach to an event. The kiosk picks one automatically from <b>30 minutes before start until an hour after the end</b> — early arrivals and stragglers are covered. Tap the <b>event pill</b> (top of the screen) any time to switch. Events come from the troop calendar (synced nightly) — you can also create one on the spot from the same picker.</p>
   <ul>
+    <li><b>Overlapping events</b>: the kiosk follows the door traffic. An event about to start (sign-in rush) wins over one that's mid-session; an event wrapping up or just ended (sign-out rush) wins the kiosk back. Not what you need? The pill switches in one tap.</li>
     <li>Events are listed soonest-first; past events are tucked behind a "Show past events" toggle.</li>
     <li>Multi-day events (campouts) stay current through their final day — sign-outs days after the sign-in attach to the right event automatically.</li>
-    <li><b>Sign-out never needs the event</b>: it follows the person's open sign-in.</li>
+    <li><b>Sign-out follows the person's open sign-in.</b> If someone is signed into <em>two</em> overlapping events, sign-out closes the event the kiosk has selected — check the pill first.</li>
   </ul>
 </section>
 
@@ -157,7 +163,9 @@
   <p>People you add stack up in the <b>cart</b> so one guardian signature can cover several kids. The kiosk sets the direction automatically: someone currently on site goes <b>OUT</b>, everyone else goes <b>IN</b> — and one cart is all-IN or all-OUT (finish one direction before starting the other).</p>
   <ul>
     <li>Each youth signing IN shows an <b>emergency phone</b> field, pre-filled from last time (or the primary guardian's mobile). Confirm or update it — it's snapshotted onto the record.</li>
+    <li>Each youth signing OUT shows <b>"Completed all planned requirements for this event"</b>, already checked. Uncheck it only when a youth didn't finish what the event set out to do — their attendance still counts, but no advancement is credited on Trail Life Connect (see the write-back section in Part 2).</li>
     <li>Adults are only tracked at events marked "Track adult attendance"; at youth-only meetings the kiosk politely refuses to add them.</li>
+    <li>Someone already on site can still be signed <b>IN to a second, overlapping event</b> (a meeting inside a campout) — the kiosk asks you to confirm, and they're then on site in both until each is signed out.</li>
     <li>Tap ✕ on a row to remove it; <b>Clear</b> empties the cart.</li>
   </ul>
 </section>
@@ -184,7 +192,7 @@
 
 <section id="onsite">
   <h3>The "On site" screen &amp; texting guardians</h3>
-  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, filterable by patrol. From this screen (once SMS is set up):</p>
+  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, filterable by patrol. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. From this screen (once SMS is set up):</p>
   <ul>
     <li><b>🔔 Text guardians</b> — one message per family listing all their youth still on site ("please pick up"). A guardian with three kids on site gets <em>one</em> text, not three. The results screen lists exactly who was <em>not</em> contacted and why (no consent, no mobile, STOPped) so you can phone those families instead.</li>
     <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up).</li>
@@ -201,8 +209,9 @@
   <h3>Working offline</h3>
   <p>The kiosk keeps working when the Wi-Fi or server drops (requires HTTPS or an installed PWA; it caches the roster at every login):</p>
   <ul>
-    <li>Search, badge lookup, and guardian lists come from the last-saved roster snapshot — including membership-expiry warnings.</li>
+    <li>Search, badge lookup, guardian lists, and the <b>On site</b> screen (with emergency contacts) come from the last-saved roster snapshot — including membership-expiry warnings.</li>
     <li>Sign-ins/outs are saved locally with a <b>⏳ queued</b> pill and sync automatically when the connection returns (usually within 20 seconds).</li>
+    <li><b>Weak signal behaves like no signal</b>: requests time out after a few seconds and the kiosk falls back to offline mode instead of hanging — a record that actually landed is never duplicated on retry.</li>
     <li>If a queued record is rejected on sync (e.g. another station already signed that youth out), it moves to a <b>⚠ conflicts</b> pill — tap it to review and clear. The server's version of events is the truth.</li>
   </ul>
   <div class="tip">Before a campout at a no-signal site: open the app once on Wi-Fi while signed in — that refreshes the offline roster.</div>
@@ -222,8 +231,10 @@
   <ul>
     <li>Edit names, nickname, patrol/level (youth) or role (adults), phones, birthdate, <b>membership expires</b>, email, status, notes.</li>
     <li><b>Photos</b> (youth): add a photo for visual confirmation at pickup — it appears in the kiosk sign modal.</li>
-    <li><b>Merge</b>: a visitor youth who later joins the troop can be merged into their roster record — attendance history moves with them.</li>
+    <li><b>TLC user id</b>: pins the person to one Trail Life Connect profile for the attendance write-back. Leave blank and the push matches by name — fine until two people share a name (a youth and a parent, most often). <b>Find TLC id from an event roster…</b> reads a linked event's TLC list and offers the same-surname entries to click; ids already assigned to someone else are flagged. Once set, the id is final: if that profile isn't on an event's roster the push fails visibly rather than guessing a namesake.</li>
+    <li><b>Merge</b>: any record <em>without a member number</em> can be merged into its roster record — a visitor youth who joins, or an adult who existed as "just a parent" before completing leader registration (same individual, two records). Attendance history, guardian links, badge, and the TLC id all move to the surviving record. Youth merge into youth, adults into adults, and it can't be undone.</li>
   </ul>
+  <div class="tip"><b>Same-name records</b>: the People tab shows a banner whenever two people share a name, with each record's type, member #, and whether its TLC id is set. Work that list down to zero "no TLC id" tags and the write-back can never confuse a father with his son.</div>
   <h3>Sorting and filtering any table</h3>
   <p>Every table in the admin area (People, Events, Transactions, Messages, reports, renewals, import history, staff, and the dashboard's on-site list) sorts and filters the same way: <b>click a column header</b> for a small menu with <b>Sort A–Z / Z–A</b> and a checkbox list of everything in that column. Tick several values to see just those — for example Patrol = Eagles <em>and</em> Wolves, or Status = inactive. Use the search box in the menu when a column has many values.</p>
   <ul>
@@ -265,6 +276,7 @@
   <ul>
     <li>Events sync nightly from the troop calendar feed (or on demand: Dashboard → Sync iCal now). Calendar times re-assert on each sync; other edits stick.</li>
     <li>Edit title/location/times, <b>Track adult attendance</b> (off = youth-only, adults refused at the kiosk), and the <b>SMS reminder delay</b>.</li>
+    <li><b>TLC attendance push</b>: calendar-synced events show <b>linked ✓</b> (they map automatically to their Trail Life Connect event) and a per-event override — follow the global setting, never push, or always push. "Always" is handy for testing one event before enabling the write-back troop-wide; manual events aren't linked and are skipped.</li>
     <li>An event that disappears from the calendar feed is deleted if unused, or kept and flagged "gone from feed" if it has attendance records.</li>
     <li>Events with transactions can't be deleted — history is permanent.</li>
   </ul>
@@ -276,7 +288,7 @@
   <h3>Fixing mistakes — nothing is ever deleted</h3>
   <ul>
     <li><b>Void</b> a transaction: a correcting record is added and linked. Voiding a sign-IN takes the youth off site; voiding a sign-OUT puts them back on site.</li>
-    <li><b>Admin close</b> (Dashboard): closes a lingering open sign-in without a guardian signature — e.g. a family that walked out without signing. Recorded as an admin action under your name.</li>
+    <li><b>Admin close</b> (Dashboard): closes a lingering open sign-in without a guardian signature — e.g. a family that walked out without signing. Recorded as an admin action under your name. (With the TLC write-back enabled it still records attendance, with advancement credited — they did attend.)</li>
   </ul>
 </section>
 
@@ -305,6 +317,16 @@
   </ul>
   <h3>Automatic roster sync</h3>
   <p>The Import tab can also fetch the export from Trail Life Connect <em>for</em> you — on a weekly schedule (if the server admin enabled the timer) or via <b>Sync now</b>. A fetch never changes anything by itself: it stages a <b>pending import</b> showing when it was fetched, the row count, and the full add/update/deactivate diff, with <b>Approve</b> / <b>Discard</b> buttons. Approving runs exactly the same commit path as a manual upload; only one pending import exists at a time (a newer fetch replaces the old one and says so). The panel shows the last run's status, so a broken sync is visible instead of silent. The Trail Life Connect login it uses can be entered and updated right in the panel ("Trail Life Connect credentials") — the password is stored on the check-in server, used only to download the export, and never displayed again. One caution: if that account has multiple Trail Life Connect roles, TLC signs in under whichever role was used <em>last</em>, and the export only works from a role with member-list access (like Troopmaster) — if a sync fails or looks too small, check the account's active role first.</p>
+
+  <h3 id="writeback">TLC attendance write-back</h3>
+  <p>The Import tab's other panel closes the loop in the opposite direction: when enabled, everyone who <b>signs out</b> at the kiosk (or is closed out by an admin, or confirmed picked up by SMS) is marked <b>Attended</b> on the matching Trail Life Connect event — the same tick you'd make by hand on TLC's Track Attendance page. It's <b>off by default</b> and uses the same saved TLC credentials as the roster sync.</p>
+  <ul>
+    <li><b>Advancement</b>: the sign-out cart's "Completed all planned requirements" answer decides, per youth, whether TLC also credits the event's activity plans. Checked (the default) = attendance + advancement; unchecked = attendance only. The panel's global "Track advancement" switch is a master override for the whole feature.</li>
+    <li><b>When it happens</b>: sign-outs queue locally and a background job pushes them within about 10 minutes; <b>Push now</b> does it immediately. The log lists every person, event, and result — ✅ sent, ⏳ pending, or ❌ failed with the reason and a <b>Retry failed</b> button.</li>
+    <li><b>It only ever marks.</b> The app never un-marks attendance on TLC (that would also erase advancement checkmarks) — undoing anything stays a deliberate action on the TLC site.</li>
+    <li><b>Who's skipped</b>: visitors (they don't exist on TLC), manual events (no TLC link), and anyone whose name can't be matched confidently — two identical names on a TLC roster fail explicitly instead of guessing. Fix those by setting the person's <b>TLC user id</b> in the person editor (see People).</li>
+    <li><b>If the TLC login is rejected</b>, pushing pauses and the panel says so in red — no retry loops that could lock the account. Re-save the credentials (or press Push now once fixed) to resume.</li>
+  </ul>
 </section>
 
 <section id="staff">
@@ -340,6 +362,11 @@
     <tr><td>Load a new roster export</td><td>Admin → Import → Preview → Commit</td></tr>
     <tr><td>See who needs to renew membership</td><td>Admin → Reports → Membership renewals (30/60/90 + CSV)</td></tr>
     <tr><td>Pull attendance for the year</td><td>Admin → Reports → date range → Run summary / CSVs</td></tr>
+    <tr><td>Note a youth didn't finish the event's requirements</td><td>Sign-out cart → uncheck "Completed all planned requirements" (attendance still counts; no advancement)</td></tr>
+    <tr><td>Sign someone into a second overlapping event</td><td>Add to cart with the second event selected → confirm the "also sign into…" prompt</td></tr>
+    <tr><td>Push today's attendance to Trail Life Connect now</td><td>Admin → Import → TLC attendance write-back → Push now (otherwise it runs itself every ~10 min)</td></tr>
+    <tr><td>Keep a father/son name mix-up out of TLC</td><td>Admin → People → open each → set TLC user id ("Find TLC id…" helps) — the same-name banner lists who needs it</td></tr>
+    <tr><td>Combine a parent's two records (registered later)</td><td>Admin → People → open the record <em>without</em> a member # → Merge into roster member…</td></tr>
   </table>
 </section>
 
@@ -354,6 +381,9 @@
     <tr><td>Adult can't be added to the cart</td><td>This event doesn't track adults. That's per-event: Admin → Events → Track adult attendance.</td></tr>
     <tr><td>Guardian didn't get the pickup text</td><td>Check the kiosk's "not contacted" list or Admin → Messages: no consent/opt-in, no mobile number, or they texted STOP.</td></tr>
     <tr><td>Orange membership tag on a youth</td><td>Renewal due within 30 days (or lapsed). Check-in is unaffected; mention it to the family.</td></tr>
+    <tr><td>Kiosk picked the wrong event</td><td>Overlapping events — the kiosk guesses by which rush is nearest. Tap the event pill and switch; sign-outs follow the selected event.</td></tr>
+    <tr><td>❌ row in the TLC write-back log</td><td>Open it: usually a name that isn't (or is twice) on the TLC roster. Set that person's TLC user id in the editor, then Retry failed.</td></tr>
+    <tr><td>Write-back panel shows a red "paused" line</td><td>The TLC login was rejected — re-save the credentials under Automatic roster sync (it never retries by itself, to protect the account).</td></tr>
     <tr><td>App looks stale after an update</td><td>Reload twice (the app shell is cached for offline use; the second reload activates the new version).</td></tr>
     <tr><td>Something looks wrong server-side</td><td>Contact the troop's app administrator — the server keeps full logs, and nightly backups mean nothing is lost.</td></tr>
   </table>
