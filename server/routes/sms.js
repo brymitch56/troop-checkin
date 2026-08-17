@@ -73,6 +73,7 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
   if (text === 'Y' || text === 'YES') {
     // close open sign-ins for this guardian's notified youth
     const closed = [];
+    const tlcQueue = []; // enqueued AFTER the transaction commits
     const run = db.transaction(() => {
       for (const r of guardianRows) {
         const open = db.prepare(
@@ -102,9 +103,16 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
           .run(open.in_txn_id, r.youth_id);
         db.prepare(`UPDATE notification SET status = 'replied_y' WHERE id = ?`).run(notified.id);
         closed.push(open.nickname || open.first_name);
+        tlcQueue.push({ event_id: open.event_id, person_id: r.youth_id });
       }
     });
     run();
+    // SMS pickup is a departure too — record TLC attendance (advancement
+    // defaults to yes; no-op unless the write-back is enabled)
+    for (const q of tlcQueue) {
+      try { require('../lib/attendanceSync').enqueue(q.event_id, [q.person_id]); }
+      catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
+    }
     return twiml(res, closed.length
       ? `Thanks — ${closed.join(', ')} marked as picked up.`
       : 'No open check-ins were waiting on you. If something looks wrong, please contact the leaders.');

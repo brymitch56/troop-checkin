@@ -3,6 +3,13 @@
 **Status: implemented** — `lib/attendanceSync.js`, migration
 `009_tlc_attendance.sql`, admin panel under Admin → Import, per-event
 override in the event editor. Off by default; enable in Admin → Import.
+Attendance is recorded at **sign-out** (kiosk sign-out, admin close, or SMS
+pickup confirm — when the visit is over and participation is known). The
+sign-out cart asks per youth "Completed all planned requirements for this
+event" (default yes): checked → `use_lesson_plans=1` (advancement credit),
+unchecked → `use_lesson_plans=0` (attendance only, this youth only). The
+global advancement setting in Admin → Import is a master switch ANDed with
+the per-youth answer.
 Event mapping needs no admin action: the TLC iCal feed UID embeds the event
 hashid (`<16>-<hashid 12>-<15>`, verified against `/databuilder/search-events`
 for events across 2024–2026), so every synced calendar event is born linked.

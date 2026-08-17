@@ -448,7 +448,12 @@ router.post('/close-open', (req, res) => {
       .run(open.in_txn_id, person_id);
     return txnId;
   });
-  res.json({ ok: true, txn_id: run() });
+  const txnId = run();
+  // an admin close is still a departure — record TLC attendance (advancement
+  // defaults to yes; the write-back is off unless enabled in Admin → Import)
+  try { require('../lib/attendanceSync').enqueue(open.event_id, [person_id]); }
+  catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
+  res.json({ ok: true, txn_id: txnId });
 });
 
 // -------------------------------------------------------- visitor merge ----

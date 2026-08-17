@@ -578,6 +578,18 @@ function renderCart() {
       i2.oninput = () => (c.emerg2 = i2.value);
       li.appendChild(wrap);
     }
+    if (p.is_youth && state.direction === 'out') {
+      // Advancement verification for the TLC write-back: defaults to yes;
+      // unchecking records attendance on TLC WITHOUT advancement credit for
+      // this youth only (they didn't finish what the event had planned).
+      const wrap = document.createElement('label');
+      wrap.className = 'check adv-check';
+      wrap.innerHTML = `<input type="checkbox" ${c.advancement !== false ? 'checked' : ''}>
+        Completed all planned requirements for this event`;
+      const cb = wrap.querySelector('input');
+      cb.onchange = () => (c.advancement = cb.checked);
+      li.appendChild(wrap);
+    }
     list.appendChild(li);
   });
 }
@@ -665,6 +677,8 @@ async function submitTxn(extra, force) {
       person_id: c.person.id,
       emerg_phone_1: c.emerg1 || undefined,
       emerg_phone_2: c.emerg2 || undefined,
+      // sign-out only: TLC advancement verification (default yes)
+      advancement: state.direction === 'out' ? c.advancement !== false : undefined,
     })),
     force: force || undefined,
     ...extra,

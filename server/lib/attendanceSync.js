@@ -87,9 +87,15 @@ function pushEnabledFor(event, settings = getSettings()) {
 }
 
 // --------------------------------------------------------------- queue -----
-// Called from the sign-in path AFTER the txn commits. Must never throw into
+// Called from every SIGN-OUT path AFTER the txn commits (kiosk sign-out,
+// admin close, SMS pickup confirm) — attendance is recorded when the visit
+// is over, so the "completed planned requirements" answer is known.
+// `entries` are person ids or {person_id, advancement}; advancement defaults
+// to true and is ANDed with the global advancement setting: unchecking the
+// kiosk box pushes attendance-only (use_lesson_plans=0) for that person,
+// while everyone else still gets advancement credit. Must never throw into
 // the kiosk flow — callers wrap in try/catch, and this only touches SQLite.
-function enqueue(eventId, personIds) {
+function enqueue(eventId, entries) {
   const event = db.prepare('SELECT * FROM event WHERE id = ?').get(eventId);
   if (!event) return { queued: 0, reason: 'no such event' };
   const settings = getSettings();
@@ -103,10 +109,13 @@ function enqueue(eventId, personIds) {
      ON CONFLICT(event_id, person_id) DO NOTHING`);
   let queued = 0;
   const run = db.transaction(() => {
-    for (const pid of personIds) {
+    for (const e of entries) {
+      const pid = typeof e === 'object' ? e.person_id : e;
+      const advancement = typeof e === 'object' ? e.advancement !== false : true;
       const p = db.prepare(`SELECT id, status FROM person WHERE id = ?`).get(pid);
       if (!p || p.status === 'visitor') continue; // visitors don't exist on TLC
-      queued += ins.run(eventId, pid, tlcEventId, settings.use_lesson_plans).changes;
+      const lessons = settings.use_lesson_plans && advancement ? 1 : 0;
+      queued += ins.run(eventId, pid, tlcEventId, lessons).changes;
     }
   });
   run();

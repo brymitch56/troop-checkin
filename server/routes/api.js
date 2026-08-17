@@ -402,13 +402,17 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
     throw err;
   }
 
-  // TLC write-back: sign-ins enqueue an Attended mark for the mapped TLC
-  // event (lib/attendanceSync — off unless enabled in Admin → Import). A
-  // background sweep does the actual network push; this is one local INSERT
-  // and must never break the kiosk response.
-  if (b.direction === 'in') {
+  // TLC write-back: SIGN-OUTS enqueue an Attended mark for the mapped TLC
+  // event (lib/attendanceSync — off unless enabled in Admin → Import).
+  // Recording at sign-out means the per-person "completed planned
+  // requirements" answer rides along: unchecked pushes attendance WITHOUT
+  // advancement (use_lesson_plans=0) for that person only. A background
+  // sweep does the actual network push; this is one local INSERT and must
+  // never break the kiosk response.
+  if (b.direction === 'out') {
     try {
-      require('../lib/attendanceSync').enqueue(b.event_id, entries.map((e) => e.person_id));
+      require('../lib/attendanceSync').enqueue(b.event_id,
+        entries.map((e) => ({ person_id: e.person_id, advancement: e.advancement !== false })));
     } catch (e) {
       console.error('[tlc-attendance] enqueue failed:', e.message);
     }

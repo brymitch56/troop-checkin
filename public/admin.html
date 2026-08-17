@@ -214,12 +214,14 @@
       <h3>TLC attendance write-back
         <button id="tlca-push" class="btn ghost small">Push now</button>
       </h3>
-      <p class="hint left">When enabled, everyone who signs in at the kiosk is also marked
-      <b>Attended</b> on the matching Trail Life Connect calendar event (matched automatically through
-      the iCal feed). With <i>advancement tracking</i> on, TLC then credits any activity plans attached
-      to that event — exactly like ticking the box on TLC's own Track Attendance page. The app only
-      ever <b>marks</b> attendance; it never un-marks anyone on TLC. Per-event overrides live in the
-      event editor on the Events tab.</p>
+      <p class="hint left">When enabled, everyone who <b>signs out</b> at the kiosk (or is closed out
+      by an admin / SMS pickup confirmation) is marked <b>Attended</b> on the matching Trail Life
+      Connect calendar event (matched automatically through the iCal feed). The sign-out cart asks
+      per youth whether they <i>completed all planned requirements</i> (default yes): checked pushes
+      attendance <b>with</b> advancement credit for the event's activity plans; unchecked pushes
+      attendance <b>without</b> advancement for that youth only — exactly like TLC's own Track
+      Attendance page with the advancement box on or off. The app only ever <b>marks</b> attendance;
+      it never un-marks anyone on TLC. Per-event overrides live in the event editor on the Events tab.</p>
       <div class="row wrap">
         <label class="check"><input id="tlca-enabled" type="checkbox"> Push attendance to Trail Life Connect</label>
         <label class="check"><input id="tlca-lessons" type="checkbox"> Track advancement with event activity plans</label>

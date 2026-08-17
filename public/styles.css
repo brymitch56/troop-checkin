@@ -136,6 +136,8 @@ a.pill { text-decoration: none; display: inline-flex; align-items: center; }
 }
 .emerg-wrap { grid-column: 1 / -1; display: flex; gap: 8px; }
 .emerg-wrap input { margin: 0; font-size: 15px; padding: 9px; }
+.adv-check { grid-column: 1 / -1; font-size: 14px; margin: 2px 0 0; }
+.adv-check input { width: auto; margin: 0; }
 
 /* ---------- footer actions ---------- */
 .actions {

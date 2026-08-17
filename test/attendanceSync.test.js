@@ -187,6 +187,18 @@ test('enqueue: off by default; global switch; per-event override; visitor skip; 
   assert.equal(A.enqueue(ev, [p1]).queued, 0);          // dedupe
   assert.equal(rowFor(ev, p1).use_lesson_plans, 1);     // frozen from settings
 
+  // per-person advancement flag: unchecked = attendance WITHOUT advancement
+  const p2 = mkPerson('Amy', 'Alpha');
+  assert.equal(A.enqueue(ev, [{ person_id: p2, advancement: false }]).queued, 1);
+  assert.equal(rowFor(ev, p2).use_lesson_plans, 0);
+
+  // global advancement master switch ANDs with the per-person answer
+  A.saveSettings({ use_lesson_plans: 0 });
+  const p3 = mkPerson('Arn', 'Alpha');
+  assert.equal(A.enqueue(ev, [{ person_id: p3, advancement: true }]).queued, 1);
+  assert.equal(rowFor(ev, p3).use_lesson_plans, 0);
+  A.saveSettings({ use_lesson_plans: 1 });
+
   const evNever = mkEvent({ tlc_push: 0 });
   assert.equal(A.enqueue(evNever, [p1]).queued, 0);
 
@@ -313,14 +325,35 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   const list = await req('GET', '/api/admin/events?include_past=1', { cookie: adminCookie });
   assert.equal(list.json.find((e) => e.id === ev).tlc_event_id, EV);
 
-  // a kiosk sign-in enqueues a push row (settings enabled above)
+  // sign-IN does NOT enqueue; the sign-OUT does, carrying the per-person
+  // "completed planned requirements" answer (false here → no advancement)
   const adult = mkPerson('Ann', 'Adult', { is_youth: 0 });
   db.prepare('UPDATE event SET track_adults = 1 WHERE id = ?').run(ev);
-  const txn = await req('POST', '/api/txn', {
+  await req('PUT', '/api/admin/tlc-attendance/settings',
+    { body: { enabled: true, use_lesson_plans: true }, cookie: adminCookie });
+  const txnIn = await req('POST', '/api/txn', {
     cookie: doorCookie,
     body: { client_uuid: 'tlca-uuid-1', direction: 'in', event_id: ev, entries: [{ person_id: adult }] },
   });
-  assert.equal(txn.status, 200);
+  assert.equal(txnIn.status, 200);
+  assert.equal(rowFor(ev, adult), undefined); // nothing queued at sign-in
+
+  const txnOut = await req('POST', '/api/txn', {
+    cookie: doorCookie,
+    body: { client_uuid: 'tlca-uuid-2', direction: 'out', event_id: ev, entries: [{ person_id: adult, advancement: false }] },
+  });
+  assert.equal(txnOut.status, 200);
   assert.equal(rowFor(ev, adult).status, 'pending');
-  assert.equal(rowFor(ev, adult).use_lesson_plans, 0); // frozen from the PUT above
+  assert.equal(rowFor(ev, adult).use_lesson_plans, 0); // unchecked box → attendance only
+
+  // admin close-open also records attendance (advancement defaults to yes)
+  const adult2 = mkPerson('Abe', 'Adult', { is_youth: 0 });
+  await req('POST', '/api/txn', {
+    cookie: doorCookie,
+    body: { client_uuid: 'tlca-uuid-3', direction: 'in', event_id: ev, entries: [{ person_id: adult2 }] },
+  });
+  const close = await req('POST', '/api/admin/close-open', { body: { person_id: adult2 }, cookie: adminCookie });
+  assert.equal(close.status, 200);
+  assert.equal(rowFor(ev, adult2).status, 'pending');
+  assert.equal(rowFor(ev, adult2).use_lesson_plans, 1);
 });
