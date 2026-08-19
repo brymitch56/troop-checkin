@@ -1,6 +1,6 @@
 {
   "name": "troop-checkin",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Self-hosted youth sign-in/out kiosk for troops (Raspberry Pi, Windows, or Docker)",
   "private": true,
   "type": "commonjs",
