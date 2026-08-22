@@ -145,10 +145,21 @@ router.get('/person/:id/guardians', (req, res) => {
   res.json(rows);
 });
 
-// quick-add: visitor youth (with guardian) or unregistered adult
+// quick-add: visitor youth (with guardian) or unregistered adult.
+// Youth visitors REQUIRE the full contact set (name, guardian name, phone,
+// email) — open-house follow-up depends on it. Adults need a name only.
 router.post('/visitor', express.json(), (req, res) => {
-  const { first_name, last_name, is_youth, guardian_name, guardian_phone, notes } = req.body || {};
+  const { first_name, last_name, is_youth, guardian_name, guardian_phone, guardian_email, notes } = req.body || {};
   if (!first_name || !last_name) return res.status(400).json({ error: 'First and last name are required.' });
+  if (is_youth) {
+    if (!String(guardian_name || '').trim() || !String(guardian_phone || '').trim() ||
+        !String(guardian_email || '').trim()) {
+      return res.status(400).json({ error: "Parent/guardian name, phone, AND email are all required for a youth visitor." });
+    }
+    if (!/^\S+@\S+\.\S+$/.test(String(guardian_email).trim())) {
+      return res.status(400).json({ error: "That email doesn't look right — check it and try again." });
+    }
+  }
   const tx = db.transaction(() => {
     const p = db.prepare(
       `INSERT INTO person (is_youth, first_name, last_name, status, notes)
@@ -160,9 +171,9 @@ router.post('/visitor', express.json(), (req, res) => {
       const gfirst = parts.shift() || guardian_name;
       const glast = parts.join(' ') || last_name.trim();
       const g = db.prepare(
-        `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, status)
-         VALUES (0, ?, ?, ?, 'active')`
-      ).run(gfirst, glast, guardian_phone || null);
+        `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, email, status)
+         VALUES (0, ?, ?, ?, ?, 'active')`
+      ).run(gfirst, glast, guardian_phone || null, String(guardian_email || '').trim() || null);
       db.prepare(
         `INSERT INTO person_guardian (youth_id, guardian_id, authorized, is_primary, source)
          VALUES (?, ?, 1, 1, 'manual')`

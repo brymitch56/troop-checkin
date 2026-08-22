@@ -121,15 +121,37 @@ test('badge: link, exact lookup, reprint falls back to member id', async () => {
   assert.equal(clash.status, 409);
 });
 
-test('visitor quick-add creates youth + guardian link', async () => {
-  const r = await req('POST', '/api/visitor', {
+test('visitor quick-add creates youth + guardian link; full contact set required', async () => {
+  // youth visitors need ALL of: guardian name, phone, email
+  const missing = await req('POST', '/api/visitor', {
     cookie: doorCookie,
     body: { first_name: 'Gabe', last_name: 'Visitor', is_youth: true, guardian_name: 'Gina Visitor', guardian_phone: '555-0301' },
+  });
+  assert.equal(missing.status, 400);
+  assert.match(missing.json.error, /email/i);
+  const badEmail = await req('POST', '/api/visitor', {
+    cookie: doorCookie,
+    body: { first_name: 'Gabe', last_name: 'Visitor', is_youth: true, guardian_name: 'Gina Visitor', guardian_phone: '555-0301', guardian_email: 'not-an-email' },
+  });
+  assert.equal(badEmail.status, 400);
+
+  const r = await req('POST', '/api/visitor', {
+    cookie: doorCookie,
+    body: { first_name: 'Gabe', last_name: 'Visitor', is_youth: true, guardian_name: 'Gina Visitor', guardian_phone: '555-0301', guardian_email: 'gina@example.com' },
   });
   assert.equal(r.status, 200);
   assert.equal(r.json.person.status, 'visitor');
   const g = await req('GET', `/api/person/${r.json.person.id}/guardians`, { cookie: doorCookie });
   assert.deepEqual(g.json.map((x) => `${x.first_name} ${x.last_name}`), ['Gina Visitor']);
+  // the email landed on the guardian record
+  const gid = g.json[0].id;
+  assert.equal(db.prepare('SELECT email FROM person WHERE id = ?').get(gid).email, 'gina@example.com');
+
+  // adult visitors still need a name only
+  const adult = await req('POST', '/api/visitor', {
+    cookie: doorCookie, body: { first_name: 'Al', last_name: 'Adultguest', is_youth: false },
+  });
+  assert.equal(adult.status, 200);
 });
 
 // ------------------------------------------------------------------ events ----

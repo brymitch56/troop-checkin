@@ -805,12 +805,23 @@ router.get('/export/overrides.csv', (req, res) => {
 });
 
 router.get('/export/visitors.csv', (req, res) => {
+  // guardian contact rides along — this CSV is the open-house follow-up list
   const rows = db.prepare(
     `SELECT p.last_name, p.first_name, CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END,
+            (SELECT g.first_name || ' ' || g.last_name FROM person_guardian pg
+              JOIN person g ON g.id = pg.guardian_id
+             WHERE pg.youth_id = p.id ORDER BY pg.is_primary DESC LIMIT 1),
+            (SELECT g.phone_mobile FROM person_guardian pg
+              JOIN person g ON g.id = pg.guardian_id
+             WHERE pg.youth_id = p.id ORDER BY pg.is_primary DESC LIMIT 1),
+            (SELECT g.email FROM person_guardian pg
+              JOIN person g ON g.id = pg.guardian_id
+             WHERE pg.youth_id = p.id ORDER BY pg.is_primary DESC LIMIT 1),
             p.created_at, p.notes,
             (SELECT COUNT(*) FROM txn_person tp WHERE tp.person_id = p.id)
        FROM person p WHERE p.status = 'visitor' ORDER BY p.created_at DESC`).raw().all();
-  sendCsv(res, 'visitors.csv', ['last_name', 'first_name', 'type', 'first_seen', 'notes', 'txn_count'], rows);
+  sendCsv(res, 'visitors.csv',
+    ['last_name', 'first_name', 'type', 'guardian', 'guardian_phone', 'guardian_email', 'first_seen', 'notes', 'txn_count'], rows);
 });
 
 // ------------------------------------------------- membership renewals ----

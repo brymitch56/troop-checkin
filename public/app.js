@@ -748,13 +748,22 @@ $('sig-clear').onclick = sigClear;
 
 // ------------------------------------------------------------- visitor ----
 $('btn-visitor').onclick = () => {
-  for (const id of ['vis-first', 'vis-last', 'vis-guardian', 'vis-phone']) $(id).value = '';
+  for (const id of ['vis-first', 'vis-last', 'vis-guardian', 'vis-phone', 'vis-email']) $(id).value = '';
   $('vis-error').textContent = '';
   openModal('modal-visitor');
 };
 $('vis-youth').onchange = () => ($('vis-guardian-wrap').hidden = !$('vis-youth').checked);
 $('vis-cancel').onclick = closeModal;
 $('vis-save').onclick = async () => {
+  // Youth visitors: EVERY field is required (name, parent name, phone, email)
+  // — open-house follow-up depends on complete contact info. Adults: name only.
+  if (!$('vis-first').value.trim() || !$('vis-last').value.trim()) {
+    return ($('vis-error').textContent = 'First and last name are required.');
+  }
+  if ($('vis-youth').checked &&
+      (!$('vis-guardian').value.trim() || !$('vis-phone').value.trim() || !$('vis-email').value.trim())) {
+    return ($('vis-error').textContent = "Parent/guardian name, phone, AND email are all required for a youth visitor.");
+  }
   try {
     const { person } = await jpost('/visitor', {
       is_youth: $('vis-youth').checked,
@@ -762,6 +771,7 @@ $('vis-save').onclick = async () => {
       last_name: $('vis-last').value.trim(),
       guardian_name: $('vis-guardian').value.trim() || undefined,
       guardian_phone: $('vis-phone').value.trim() || undefined,
+      guardian_email: $('vis-email').value.trim() || undefined,
     });
     closeModal(); addToCart(person);
   } catch (e) { $('vis-error').textContent = e.message; }

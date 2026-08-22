@@ -196,7 +196,7 @@ test('visitor merge transfers history and links', async () => {
   // visitor youth who attended once
   const vis = await req('POST', '/api/visitor', {
     cookie: doorCookie,
-    body: { first_name: 'Hank', last_name: 'Temp', is_youth: true, guardian_name: 'Helen Temp', guardian_phone: '555-0400' },
+    body: { first_name: 'Hank', last_name: 'Temp', is_youth: true, guardian_name: 'Helen Temp', guardian_phone: '555-0400', guardian_email: 'helen@example.com' },
   });
   const visId = vis.json.person.id;
   await req('POST', '/api/txn', {
@@ -237,10 +237,13 @@ test('CSV exports produce well-formed files', async () => {
   const ov = await req('GET', '/api/admin/export/overrides.csv', { cookie: adminCookie });
   assert.equal(ov.status, 200);
   await req('POST', '/api/visitor', {
-    cookie: doorCookie, body: { first_name: 'Ivy', last_name: 'Guest', is_youth: true },
+    cookie: doorCookie,
+    body: { first_name: 'Ivy', last_name: 'Guest', is_youth: true, guardian_name: 'Iris Guest', guardian_phone: '555-0500', guardian_email: 'iris@example.com' },
   });
   const vis = await req('GET', '/api/admin/export/visitors.csv', { cookie: adminCookie });
   assert.ok(vis.text.includes('Guest'));
+  assert.ok(vis.text.includes('guardian_email'), 'CSV carries the follow-up columns');
+  assert.ok(vis.text.includes('iris@example.com'), 'guardian email rides along');
 });
 
 test('iCal applyFeed: add, update, removed-from-feed keep/flag vs delete', async () => {
