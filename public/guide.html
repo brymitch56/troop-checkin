@@ -217,6 +217,7 @@
     <li>If a queued record is rejected on sync (e.g. another station already signed that youth out), it moves to a <b>⚠ conflicts</b> pill — tap it to review and clear. The server's version of events is the truth.</li>
   </ul>
   <div class="tip">Before a campout at a no-signal site: open the app once on Wi-Fi while signed in — that refreshes the offline roster.</div>
+  <div class="tip"><b>Ten-second offline check</b> (do this once on any new or newly-updated device): turn on airplane mode and reload the app. If it comes up, offline mode is ready on that device; if you get the browser's own offline page, open the app once on Wi-Fi and check again.</div>
 </section>
 
 <!-- ================= PART 2 — ADMIN ================= -->
@@ -386,7 +387,7 @@
     <tr><td>Kiosk picked the wrong event</td><td>Overlapping events — the kiosk guesses by which rush is nearest. Tap the event pill and switch; sign-outs follow the selected event.</td></tr>
     <tr><td>❌ row in the TLC write-back log</td><td>Open it: usually a name that isn't (or is twice) on the TLC roster. Set that person's TLC user id in the editor, then Retry failed.</td></tr>
     <tr><td>Write-back panel shows a red "paused" line</td><td>The TLC login was rejected — re-save the credentials under Automatic roster sync (it never retries by itself, to protect the account).</td></tr>
-    <tr><td>App looks stale after an update</td><td>Reload twice (the app shell is cached for offline use; the second reload activates the new version).</td></tr>
+    <tr><td>App looks stale after an update</td><td>Reload twice (the app shell is cached for offline use; the second reload activates the new version). Still stale? Do one <b>hard refresh</b>: Ctrl+Shift+R on a computer; on Android, Chrome Settings → Privacy → Clear browsing data → "Cached images and files"; on iPad, Settings → Safari → Clear History and Website Data. Then reload normally.</td></tr>
     <tr><td>Something looks wrong server-side</td><td>Contact the troop's app administrator — the server keeps full logs, and nightly backups mean nothing is lost.</td></tr>
   </table>
   <p class="backlinks"><a href="/">← Back to check-in</a> · <a href="/admin.html">Admin</a></p>
