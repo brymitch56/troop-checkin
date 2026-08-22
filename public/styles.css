@@ -67,7 +67,7 @@ body {
 .row { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
 .error { color: #A1290F; font-weight: 600; min-height: 1.2em; margin-top: 8px; }
 input[type], canvas { font-family: inherit; }
-input[type="text"], input[type="search"], input[type="tel"],
+input[type="text"], input[type="search"], input[type="tel"], input[type="email"],
 input[type="password"], input[type="datetime-local"] {
   width: 100%; padding: 12px; font-size: 17px; border: 1px solid var(--line);
   border-radius: 10px; background: var(--card); margin: 6px 0;

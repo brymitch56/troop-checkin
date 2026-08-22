@@ -144,7 +144,7 @@
 .fam-head { display: flex; justify-content: space-between; align-items: center; }
 .adm-modal h4 { margin: 14px 0 6px; color: var(--pine); }
 .adm-modal input[type="search"], .adm-modal input[type="text"], .adm-modal input[type="tel"],
-.adm-modal input[type="date"], .adm-modal select {
+.adm-modal input[type="email"], .adm-modal input[type="date"], .adm-modal select {
   font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px;
   background: #fff; margin: 3px 0;
 }
