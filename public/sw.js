@@ -2,12 +2,22 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v35'; // v35: precache bypasses the HTTP cache (cache:'reload') — CDN-TTL-proof
+const VERSION = 'tc-v36'; // v36: /admin.html out of SHELL — Access 302 was silently aborting kiosk installs
+// NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
+// Access, which answers a SW fetch from a device with no Access session with
+// a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
+// whole install, so kiosk-only tablets silently ended up with NO service
+// worker (and no offline mode) at all. The fetch handler below already
+// serves admin navigations network-first and runtime-caches each successful
+// online load into this same cache, so offline admin still works on any
+// device that has opened admin online once per version — which is exactly
+// the population that can pass Access anyway. Admin's static assets
+// (admin.css/js etc.) are NOT behind Access and stay precached.
 const SHELL = [
   '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
   '/icon-192.png', '/icon-512.png', '/favicon.ico',
-  '/admin.html', '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/guide.html',
+  '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/guide.html',
 ];
 
 self.addEventListener('install', (e) => {
