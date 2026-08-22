@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v34'; // v34: style input[type=email] like the other kiosk fields
+const VERSION = 'tc-v35'; // v35: precache bypasses the HTTP cache (cache:'reload') — CDN-TTL-proof
 const SHELL = [
   '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
@@ -11,7 +11,23 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache:'reload' fetches every shell asset straight from the origin,
+  // bypassing the browser's HTTP cache. Without it, addAll() can fill a
+  // brand-new tc-vNN cache with STALE bytes whenever a CDN/proxy stretches
+  // asset TTLs (found 2026-08: Cloudflare's default Browser Cache TTL
+  // rewrote the origin's max-age=0 to 4h on css/js, so a version bump
+  // shipped old CSS to freshly-updated kiosks). Any failure aborts the
+  // install — a partial shell never replaces a complete one.
+  e.waitUntil(
+    caches.open(VERSION).then((c) =>
+      Promise.all(SHELL.map((u) =>
+        fetch(u, { cache: 'reload' }).then((r) => {
+          if (!r.ok) throw new Error(`precache ${u}: ${r.status}`);
+          return c.put(u, r);
+        })
+      ))
+    ).then(() => self.skipWaiting())
+  );
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(
