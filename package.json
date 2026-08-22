@@ -14,14 +14,12 @@
     "backup": "node server/lib/backup.js",
     "sync-ical": "node -e \"require('./server/lib/icalSync').syncIcal().then(console.log, (e) => { console.error(e.message); process.exit(1); })\""
   },
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=18" },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
     "multer": "^2.0.1",
-    "node-ical": "^0.27.1",
+    "node-ical": "^0.20.1",
     "xlsx": "^0.18.5"
   }
 }
