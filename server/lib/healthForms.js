@@ -33,26 +33,31 @@ function expiryOf(submitted) {
 const personCols = `id, is_youth, member_id, first_name, last_name, nickname,
                     patrol, level, role`;
 
-// Active members (youth AND adults — everyone camps) with no form date on
-// file at all. Alphabetical; youth first so the patrol chase-list reads top-down.
+// Form coverage is "every youth and registered adult" (decided 2026-08-29):
+// visitors and unregistered adults (consent-form pickup designees — no
+// member number) are not troop members and would pad "not on file" forever.
+const SCOPE = `status = 'active' AND (is_youth = 1 OR member_id IS NOT NULL)`;
+
+// In-scope members with no form date on file at all. Alphabetical; youth
+// first so the patrol chase-list reads top-down.
 function missingPeople(form) {
   const field = FORM_FIELDS[form];
   if (!field) throw new Error(`Unknown form kind: ${form}`);
   return db.prepare(
     `SELECT ${personCols} FROM person
-      WHERE status = 'active' AND ${field} IS NULL
+      WHERE ${SCOPE} AND ${field} IS NULL
       ORDER BY is_youth DESC, last_name, first_name`
   ).all();
 }
 
-// Active members whose form has expired or expires within `days` days,
+// In-scope members whose form has expired or expires within `days` days,
 // soonest/most-lapsed first (mirrors membership.expiringPeople).
 function expiringPeople(form, days) {
   const field = FORM_FIELDS[form];
   if (!field) throw new Error(`Unknown form kind: ${form}`);
   const rows = db.prepare(
     `SELECT ${personCols}, ${field} AS submitted_on FROM person
-      WHERE status = 'active' AND ${field} IS NOT NULL`
+      WHERE ${SCOPE} AND ${field} IS NOT NULL`
   ).all();
   return rows
     .map((p) => {

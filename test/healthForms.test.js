@@ -62,9 +62,10 @@ before(async () => {
   addPerson('Sam', 'Soon', { health: submittedExpiringIn(10) });     // expires in 10 days
   addPerson('Fay', 'Fresh', { health: submittedExpiringIn(300) });   // fresh form
   addPerson('Leo', 'Lapsed', { health: submittedExpiringIn(-40) });  // expired 40 days ago
-  addPerson('Ada', 'Adult', { is_youth: 0, health: submittedExpiringIn(5), high_risk: submittedExpiringIn(20) });
+  addPerson('Ada', 'Adult', { is_youth: 0, member_id: 'A-9001', health: submittedExpiringIn(5), high_risk: submittedExpiringIn(20) });
   addPerson('Gus', 'Gone', { status: 'inactive' });                  // inactive: never counted
   addPerson('Raw', 'Junk', { health: 'pending upload' });            // unparseable: on file, never expiring
+  addPerson('Pia', 'Pickup', { is_youth: 0 });                       // unregistered designee: out of scope
 });
 
 after(() => server && server.close());
@@ -81,6 +82,7 @@ test('missingPeople: active people with no date, both forms tracked separately',
   assert.ok(!missing.includes('Gus'));       // inactive
   assert.ok(!missing.includes('Raw'));       // unparseable is still "on file"
   assert.ok(!missing.includes('Sam'));
+  assert.ok(!missing.includes('Pia'));       // unregistered adults are out of scope
   // Sam has a health form but no High Risk clearance — separate fields
   const hrMissing = hf.missingPeople('high_risk').map((p) => p.first_name);
   assert.ok(hrMissing.includes('Sam'));
