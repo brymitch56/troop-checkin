@@ -73,8 +73,8 @@ router.get('/people/:id', (req, res) => {
 });
 
 const PERSON_FIELDS = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
-  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'membership_expires', 'notes',
-  'tlc_user_id'];
+  'email', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate', 'membership_expires',
+  'health_form_date', 'high_risk_form_date', 'notes', 'tlc_user_id'];
 const IMPORT_FIELDS = new Set(require('../lib/rosterImport').UPDATABLE);
 router.patch('/people/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM person WHERE id = ?').get(req.params.id);
@@ -250,6 +250,40 @@ router.post('/guardian-bulk', (req, res) => {
   } catch (e) {
     res.status(e.code || 500).json({ error: e.message });
   }
+});
+
+// Adult SELF-consent for SMS (person.sms_opt_in, migration 010) — the
+// admin-editable counterpart of the per-pair youth consent below, with the
+// same rule: opting in requires a stored signed consent form. Youth consent
+// never lives here; it stays on the person_guardian link.
+router.patch('/people/:id/opt-in', (req, res) => {
+  const p = db.prepare(`SELECT * FROM person WHERE id = ? AND status != 'merged'`).get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such person.' });
+  if (p.is_youth) {
+    return res.status(409).json({ error: 'Youth messaging consent is per guardian link — set it in the Guardians section.' });
+  }
+  const b = req.body || {};
+  const sets = [], vals = [];
+  if ('consent_form_id' in b) {
+    if (b.consent_form_id && !db.prepare('SELECT 1 FROM consent_form WHERE id = ?').get(b.consent_form_id)) {
+      return res.status(400).json({ error: 'No such consent form.' });
+    }
+    sets.push('consent_form_id = ?'); vals.push(b.consent_form_id || null);
+  }
+  if ('sms_opt_in' in b) {
+    if (!['unknown', 'yes', 'stop'].includes(b.sms_opt_in)) {
+      return res.status(400).json({ error: 'Bad sms_opt_in value.' });
+    }
+    const formAfter = 'consent_form_id' in b ? b.consent_form_id : p.consent_form_id;
+    if (b.sms_opt_in === 'yes' && !formAfter) {
+      return res.status(422).json({ error: 'Opt-in requires attaching the signed consent form first.' });
+    }
+    sets.push('sms_opt_in = ?'); vals.push(b.sms_opt_in);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+  db.prepare(`UPDATE person SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`)
+    .run(...vals, p.id);
+  res.json({ ok: true });
 });
 
 router.patch('/people/:youthId/guardians/:guardianId', (req, res) => {

@@ -126,3 +126,13 @@ test('dashboard status carries all four health-form counts', async () => {
   assert.ok(s.health_missing >= 1);                 // Nora (+ any staff-free defaults)
   assert.ok(s.high_risk_missing > s.health_missing); // almost nobody has a High Risk form
 });
+
+test('hand-editing a form date locks it against imports (manual_fields)', async () => {
+  const nora = db.prepare(`SELECT id FROM person WHERE first_name = 'Nora'`).get();
+  const r = await req('PATCH', `/api/admin/people/${nora.id}`,
+    { cookie: adminCookie, body: { health_form_date: '2026-08-01' } });
+  assert.equal(r.status, 200);
+  const after = db.prepare('SELECT health_form_date, manual_fields FROM person WHERE id = ?').get(nora.id);
+  assert.equal(after.health_form_date, '2026-08-01');
+  assert.ok(JSON.parse(after.manual_fields).includes('health_form_date'));
+});

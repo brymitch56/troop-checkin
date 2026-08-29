@@ -117,6 +117,31 @@ test('opt-in CSV export includes both sections', async () => {
   assert.match(r.text, /Stopped,Stu,adult/);
 });
 
+test('PATCH /admin/people/:id/opt-in: adult self-consent, form-gated like pairs', async () => {
+  const dan = db.prepare(`SELECT id FROM person WHERE first_name = 'Dan'`).get();
+  // opting in without a stored consent form is refused
+  let r = await req('PATCH', `/api/admin/people/${dan.id}/opt-in`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes' } });
+  assert.equal(r.status, 422);
+  // with a form: allowed, and he leaves the missing list
+  const formId = Number(db.prepare(
+    `INSERT INTO consent_form (file_path, signed_by) VALUES ('t.pdf', 'Dan Dad')`).run().lastInsertRowid);
+  r = await req('PATCH', `/api/admin/people/${dan.id}/opt-in`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: formId } });
+  assert.equal(r.status, 200);
+  assert.ok(!optin.adultsByOptIn('unknown').some((p) => p.first_name === 'Dan'));
+  // youth self-consent doesn't exist — consent stays on the guardian link
+  const deb = db.prepare(`SELECT id FROM person WHERE first_name = 'Deb'`).get();
+  r = await req('PATCH', `/api/admin/people/${deb.id}/opt-in`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: formId } });
+  assert.equal(r.status, 409);
+  // revoke works and needs no form
+  r = await req('PATCH', `/api/admin/people/${dan.id}/opt-in`,
+    { cookie: adminCookie, body: { sms_opt_in: 'unknown' } });
+  assert.equal(r.status, 200);
+  assert.ok(optin.adultsByOptIn('unknown').some((p) => p.first_name === 'Dan'));
+});
+
 test('dashboard status counts youth families (adults sectioned in the report)', async () => {
   const s = (await req('GET', '/api/admin/status', { cookie: adminCookie })).json;
   assert.equal(s.optin_missing, 3);   // Una, Orla, Ned

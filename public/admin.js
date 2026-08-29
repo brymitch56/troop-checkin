@@ -255,7 +255,8 @@ async function loadPeople() {
 
 async function openPerson(id) {
   const p = await api(`/admin/people/${id}`);
-  const forms = p.is_youth ? await api('/admin/consent-forms').catch(() => []) : [];
+  // consent forms feed youth pair opt-ins AND adult self-consent
+  const forms = await api('/admin/consent-forms').catch(() => []);
   const d = $('pp-detail');
   $('person-modal').hidden = false; // person editor is a dialog; family/consent layers above it
   let locked = [];
@@ -281,6 +282,8 @@ async function openPerson(id) {
       ${f('Work phone', 'phone_work', p.phone_work)}${f('Birthdate', 'birthdate', p.birthdate)}
       ${f('Email', 'email', p.email)}
       ${f('Membership expires (YYYY-MM-DD)', 'membership_expires', p.membership_expires)}
+      ${f('Health form submitted (YYYY-MM-DD)', 'health_form_date', p.health_form_date)}
+      ${f('High Risk form submitted (YYYY-MM-DD)', 'high_risk_form_date', p.high_risk_form_date)}
       ${f('TLC user id (blank = match by name)', 'tlc_user_id', p.tlc_user_id)}
       <div><label>Status</label>
         <select data-f="status">
@@ -305,7 +308,7 @@ async function openPerson(id) {
       ${!p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into roster member…</button>' : ''}
       <button class="btn ghost small" id="pp-close">Close</button>
     </div>
-    ${p.is_youth ? guardianBlock(p, forms) : wardBlock(p)}`;
+    ${p.is_youth ? guardianBlock(p, forms) : adultSmsBlock(p, forms) + wardBlock(p)}`;
 
   $('pp-save').onclick = async () => {
     const body = {};
@@ -397,6 +400,19 @@ async function openPerson(id) {
   }
 
   d.querySelectorAll('[data-gact]').forEach((b) => (b.onclick = () => guardianAction(p, b)));
+  d.querySelectorAll('[data-aact]').forEach((b) => (b.onclick = async () => {
+    try {
+      if (b.dataset.aact === 'on') {
+        const formId = $('pp-aform').value ? Number($('pp-aform').value) : null;
+        if (!formId) return toast('Pick the signed consent form first (upload one from a youth’s Guardians section).', true);
+        await jpatch(`/admin/people/${id}/opt-in`, { sms_opt_in: 'yes', consent_form_id: formId });
+      } else {
+        if (!confirm('Revoke SMS opt-in for this adult?')) return;
+        await jpatch(`/admin/people/${id}/opt-in`, { sms_opt_in: 'unknown' });
+      }
+      openPerson(id);
+    } catch (e) { toast(e.message, true); }
+  }));
   wireGuardianForms(p);
 }
 
@@ -643,6 +659,30 @@ document.addEventListener('click', async (e) => {
     loadPeople();
   } catch (e2) { err(e2.message); }
 });
+// Adult self-consent for SMS — same strictly-opt-in rule as youth pairs:
+// opting in requires a stored signed consent form. Used when messaging
+// adults at adult-tracked events.
+function adultSmsBlock(p, forms) {
+  const tag = p.sms_opt_in === 'yes'
+    ? `<span class="tag youth">✓ opted in</span>`
+    : p.sms_opt_in === 'stop' ? `<span class="tag warn">STOP</span>` : `<span class="tag off">no consent</span>`;
+  const form = forms.find((x) => x.id === p.consent_form_id);
+  const formRef = form
+    ? ` <a href="/consent-forms/${esc(form.file_path)}" target="_blank" title="signed by ${esc(form.signed_by || '?')}">${esc(form.file_path)}</a>` : '';
+  const sel = `<select id="pp-aform">
+      <option value="">— consent form —</option>
+      ${forms.map((x) => `<option value="${x.id}" ${x.id === p.consent_form_id ? 'selected' : ''}>#${x.id} ${esc(x.signed_by || x.file_path)}${x.signed_on ? ` (${esc(x.signed_on)})` : ''}</option>`).join('')}
+    </select>`;
+  const btn = p.sms_opt_in === 'yes'
+    ? `<button class="btn ghost small" data-aact="off">revoke opt-in</button>`
+    : `<button class="btn ghost small" data-aact="on">opt in</button>`;
+  return `<h3>SMS messaging (this adult)</h3>
+  <p class="hint left">Adults at adult-tracked events can be texted directly — <b>strictly opt-in</b>, same as
+  youth families: opting in requires attaching their signed consent form (upload one from any youth's
+  Guardians section, or reuse a family form that names them).</p>
+  <div class="row wrap">${tag}${formRef} ${sel} ${btn}</div>`;
+}
+
 function wardBlock(p) {
   if (!p.wards.length) return '';
   return `<h3>Authorized for</h3><div class="tbl"><table><tr><th>Youth</th><th>Patrol</th><th>Authorized</th></tr>
