@@ -57,6 +57,10 @@ function parseWorkbook(buffer) {
       // delivers a formatted string — normalize to ISO when recognizable,
       // keep the raw value otherwise (compare-time code parses defensively).
       membership_expires: normalizeDateCell(g(r, 'Membership Exp.')),
+      // health-form SUBMISSION dates (valid 12 months — lib/healthForms.js).
+      // "High Risk Form" is the separate High Adventure medical clearance.
+      health_form_date: normalizeDateCell(g(r, 'Health Form')),
+      high_risk_form_date: normalizeDateCell(g(r, 'High Risk Form')),
       // used only for guardian-link fallback, not persisted:
       _cc_email: lower(g(r, 'Adult Cc Email')),
       _addr: normAddr(g(r, 'Address Line 1'), g(r, 'Zip')),
@@ -115,7 +119,7 @@ function findExisting(p) {
 
 const UPDATABLE = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
   'email', 'tlc_username', 'phone_mobile', 'phone_home', 'phone_work', 'birthdate',
-  'membership_expires'];
+  'membership_expires', 'health_form_date', 'high_risk_form_date'];
 
 function diffFields(existing, p) {
   // fields the admin edited by hand are locked against imports (person.manual_fields)
@@ -164,9 +168,11 @@ const applyImport = (people, links, staffId, filename, rawPath) => {
 
     const ins = db.prepare(
       `INSERT INTO person (is_youth, member_id, first_name, last_name, nickname, role, patrol,
-        level, email, tlc_username, phone_mobile, phone_home, phone_work, birthdate, membership_expires)
+        level, email, tlc_username, phone_mobile, phone_home, phone_work, birthdate,
+        membership_expires, health_form_date, high_risk_form_date)
        VALUES (@is_youth, @member_id, @first_name, @last_name, @nickname, @role, @patrol,
-        @level, @email, @tlc_username, @phone_mobile, @phone_home, @phone_work, @birthdate, @membership_expires)`
+        @level, @email, @tlc_username, @phone_mobile, @phone_home, @phone_work, @birthdate,
+        @membership_expires, @health_form_date, @high_risk_form_date)`
     );
     people.forEach((p, i) => {
       const ex = findExisting(p);

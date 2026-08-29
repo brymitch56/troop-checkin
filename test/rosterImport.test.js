@@ -44,6 +44,22 @@ test('parseWorkbook: captures "Membership Exp." and normalizes to ISO', () => {
   assert.ok(roster.UPDATABLE.includes('membership_expires')); // import-managed, lockable
 });
 
+test('parseWorkbook: captures "Health Form" / "High Risk Form" submission dates', () => {
+  const rows = DEFAULT_ROWS.map((row) => [...row]);
+  rows.find((r) => r[2] === 'Emma')[17] = '8/15/2026';   // Health Form, US format
+  rows.find((r) => r[2] === 'Frank')[18] = '2026-07-04'; // High Risk Form, ISO
+  const people = roster.parseWorkbook(buildWorkbookBuffer(rows));
+  assert.equal(people.find((p) => p.first_name === 'Emma').health_form_date, '2026-08-15');
+  assert.equal(people.find((p) => p.first_name === 'Frank').high_risk_form_date, '2026-07-04');
+  assert.equal(people.find((p) => p.first_name === 'Bob').health_form_date, null);  // blank stays null
+  assert.equal(people.find((p) => p.first_name === 'Bob').high_risk_form_date, null);
+  // the two are separate fields — a Health Form date never fills High Risk
+  assert.equal(people.find((p) => p.first_name === 'Emma').high_risk_form_date, null);
+  // import-managed, lockable, and shown in staged-import diffs like membership_expires
+  assert.ok(roster.UPDATABLE.includes('health_form_date'));
+  assert.ok(roster.UPDATABLE.includes('high_risk_form_date'));
+});
+
 test('parseWorkbook: file without a "Membership Exp." column still parses', () => {
   const XLSX = require('xlsx');
   const headers = ['Member Number', 'Last Name', 'First Name', 'Youth'];
@@ -95,6 +111,26 @@ test('applyImport: adds everyone, links guardians, records the import', () => {
     `SELECT g.first_name FROM person_guardian pg JOIN person g ON g.id = pg.guardian_id
       WHERE pg.youth_id = ?`).all(emma.id);
   assert.deepEqual(g.map((x) => x.first_name), ['Bob']);
+});
+
+test('health/high-risk form dates round-trip to person rows', () => {
+  // DEFAULT_ROWS: Alice's Health Form is ~350 days old, Bob's blank
+  const alice = db.prepare(`SELECT * FROM person WHERE member_id = 'A-1001'`).get();
+  assert.match(alice.health_form_date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(alice.high_risk_form_date, null);
+  const bob = db.prepare(`SELECT * FROM person WHERE first_name = 'Bob'`).get();
+  assert.equal(bob.health_form_date, null); // blank cell stays NULL
+
+  // a re-import with a High Risk date shows in the diff and applies
+  const rows = DEFAULT_ROWS.map((row) => [...row]);
+  rows.find((r) => r[2] === 'Alice')[18] = '6/1/2099';
+  const people = roster.parseWorkbook(buildWorkbookBuffer(rows));
+  const prev = roster.computePreview(people);
+  const change = prev.updates.find((u) => u.p.first_name === 'Alice');
+  assert.equal(change.ch.high_risk_form_date, '2099-06-01'); // staged diff shows it
+  roster.applyImport(people, [], null, 'hr.xlsx', null);
+  assert.equal(db.prepare(`SELECT high_risk_form_date FROM person WHERE member_id = 'A-1001'`)
+    .get().high_risk_form_date, '2099-06-01');
 });
 
 test('re-import: idempotent, never blanks fields with empty cells', () => {
