@@ -844,6 +844,37 @@ router.get('/export/expiring.csv', (req, res) => {
     rows);
 });
 
+// --------------------------------------------------- health-form status ----
+// Two tracked forms (health = annual health form; high_risk = the separate
+// High Adventure medical clearance), two views each: 'missing' (no date on
+// file) and 'expiring' (submission + 12 months within N days, expired
+// included). Active youth AND adults — everyone camps.
+const healthForms = require('../lib/healthForms');
+const formKind = (q) => (q.form === 'high_risk' ? 'high_risk' : 'health');
+const healthRows = (q) => {
+  const form = formKind(q);
+  return q.view === 'missing'
+    ? healthForms.missingPeople(form)
+    : healthForms.expiringPeople(form, expiringDays(q));
+};
+router.get('/health-forms', (req, res) => {
+  res.json(healthRows(req.query));
+});
+
+router.get('/export/health-forms.csv', (req, res) => {
+  const missing = req.query.view === 'missing';
+  const rows = healthRows(req.query).map((p) => [
+    p.last_name, p.first_name, p.is_youth ? 'youth' : 'adult', p.member_id || '',
+    p.is_youth ? p.patrol || '' : p.role || '',
+    ...(missing ? [] : [p.submitted_on, p.expires_on, p.days_left]),
+  ]);
+  const name = `${formKind(req.query)}-form-${missing ? 'missing' : `expiring-${expiringDays(req.query)}d`}.csv`;
+  sendCsv(res, name,
+    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role',
+     ...(missing ? [] : ['submitted_on', 'expires_on', 'days_left'])],
+    rows);
+});
+
 // -------------------------------------------------------- consent forms ----
 // One scanned form can cover many youth/guardian pairs; pairs link to it via
 // person_guardian.consent_form_id. Files live under data/ with the other PII,
@@ -998,6 +1029,10 @@ router.get('/status', (req, res) => {
     events: count('SELECT COUNT(*) c FROM event'),
     txns: count('SELECT COUNT(*) c FROM txn'),
     expiring_30: require('../lib/membership').expiringPeople(30).length,
+    health_missing: healthForms.missingPeople('health').length,
+    health_expiring_30: healthForms.expiringPeople('health', 30).length,
+    high_risk_missing: healthForms.missingPeople('high_risk').length,
+    high_risk_expiring_30: healthForms.expiringPeople('high_risk', 30).length,
     last_ical_sync: lastSync,
   });
 });
