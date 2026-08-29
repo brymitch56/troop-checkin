@@ -225,7 +225,7 @@
 <section id="admin-login">
   <h2>Part 2 · Admin</h2>
   <h3>Admin sign-in &amp; dashboard</h3>
-  <p>Open <code>/admin.html</code> (link at the bottom of the kiosk). Admins sign in with their password (or their PIN if one is set). The <b>Dashboard</b> shows count cards — active youth/adults, visitors, on site now, events, transactions, and <b>renewals due ≤30 days</b> (orange when non-zero; <b>click it</b> to jump straight to the full renewals list in Reports) — plus tools (backup now, iCal sync, quick CSVs) and the live "still on site" list with an <b>Admin close</b> button for stragglers (see Corrections).</p>
+  <p>Open <code>/admin.html</code> (link at the bottom of the kiosk). Admins sign in with their password (or their PIN if one is set). The <b>Dashboard</b> shows count cards — active youth/adults, visitors, on site now, events, transactions, and clickable tally cards — <b>renewals due ≤30 days</b>, <b>health forms</b> not on file / expiring, <b>High Risk forms</b> not on file / expiring, and youth <b>messaging opt-in</b> missing / declined (expiring cards turn orange when non-zero; <b>click any of them</b> to jump straight to the matching list in Reports) — plus tools (backup now, iCal sync, quick CSVs) and the live "still on site" list with an <b>Admin close</b> button for stragglers (see Corrections).</p>
 </section>
 
 <section id="people">
@@ -301,6 +301,8 @@
   <ul>
     <li><b>Attendance summary</b>: pick a date range, event, and/or one person → events attended, sign-in counts, first/last seen. Records are kept forever, so a 3-year lookback is just a wider range. Detail + summary CSVs.</li>
     <li><b>Membership renewals</b>: everyone (youth <em>and</em> registered adults) whose membership has expired or expires within 30/60/90 days, most-urgent first — with a CSV for chasing renewals. Already-lapsed members are listed too.</li>
+    <li><b>Health &amp; medical forms</b>: who has no health form on file, and whose form has expired or expires within 30/60/90 days. Forms are treated as valid <b>12 months from the submission date</b> recorded in Trail Life Connect (imported from the export's "Health Form" column). The <b>High Risk</b> (High Adventure) clearance is tracked as its own separate form. Youth and adults.</li>
+    <li><b>Messaging opt-in</b>: youth families that never returned the messaging form, and families that declined (a family with one yes-parent and one stop-parent is messageable and appears in neither). Adults are listed separately by their own consent.</li>
     <li><b>SMS notification log</b>: every pickup alert with its status (sent, replied-Y, failed).</li>
     <li>Dashboard quick CSVs: open sign-ins, overrides, visitors.</li>
   </ul>

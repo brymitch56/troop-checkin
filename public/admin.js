@@ -138,19 +138,37 @@ async function loadDash() {
     [s.youth_active, 'active youth'], [s.adults_active, 'active adults'],
     [s.visitors, 'visitors'], [s.open_signins, 'on site now'],
     [s.events, 'events'], [s.txns, 'transactions'],
-    // clickable: jumps to Reports → Membership renewals (the membership
-    // admin's one-click path to the list)
+    // clickable tally cards: each jumps to its Reports panel preset to the
+    // matching view (renewals template, tc-v43)
     [s.expiring_30 || 0, 'renewals due ≤30 days ›', s.expiring_30 ? 'card-warn' : '', 'renewals'],
+    [s.health_missing || 0, 'health forms not on file ›', '', 'health-missing'],
+    [s.health_expiring_30 || 0, 'health forms expiring ≤30 days ›', s.health_expiring_30 ? 'card-warn' : '', 'health-expiring'],
+    [s.high_risk_missing || 0, 'High Risk forms not on file ›', '', 'hr-missing'],
+    [s.high_risk_expiring_30 || 0, 'High Risk forms expiring ≤30 days ›', s.high_risk_expiring_30 ? 'card-warn' : '', 'hr-expiring'],
+    [s.optin_missing || 0, 'youth: no messaging opt-in on file ›', '', 'optin-missing'],
+    [s.optin_declined || 0, 'youth: messaging declined ›', '', 'optin-declined'],
   ];
   $('dash-cards').innerHTML = cards.map(([n, l, cls, jump]) =>
-    `<div class="card ${cls || ''}${jump ? ' card-link' : ''}" ${jump ? `data-jump="${jump}" role="button" tabindex="0" title="Open the renewals list"` : ''}><b>${n}</b><span>${l}</span></div>`).join('');
+    `<div class="card ${cls || ''}${jump ? ' card-link' : ''}" ${jump ? `data-jump="${jump}" role="button" tabindex="0" title="Open this list in Reports"` : ''}><b>${n}</b><span>${l}</span></div>`).join('');
+  // jump target -> [panel anchor, setup that presets the panel's controls]
+  const jumps = {
+    renewals: ['mx-list', null],
+    'health-missing': ['hf-list', () => { $('hf-form').value = 'health'; $('hf-view').value = 'missing'; loadHealthForms(); }],
+    'health-expiring': ['hf-list', () => { $('hf-form').value = 'health'; $('hf-view').value = '30'; loadHealthForms(); }],
+    'hr-missing': ['hf-list', () => { $('hf-form').value = 'high_risk'; $('hf-view').value = 'missing'; loadHealthForms(); }],
+    'hr-expiring': ['hf-list', () => { $('hf-form').value = 'high_risk'; $('hf-view').value = '30'; loadHealthForms(); }],
+    'optin-missing': ['ov-list', () => { $('ov-view').value = 'missing'; loadOptin(); }],
+    'optin-declined': ['ov-list', () => { $('ov-view').value = 'declined'; loadOptin(); }],
+  };
   $('dash-cards').onclick = (e) => {
-    const c = e.target.closest('[data-jump="renewals"]');
-    if (!c) return;
+    const c = e.target.closest('[data-jump]');
+    if (!c || !jumps[c.dataset.jump]) return;
+    const [anchor, setup] = jumps[c.dataset.jump];
     showTab('reports');
     // loadReports is async — give the panel a beat to exist, then bring it up
     setTimeout(() => {
-      const panel = $('mx-list').closest('.panel');
+      if (setup) setup();
+      const panel = $(anchor).closest('.panel');
       panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
       panel.classList.add('panel-flash');
       setTimeout(() => panel.classList.remove('panel-flash'), 1600);
@@ -923,6 +941,8 @@ async function loadReports() {
     events.map((e) => `<option value="${e.id}">${esc(e.title)} · ${fmtDT(e.start_at)}</option>`).join('');
   renderReportLinks();
   loadExpiring();
+  loadHealthForms();
+  loadOptin();
   const log = await api('/admin/notifications');
   $('rp-notifications').innerHTML = log.length
     ? `<table><tr><th>When</th><th>Youth</th><th>Guardian</th><th>Event</th><th>Status</th></tr>` +
@@ -950,8 +970,60 @@ async function loadExpiring() {
     : `<p class="hint left">Nobody expires within ${days} days. 🎉</p>`;
   enhanceTable('mx-list');
 }
+// health & medical forms: not-on-file / expired-or-expiring, per form kind
+async function loadHealthForms() {
+  const form = $('hf-form').value;
+  const view = $('hf-view').value; // 'missing' or a day window
+  const missing = view === 'missing';
+  const q = missing ? `form=${form}&view=missing` : `form=${form}&view=expiring&days=${view}`;
+  $('hf-csv').href = `/api/admin/export/health-forms.csv?${q}`;
+  const rows = await api(`/admin/health-forms?${q}`).catch(() => []);
+  const label = form === 'health' ? 'health form' : 'High Risk form';
+  $('hf-list').innerHTML = rows.length
+    ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th>${missing ? '' : '<th>Submitted</th><th>Expires</th><th>Days left</th>'}</tr>` +
+      rows.map((p) => `<tr>
+        <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
+        <td><span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span></td>
+        <td>${esc(p.member_id || '')}</td>
+        <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>
+        ${missing ? '' : `<td>${esc(p.submitted_on)}</td><td>${esc(p.expires_on || '')}</td>
+        <td data-sort="${p.days_left}">${p.days_left < 0 ? `<span class="tag warn">expired ${-p.days_left}d ago</span>` : p.days_left}</td>`}
+      </tr>`).join('') + '</table>'
+    : `<p class="hint left">${missing ? `Everyone active has a ${label} on file. 🎉` : `No ${label} expires within ${view} days. 🎉`}</p>`;
+  enhanceTable('hf-list');
+}
+
+// messaging opt-in: youth families + a separate adults section
+async function loadOptin() {
+  const view = $('ov-view').value;
+  $('ov-csv').href = `/api/admin/export/optin.csv?view=${view}`;
+  const r = await api(`/admin/optin-report?view=${view}`).catch(() => ({ youth: [], adults: [] }));
+  const youthTbl = r.youth.length
+    ? `<table><tr><th>Name</th><th>Patrol</th><th>Authorized guardians</th></tr>` +
+      r.youth.map((p) => `<tr>
+        <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
+        <td>${esc(p.patrol || '')}</td>
+        <td data-sort="${p.guardian_count}">${p.guardian_count === 0 ? '<span class="tag warn">no guardians linked</span>' : p.guardian_count}</td>
+      </tr>`).join('') + '</table>'
+    : `<p class="hint left">${view === 'declined' ? 'No families have declined. 🎉' : 'Every youth family has answered. 🎉'}</p>`;
+  const adultTbl = r.adults.length
+    ? `<table><tr><th>Name</th><th>Role</th><th>Mobile</th></tr>` +
+      r.adults.map((p) => `<tr>
+        <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
+        <td>${esc(p.role || '')}</td>
+        <td>${esc(p.phone_mobile || '')}</td>
+      </tr>`).join('') + '</table>'
+    : `<p class="hint left">${view === 'declined' ? 'No adults have opted out.' : 'Every active adult has answered.'}</p>`;
+  $('ov-list').innerHTML =
+    `<h4>Youth families</h4><div id="ov-youth" class="tbl">${youthTbl}</div>
+     <h4>Adults (their own consent)</h4><div id="ov-adults" class="tbl">${adultTbl}</div>`;
+  enhanceTable('ov-youth'); enhanceTable('ov-adults');
+}
+
 document.addEventListener('change', (e) => {
   if (e.target.id === 'mx-days') loadExpiring();
+  if (e.target.id === 'hf-form' || e.target.id === 'hf-view') loadHealthForms();
+  if (e.target.id === 'ov-view') loadOptin();
 });
 
 function reportQuery() {

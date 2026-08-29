@@ -155,6 +155,43 @@
       <div id="mx-list" class="tbl"></div>
     </div>
     <div class="panel">
+      <h3>Health &amp; medical forms</h3>
+      <p class="hint left">Forms are treated as valid for <b>12 months from the submission date</b> recorded
+      in Trail Life Connect (the export has no expiry column — if that assumption is wrong, say so and it's a
+      one-line change). "High Risk" is the separate High Adventure medical clearance. Covers active youth and
+      adults — everyone camps.</p>
+      <div class="row wrap">
+        <select id="hf-form">
+          <option value="health">Health form</option>
+          <option value="high_risk">High Risk (High Adventure) form</option>
+        </select>
+        <select id="hf-view">
+          <option value="missing">Not on file</option>
+          <option value="30">Expired / expiring within 30 days</option>
+          <option value="60">Expired / expiring within 60 days</option>
+          <option value="90">Expired / expiring within 90 days</option>
+        </select>
+        <a id="hf-csv" class="btn ghost small" href="#">CSV</a>
+      </div>
+      <div id="hf-list" class="tbl"></div>
+    </div>
+    <div class="panel">
+      <h3>Messaging opt-in</h3>
+      <p class="hint left">"No opt-in on file" lists youth whose authorized guardians are all still
+      <i>unknown</i> — the family never returned the messaging form (youth with no linked guardians count
+      too). "Declined" lists families that said stop with nobody opted in; a family with one yes-parent and
+      one stop-parent is messageable and appears in neither. Adults are listed separately by their own
+      consent (new — every adult starts as <i>unknown</i>).</p>
+      <div class="row wrap">
+        <select id="ov-view">
+          <option value="missing">No opt-in on file</option>
+          <option value="declined">Declined / opted out</option>
+        </select>
+        <a id="ov-csv" class="btn ghost small" href="#">CSV</a>
+      </div>
+      <div id="ov-list" class="tbl"></div>
+    </div>
+    <div class="panel">
       <h3>SMS notification log</h3>
       <div id="rp-notifications" class="tbl"></div>
     </div>
