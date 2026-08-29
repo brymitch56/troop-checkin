@@ -875,6 +875,32 @@ router.get('/export/health-forms.csv', (req, res) => {
     rows);
 });
 
+// ------------------------------------------------- messaging opt-in lists ----
+// view=missing: youth families that never returned the messaging form;
+// view=declined: families that said stop (mixed yes/stop = messageable =
+// neither list). Each response carries a separate adults section (adults'
+// own consent, new in migration 010 — starts all-'unknown' by design).
+const optin = require('../lib/optin');
+const optinRows = (q) => (q.view === 'declined'
+  ? { youth: optin.youthDeclined(), adults: optin.adultsByOptIn('stop') }
+  : { youth: optin.youthNoOptIn(), adults: optin.adultsByOptIn('unknown') });
+router.get('/optin-report', (req, res) => {
+  res.json(optinRows(req.query));
+});
+
+router.get('/export/optin.csv', (req, res) => {
+  const r = optinRows(req.query);
+  const rows = [
+    ...r.youth.map((p) => [p.last_name, p.first_name, 'youth', p.member_id || '',
+      p.patrol || '', p.guardian_count]),
+    ...r.adults.map((p) => [p.last_name, p.first_name, 'adult', p.member_id || '',
+      p.role || '', '']),
+  ];
+  sendCsv(res, `optin-${req.query.view === 'declined' ? 'declined' : 'missing'}.csv`,
+    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'authorized_guardians'],
+    rows);
+});
+
 // -------------------------------------------------------- consent forms ----
 // One scanned form can cover many youth/guardian pairs; pairs link to it via
 // person_guardian.consent_form_id. Files live under data/ with the other PII,
@@ -1033,6 +1059,8 @@ router.get('/status', (req, res) => {
     health_expiring_30: healthForms.expiringPeople('health', 30).length,
     high_risk_missing: healthForms.missingPeople('high_risk').length,
     high_risk_expiring_30: healthForms.expiringPeople('high_risk', 30).length,
+    optin_missing: optin.youthNoOptIn().length,
+    optin_declined: optin.youthDeclined().length,
     last_ical_sync: lastSync,
   });
 });
