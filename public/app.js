@@ -446,8 +446,12 @@ function onCameraHit(value) {
   if (now - lastCamHit < 1500) return; // debounce repeated frames
   lastCamHit = now;
   if (navigator.vibrate) navigator.vibrate(60);
+  // One scan per open: close the camera BEFORE handling, so any follow-up
+  // dialog (e.g. "Link badge?") opens on a clean screen. Most families scan
+  // one badge; reopening for a sibling beats a camera that lingers.
+  stopCamera();
+  closeModal();
   handleScan(value);
-  $('cam-status').textContent = 'Scanned — keep going or close.';
 }
 function stopCamera() {
   if (camLoop) clearInterval(camLoop), (camLoop = null);
