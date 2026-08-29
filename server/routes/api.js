@@ -78,6 +78,8 @@ function personView(p) {
     first_name: p.first_name, last_name: p.last_name, nickname: p.nickname,
     patrol: p.patrol, level: p.level, status: p.status, photo_path: p.photo_path,
     membership_expires: p.membership_expires, // kiosk expiry warning (also in the offline snapshot)
+    // kiosk form badges (flag-only, never block; also in the offline snapshot)
+    health_form_date: p.health_form_date, high_risk_form_date: p.high_risk_form_date,
     last_emerg_phone_1: p.last_emerg_phone_1, last_emerg_phone_2: p.last_emerg_phone_2,
     // adult phone numbers ride along so the on-site emergency-contact view
     // works from the offline snapshot (staff-only, session-gated data)

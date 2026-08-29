@@ -177,3 +177,12 @@ test('event HA-form requirement: settable via API/admin, survives iCal resync', 
   assert.equal(after.title, 'Peak Camp (renamed)');           // feed fields update
   assert.equal(after.requires_high_adventure_form, 1);        // app-owned field preserved
 });
+
+test('kiosk person payloads carry the form dates (search → snapshot)', async () => {
+  const s = await req('GET', '/api/search?q=Nora', { cookie: adminCookie });
+  assert.ok('health_form_date' in s.json[0]);
+  assert.ok('high_risk_form_date' in s.json[0]);
+  const snap = await req('GET', '/api/roster-snapshot', { cookie: adminCookie });
+  const nora = snap.json.people.find((p) => p.first_name === 'Nora');
+  assert.ok('health_form_date' in nora && 'high_risk_form_date' in nora);
+});

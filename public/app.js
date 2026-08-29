@@ -82,7 +82,12 @@ async function boot() {
     document.querySelectorAll('[data-brand-id]').forEach((el) => (el.textContent = cfg.troop_id));
     document.querySelectorAll('[data-brand-name]').forEach((el) => (el.textContent = cfg.troop_name));
     document.title = `${cfg.troop_id} Check-In`;
-  }).catch(() => {});
+    // health-form badge switch (admin-set, default off); cached for offline boots
+    state.flagHealthForms = !!cfg.flag_health_forms;
+    try { localStorage.setItem('flag-health-forms', state.flagHealthForms ? '1' : '0'); } catch { /* ignore */ }
+  }).catch(() => {
+    try { state.flagHealthForms = localStorage.getItem('flag-health-forms') === '1'; } catch { /* ignore */ }
+  });
   try {
     state.me = await api('/me');
     await enterKiosk();
@@ -514,6 +519,44 @@ function membershipExpiry(p) {
   };
 }
 
+// ------------------------------------------------- form badges (sign-in) ----
+// Calm informational flags, never blocks (handoff §4b, 2026-08-29):
+//   - health form: required at EVERY event for registered members, but the
+//     badge only shows when the admin switch is on (default off — sparse TLC
+//     data until the backfill) — the switch arrives via /api/config;
+//   - High Adventure form: only on events with requires_high_adventure_form
+//     (app-owned checkbox in the admin event editor).
+// Missing or expired flags; unparseable stored dates count as on file
+// (defensive, same as the reports). Sign-in only — pickup stays uncluttered.
+const FORM_VALID_DAYS = 365; // 12 months from submission; matches server lib/healthForms.js
+
+function formExpiredDays(dateStr) {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(dateStr));
+  const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(dateStr);
+  if (isNaN(d)) return null;
+  d.setDate(d.getDate() + FORM_VALID_DAYS);
+  const now = new Date();
+  return Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000); // >0 = expired
+}
+
+function formNotes(p) {
+  const notes = [];
+  // registered members only — visitors and pickup-only designees are out of scope
+  if (!p || p.status !== 'active' || (!p.is_youth && !p.member_id)) return notes;
+  const note = (dateStr, label) => {
+    if (dateStr == null) return notes.push(`${label} not on file — collect one`);
+    const over = formExpiredDays(dateStr);
+    if (over != null && over > 0) notes.push(`${label} expired ${over}d ago — collect an updated one`);
+  };
+  if (state.flagHealthForms) note(p.health_form_date, 'Health form');
+  if (state.event && state.event.requires_high_adventure_form) {
+    note(p.high_risk_form_date, 'High Adventure medical form');
+  }
+  return notes;
+}
+
 // ---------------------------------------------------------------- cart ----
 async function addToCart(person) {
   if (state.cart.some((c) => c.person.id === person.id)) return toast(`${displayName(person)} is already in the cart.`);
@@ -621,6 +664,12 @@ function openSignModal() {
     .map((c) => ({ p: c.person, exp: membershipExpiry(c.person) }))
     .filter((x) => x.exp)
     .map((x) => `⚠ ${displayName(x.p)}: ${x.exp.line}`);
+  // form badges: sign-in only, flag never block (handoff §4b)
+  if (state.direction === 'in') {
+    for (const c of state.cart) {
+      for (const n of formNotes(c.person)) expLines.push(`⚠ ${displayName(c.person)}: ${n}`);
+    }
+  }
   $('sign-membership').innerHTML = expLines.join('<br>');
   $('sign-membership').hidden = !expLines.length;
   $('sign-error').textContent = '';
