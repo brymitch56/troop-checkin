@@ -149,3 +149,31 @@ test('check-in flag: defaults off, PUT flips it, /api/config carries it', async 
   assert.equal((await req('PUT', '/api/admin/checkin-flags')).status, 401); // admin-gated
   await req('PUT', '/api/admin/checkin-flags', { cookie: adminCookie, body: { health_form: 0 } });
 });
+
+test('event HA-form requirement: settable via API/admin, survives iCal resync', async () => {
+  // kiosk/manual creation carries the flag
+  const doorless = await req('POST', '/api/events', {
+    cookie: adminCookie,
+    body: { title: 'Summit Trek', start_at: isoInDays(30) + 'T14:00:00.000Z',
+            end_at: isoInDays(32) + 'T18:00:00.000Z', requires_high_adventure_form: 1 },
+  });
+  assert.equal(doorless.json.requires_high_adventure_form, 1);
+  // admin editor can flip it
+  const off = await req('PATCH', `/api/admin/events/${doorless.json.id}`,
+    { cookie: adminCookie, body: { requires_high_adventure_form: 0 } });
+  assert.equal(off.json.requires_high_adventure_form, 0);
+
+  // iCal-sourced event: admin sets the flag, a feed update must NOT reset it
+  const ical = require('../server/lib/icalSync');
+  const start = new Date(Date.now() + 40 * 86400000);
+  const end = new Date(start.getTime() + 3600000);
+  ical.applyFeed([{ uid: 'ha-test-uid', summary: 'Peak Camp', start, end, datetype: 'datetime' }]);
+  const ev = db.prepare(`SELECT * FROM event WHERE ical_uid = 'ha-test-uid'`).get();
+  assert.equal(ev.requires_high_adventure_form, 0);
+  await req('PATCH', `/api/admin/events/${ev.id}`,
+    { cookie: adminCookie, body: { requires_high_adventure_form: 1 } });
+  ical.applyFeed([{ uid: 'ha-test-uid', summary: 'Peak Camp (renamed)', start, end, datetype: 'datetime' }]);
+  const after = db.prepare(`SELECT * FROM event WHERE ical_uid = 'ha-test-uid'`).get();
+  assert.equal(after.title, 'Peak Camp (renamed)');           // feed fields update
+  assert.equal(after.requires_high_adventure_form, 1);        // app-owned field preserved
+});

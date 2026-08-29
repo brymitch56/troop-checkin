@@ -753,6 +753,10 @@ function openEvent(e) {
       <div><label>Adult attendance</label><select id="evf-adults">
         <option value="0" ${!e?.track_adults ? 'selected' : ''}>Not tracked</option>
         <option value="1" ${e?.track_adults ? 'selected' : ''}>Tracked (headcount)</option></select></div>
+      <div><label>High Adventure medical form ${e && e.source === 'ical' ? '<span class="tag off" title="App-owned — the iCal sync never changes this">app-owned</span>' : ''}</label>
+        <select id="evf-haform">
+        <option value="0" ${!e?.requires_high_adventure_form ? 'selected' : ''}>Not required</option>
+        <option value="1" ${e?.requires_high_adventure_form ? 'selected' : ''}>Required — kiosk flags missing/expired at sign-in</option></select></div>
       <div><label>SMS reminder delay (min after end; blank = default 30)</label>
         <input id="evf-notify" type="number" min="0" value="${e?.notify_after_min ?? ''}"></div>
       ${e ? `<div><label>TLC attendance push ${e.tlc_event_id ? '<span class="tag" title="Matched to a Trail Life Connect event through the iCal feed">linked ✓</span>' : '<span class="tag off" title="Manual events have no TLC calendar entry to push to">not linked</span>'}</label>
@@ -774,6 +778,7 @@ function openEvent(e) {
       start_at: new Date($('evf-start').value).toISOString(),
       end_at: new Date($('evf-end').value).toISOString(),
       track_adults: $('evf-adults').value === '1',
+      requires_high_adventure_form: $('evf-haform').value === '1',
       notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
     if (e && $('evf-tlc')) {

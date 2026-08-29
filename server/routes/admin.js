@@ -370,7 +370,7 @@ router.patch('/events/:id', (req, res) => {
   for (const f of ['title', 'location', 'description', 'start_at', 'end_at']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
   }
-  for (const f of ['track_adults', 'all_day']) {
+  for (const f of ['track_adults', 'all_day', 'requires_high_adventure_form']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
   }
   if ('notify_after_min' in b) { sets.push('notify_after_min = ?'); vals.push(b.notify_after_min ?? null); }
