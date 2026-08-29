@@ -407,8 +407,27 @@ async function openPerson(id) {
     try {
       if (b.dataset.aact === 'on') {
         const formId = $('pp-aform').value ? Number($('pp-aform').value) : null;
-        if (!formId) return toast('Pick the signed consent form first (upload one from a youth’s Guardians section).', true);
+        if (!formId) return toast('Pick a stored consent form, or upload the scan right here with "Upload scan & opt in".', true);
         await jpatch(`/admin/people/${id}/opt-in`, { sms_opt_in: 'yes', consent_form_id: formId });
+      } else if (b.dataset.aact === 'upload') {
+        // adult self-consent: upload the scan and opt in, one step — the
+        // signer IS this adult (no youth, no guardian links involved)
+        const file = $('pp-afile').files[0];
+        if (!file) return toast('Choose the scanned form file first (PDF or photo).', true);
+        const signedOn = $('pp-asigned-on').value || new Date().toISOString().slice(0, 10);
+        // default filename Last_First_date, same convention as the family modal
+        const clean = (s) => String(s).normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9-]/g, '');
+        const who = [clean(p.last_name), clean(p.first_name)].filter(Boolean).join('_');
+        const form = new FormData();
+        form.append('file', file);
+        form.append('signed_by', `${p.first_name} ${p.last_name}`);
+        form.append('signed_on', signedOn);
+        form.append('file_name', who ? `${who}_${signedOn}` : '');
+        const r = await fetch('/api/admin/consent-forms', { method: 'POST', body: form, credentials: 'same-origin' });
+        const body = await r.json();
+        if (!r.ok) return toast(body.error || 'Consent form upload failed.', true);
+        await jpatch(`/admin/people/${id}/opt-in`, { sms_opt_in: 'yes', consent_form_id: body.id });
+        toast('Form stored and opt-in recorded.');
       } else {
         if (!confirm('Revoke SMS opt-in for this adult?')) return;
         await jpatch(`/admin/people/${id}/opt-in`, { sms_opt_in: 'unknown' });
@@ -681,9 +700,17 @@ function adultSmsBlock(p, forms) {
     : `<button class="btn ghost small" data-aact="on">opt in</button>`;
   return `<h3>SMS messaging (this adult)</h3>
   <p class="hint left">Adults at adult-tracked events can be texted directly — <b>strictly opt-in</b>, same as
-  youth families: opting in requires attaching their signed consent form (upload one from any youth's
-  Guardians section, or reuse a family form that names them).</p>
-  <div class="row wrap">${tag}${formRef} ${sel} ${btn}</div>`;
+  youth families: opting in requires attaching their signed consent form. Upload their own signed form
+  right here (works for adults with no youth in the troop), or reuse a stored family form that names them.</p>
+  <div class="row wrap">${tag}${formRef} ${sel} ${btn}</div>
+  <div class="row wrap">
+    <input id="pp-afile" type="file" accept=".pdf,image/*" aria-label="Scanned consent form">
+    <label for="pp-asigned-on">Date signed
+      <input id="pp-asigned-on" type="date" title="The date the form was signed — used in the file name (today's date if left blank)"></label>
+    <button class="btn primary small" data-aact="upload">Upload scan &amp; opt in</button>
+  </div>
+  <p class="hint left">The upload files under this adult's own name (signed by ${esc(p.first_name)} ${esc(p.last_name)})
+  and opts them in — one step, no youth involved. The form joins the shared consent-form list like any other.</p>`;
 }
 
 function wardBlock(p) {

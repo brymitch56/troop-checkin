@@ -147,3 +147,32 @@ test('dashboard status counts youth families (adults sectioned in the report)', 
   assert.equal(s.optin_missing, 3);   // Una, Orla, Ned
   assert.equal(s.optin_declined, 1);  // Deb
 });
+
+test('adult with zero youth: upload scan + opt in end-to-end (the tc-v50 UI path)', async () => {
+  const solo = addPerson('Sol', 'Solo', { is_youth: 0 });
+  // multipart upload exactly as the adult block sends it (self-signed form)
+  const form = new FormData();
+  form.append('file', new Blob([Buffer.from('%PDF-1.4 test')], { type: 'application/pdf' }), 'scan.pdf');
+  form.append('signed_by', 'Sol Solo');
+  form.append('signed_on', '2026-08-01');
+  form.append('file_name', 'Solo_Sol_2026-08-01');
+  const up = await fetch(base + '/api/admin/consent-forms',
+    { method: 'POST', headers: { cookie: adminCookie }, body: form });
+  const uploaded = await up.json();
+  assert.equal(up.status, 200);
+  assert.match(uploaded.file_path || '', /^Solo_Sol_2026-08-01/);
+  // then the one-step opt-in PATCH
+  const r = await req('PATCH', `/api/admin/people/${solo}/opt-in`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: uploaded.id } });
+  assert.equal(r.status, 200);
+  const p = db.prepare('SELECT sms_opt_in, consent_form_id FROM person WHERE id = ?').get(solo);
+  assert.equal(p.sms_opt_in, 'yes');
+  assert.equal(p.consent_form_id, uploaded.id);
+  // no guardian links were created, and the opt-in report agrees
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM person_guardian WHERE guardian_id = ?').get(solo).c, 0);
+  const miss = (await req('GET', '/api/admin/optin-report?view=missing', { cookie: adminCookie })).json;
+  assert.ok(!miss.adults.some((a) => a.first_name === 'Sol'));
+  // the form shows in the shared list like any other
+  const forms = (await req('GET', '/api/admin/consent-forms', { cookie: adminCookie })).json;
+  assert.ok(forms.some((f) => f.id === uploaded.id));
+});
