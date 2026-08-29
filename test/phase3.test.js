@@ -453,3 +453,68 @@ test('photo upload, session-gated serving, and removal', async () => {
   assert.equal(del.status, 200);
   assert.equal((await fetch(`${base}/photos/${danny.id}.png`, { headers: { cookie: doorCookie } })).status, 404);
 });
+
+// -------------------------------------------- adult broadcast (opt-in) ----
+test('include_adults: opted-in adults at an adult-tracked event are texted; others skipped by name', async () => {
+  // adult-tracked event with two adults signed in (Alice opted in, Carol not)
+  const evId = Number(db.prepare(
+    `INSERT INTO event (source, title, start_at, end_at, track_adults)
+     VALUES ('manual', 'Adult Training', datetime('now','-1 hour'), datetime('now','+1 hour'), 1)`
+  ).run().lastInsertRowid);
+  const alice = person('Alice'), carol = person('Carol');
+  const formId = Number(db.prepare(
+    `INSERT INTO consent_form (file_path, signed_by) VALUES ('a.pdf', 'Alice Anderson')`).run().lastInsertRowid);
+  db.prepare(`UPDATE person SET sms_opt_in = 'yes', consent_form_id = ? WHERE id = ?`).run(formId, alice.id);
+  const mkTxn = (pid, uuid) => {
+    const t = Number(db.prepare(
+      `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id)
+       VALUES (?, ?, 'in', datetime('now'), 1)`).run(uuid, evId).lastInsertRowid);
+    db.prepare(`INSERT INTO txn_person (txn_id, person_id, open) VALUES (?, ?, 1)`).run(t, pid);
+  };
+  mkTxn(alice.id, 'adult-bc-1'); mkTxn(carol.id, 'adult-bc-2');
+
+  // default (no include_adults): adults are untouched — behavior unchanged
+  const before = db.prepare(`SELECT COUNT(*) c FROM sms_message WHERE guardian_id = ?`).get(alice.id).c;
+  const off = await req('POST', '/api/message-onsite', {
+    cookie: doorCookie, body: { scope: 'attended', event_id: evId, message: 'Youth-only path.' },
+  });
+  assert.equal(off.status, 200);
+  assert.ok(!off.json.sent.concat(off.json.skipped).some((x) => x.adult));
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM sms_message WHERE guardian_id = ?`).get(alice.id).c, before);
+
+  // explicit include_adults: Alice logged (out/custom), Carol skipped by name
+  const on = await req('POST', '/api/message-onsite', {
+    cookie: doorCookie, body: { scope: 'attended', event_id: evId, message: 'Training moved to 7pm.', include_adults: 1 },
+  });
+  assert.equal(on.status, 200);
+  const logged = db.prepare(
+    `SELECT COUNT(*) c FROM sms_message WHERE guardian_id = ? AND direction = 'out' AND kind = 'custom'`).get(alice.id).c;
+  assert.equal(logged, 1);
+  assert.ok(on.json.skipped.some((x) => x.adult && x.adult.includes('Carol') && /not opted in/.test(x.reason)));
+  assert.equal(db.prepare(
+    `SELECT COUNT(*) c FROM sms_message WHERE guardian_id = ? AND direction = 'out' AND kind = 'custom'`).get(carol.id).c, 0);
+
+  // a non-adult-tracked event never includes adults even when asked
+  const evId2 = Number(db.prepare(
+    `INSERT INTO event (source, title, start_at, end_at, track_adults)
+     VALUES ('manual', 'Youth Meeting 2', datetime('now','-1 hour'), datetime('now','+1 hour'), 0)`
+  ).run().lastInsertRowid);
+  const r2 = await req('POST', '/api/message-onsite', {
+    cookie: doorCookie, body: { scope: 'attended', event_id: evId2, message: 'x', include_adults: 1 },
+  });
+  assert.ok(!r2.json.sent.concat(r2.json.skipped).some((x) => x.adult));
+});
+
+test("webhook: an adult's STOP/START also flips their own consent (form-gated)", async () => {
+  const alice = person('Alice');
+  assert.equal(db.prepare('SELECT sms_opt_in FROM person WHERE id = ?').get(alice.id).sms_opt_in, 'yes');
+  await twilioPost('/api/sms/inbound', { From: '5550101', Body: 'STOP' });
+  assert.equal(db.prepare('SELECT sms_opt_in FROM person WHERE id = ?').get(alice.id).sms_opt_in, 'stop');
+  await twilioPost('/api/sms/inbound', { From: '5550101', Body: 'START' });
+  assert.equal(db.prepare('SELECT sms_opt_in FROM person WHERE id = ?').get(alice.id).sms_opt_in, 'yes',
+    'START restores — Alice has a recorded consent form');
+  // Carol (no form, never opted in) is never manufactured into consent
+  const carol = person('Carol');
+  await twilioPost('/api/sms/inbound', { From: '5550103', Body: 'START' });
+  assert.equal(db.prepare('SELECT sms_opt_in FROM person WHERE id = ?').get(carol.id).sms_opt_in, 'unknown');
+});

@@ -544,7 +544,44 @@ router.post('/message-onsite', express.json(), async (req, res) => {
     rows = onsiteYouthRows(patrol);
   }
   const r = await messageGuardians(rows, message);
-  res.json({ scope: b.scope === 'attended' ? 'attended' : 'onsite', youth: rows.length, onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
+
+  // Optional, additive, off by default: when the leader explicitly ticks
+  // "include adults" on an ADULT-TRACKED event, opted-in adults who
+  // attended (or are on site) are texted directly (their own consent —
+  // person.sms_opt_in). The youth/guardian path above is untouched.
+  let adults = { sent: [], skipped: [], sentCount: 0 };
+  if (b.include_adults) {
+    const { messageAdults } = require('../lib/notifySweep');
+    let adultIds = [];
+    if (b.scope === 'attended') {
+      const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(b.event_id);
+      if (ev && ev.track_adults) {
+        adultIds = db.prepare(
+          `SELECT DISTINCT p.id FROM txn_person tp
+             JOIN txn t ON t.id = tp.txn_id
+             JOIN person p ON p.id = tp.person_id
+            WHERE t.event_id = ? AND t.direction = 'in' AND t.voided_by_txn_id IS NULL
+              AND p.is_youth = 0`
+        ).all(b.event_id).map((x) => x.id);
+      }
+    } else {
+      adultIds = db.prepare(
+        `SELECT DISTINCT p.id FROM txn_person tp
+           JOIN txn t ON t.id = tp.txn_id
+           JOIN person p ON p.id = tp.person_id
+           JOIN event e ON e.id = t.event_id
+          WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
+            AND p.is_youth = 0 AND e.track_adults = 1`
+      ).all().map((x) => x.id);
+    }
+    adults = await messageAdults(adultIds, message);
+  }
+
+  res.json({
+    scope: b.scope === 'attended' ? 'attended' : 'onsite', youth: rows.length,
+    onsite_youth: rows.length, adults_included: b.include_adults ? 1 : 0,
+    sent: [...r.sent, ...adults.sent], skipped: [...r.skipped, ...adults.skipped],
+  });
 });
 
 router.get('/patrols', (req, res) => {

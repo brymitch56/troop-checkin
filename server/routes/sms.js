@@ -31,6 +31,12 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
   const text = rawBody.toUpperCase();
   if (!from) return twiml(res);
 
+  // active adults whose own mobile matches the sender (adult self-consent)
+  const adultRows = (phone) => db.prepare(
+    `SELECT id, phone_mobile, sms_opt_in, consent_form_id FROM person
+      WHERE is_youth = 0 AND status != 'merged' AND phone_mobile IS NOT NULL`
+  ).all().filter((a) => sms.normPhone(a.phone_mobile) === phone);
+
   // guardian rows whose adult's mobile matches the sender
   const guardianRows = db.prepare(
     `SELECT pg.youth_id, pg.guardian_id FROM person_guardian pg
@@ -56,16 +62,24 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
       db.prepare(`UPDATE person_guardian SET sms_opt_in = 'stop' WHERE youth_id = ? AND guardian_id = ?`)
         .run(r.youth_id, r.guardian_id);
     }
+    // an adult's STOP also ends their own (adult-broadcast) consent
+    for (const a of adultRows(from)) {
+      db.prepare(`UPDATE person SET sms_opt_in = 'stop' WHERE id = ?`).run(a.id);
+    }
     return twiml(res); // Twilio sends its own STOP confirmation
   }
   if (['START', 'UNSTOP', 'SUBSCRIBE'].includes(text)) {
     // START restores a previous opt-in after a STOP; it never creates consent
-    // out of thin air ('unknown' pairs stay unknown until the signed form is
-    // recorded in admin).
+    // out of thin air ('unknown' pairs/adults stay unknown until the signed
+    // form is recorded in admin).
     for (const r of guardianRows) {
       db.prepare(`UPDATE person_guardian SET sms_opt_in = 'yes'
                    WHERE youth_id = ? AND guardian_id = ? AND sms_opt_in = 'stop' AND consent_form_id IS NOT NULL`)
         .run(r.youth_id, r.guardian_id);
+    }
+    for (const a of adultRows(from)) {
+      db.prepare(`UPDATE person SET sms_opt_in = 'yes'
+                   WHERE id = ? AND sms_opt_in = 'stop' AND consent_form_id IS NOT NULL`).run(a.id);
     }
     return twiml(res);
   }

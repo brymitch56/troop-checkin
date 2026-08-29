@@ -807,11 +807,13 @@ function renderNotifyResults(r) {
   box.innerHTML =
     (r.sent.length
       ? `<h4>✅ Texted (${r.sent.length} message${r.sent.length > 1 ? 's' : ''})</h4>` +
-        r.sent.map((x) => `<div class="notify-row">${esc(x.guardian)} ← ${esc(x.youths.join(', '))}</div>`).join('')
+        r.sent.map((x) => `<div class="notify-row">${x.adult
+          ? `${esc(x.adult)} (adult)`
+          : `${esc(x.guardian)} ← ${esc(x.youths.join(', '))}`}</div>`).join('')
       : '<p class="hint">No texts sent.</p>') +
     (r.skipped.length
       ? `<h4 class="warn-text">⚠️ Not contacted — reach these families another way</h4>` +
-        r.skipped.map((x) => `<div class="notify-row">${esc(x.youth || (x.youths || []).join(', '))} — <span class="warn-text">${esc(x.reason)}</span></div>`).join('')
+        r.skipped.map((x) => `<div class="notify-row">${esc(x.youth || x.adult || (x.youths || []).join(', '))}${x.adult ? ' (adult)' : ''} — <span class="warn-text">${esc(x.reason)}</span></div>`).join('')
       : '');
   openModal('modal-notify');
 }
@@ -835,6 +837,10 @@ $('onsite-message').onclick = () => {
     ? `Everyone who attended: ${state.event.title}`
     : 'Everyone who attended (pick an event first)';
   $('msg-scope').textContent = state.patrol ? `Limited to patrol: ${state.patrol}.` : '';
+  // adults option only where it can apply: an adult-tracked selected event
+  // (off by default every time — including adults is an explicit choice)
+  $('msg-adults').checked = false;
+  $('msg-adults-wrap').hidden = !(state.event && state.event.track_adults);
   openModal('modal-message');
 };
 $('msg-cancel').onclick = closeModal;
@@ -848,6 +854,7 @@ $('msg-send').onclick = async () => {
       patrol: state.patrol || undefined,
       scope: attended ? 'attended' : 'onsite',
       event_id: attended && state.event ? state.event.id : undefined,
+      include_adults: !$('msg-adults-wrap').hidden && $('msg-adults').checked ? 1 : undefined,
     }));
   } catch (e) { $('msg-error').textContent = e.message; }
 };

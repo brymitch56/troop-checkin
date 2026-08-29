@@ -132,6 +132,47 @@ async function messageGuardians(rows, message) {
   return { sent: r.sent, skipped: [...skipped, ...r.failed], recorded: r.recorded, sentCount: r.sentCount };
 }
 
+// Broadcast directly to ADULTS (their own consent, person.sms_opt_in —
+// migration 010). Used only when a leader explicitly ticks "include adults"
+// on an adult-tracked event's broadcast; never touches the youth/guardian
+// path above. Strictly opt-in: 'unknown' and 'stop' are skipped by name so
+// the leader knows exactly who was not reached.
+async function messageAdults(personIds, message) {
+  const body = `${env.TROOP_ID}: ${message} — Reply STOP to opt out.`;
+  const sent = [], skipped = [];
+  for (const id of [...new Set(personIds)]) {
+    const a = db.prepare(
+      `SELECT id, first_name, last_name, nickname, phone_mobile, sms_opt_in
+         FROM person WHERE id = ? AND is_youth = 0 AND status != 'merged'`).get(id);
+    if (!a) continue;
+    const name = `${a.nickname || a.first_name} ${a.last_name}`;
+    if (a.sms_opt_in !== 'yes') {
+      skipped.push({ adult: name, reason: 'adult has not opted in — contact another way' });
+      continue;
+    }
+    if (!a.phone_mobile) {
+      skipped.push({ adult: name, reason: 'no mobile number on file' });
+      continue;
+    }
+    let status = 'failed', sid = null;
+    if (sms.configured()) {
+      try {
+        const r = await sms.send(a.phone_mobile, body);
+        status = 'sent'; sid = r.sid;
+      } catch (e) {
+        console.error(`sms to adult #${a.id} failed:`, e.message);
+      }
+    }
+    db.prepare(
+      `INSERT INTO sms_message (direction, kind, guardian_id, phone, body, twilio_sid, status)
+       VALUES ('out', 'custom', ?, ?, ?, ?, ?)`
+    ).run(a.id, a.phone_mobile, body, sid, status);
+    if (status === 'sent') sent.push({ adult: name });
+    else skipped.push({ adult: name, reason: 'send failed — see server log' });
+  }
+  return { sent, skipped, sentCount: sent.length };
+}
+
 async function sweep() {
   const lingering = findLingering();
   const r = await notifyLingering(lingering);
@@ -148,5 +189,6 @@ function scheduleSweep() {
 }
 
 module.exports = {
-  sweep, findLingering, pickGuardian, notifyLingering, messageGuardians, scheduleSweep,
+  sweep, findLingering, pickGuardian, notifyLingering, messageGuardians, messageAdults,
+  scheduleSweep,
 };
