@@ -190,6 +190,11 @@
   <p>If a youth's Trail Life membership has expired or expires within 30 days, their cart row shows an orange <span class="tag orange">⚠ Membership expiring</span> tag, and the sign modal repeats it with the date: <em>"Membership expires Sep 16 — renewal due."</em></p>
   <div class="rule"><b>The warning never blocks check-in.</b> It's a nudge for the family and leadership — sign the youth in normally and mention the renewal to the parent at pickup.</div>
   <p>Admins can see everyone expiring soon under Reports → Membership renewals (see Part 2).</p>
+  <p><b>Health &amp; High Adventure form flags</b> work the same calm way, in the same spot in the sign modal, at sign-in only:
+  when the admin switch is on (Reports → Health &amp; medical forms; off by default), members whose <b>health form</b>
+  is missing or past its 12-month validity get a ⚠ note; on events marked as requiring the <b>High Adventure medical
+  form</b> (set in the admin event editor), the same note appears for a missing/expired High Risk form. Like the
+  membership warning, these <b>never block</b> — sign in normally and let the family know which form to turn in.</p>
 </section>
 
 <section id="onsite">
@@ -197,9 +202,9 @@
   <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, filterable by patrol. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. From this screen (once SMS is set up):</p>
   <ul>
     <li><b>🔔 Text guardians</b> — one message per family listing all their youth still on site ("please pick up"). A guardian with three kids on site gets <em>one</em> text, not three. The results screen lists exactly who was <em>not</em> contacted and why (no consent, no mobile, STOPped) so you can phone those families instead.</li>
-    <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up).</li>
+    <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up). On events that track adult attendance, an <b>"Also text opted-in adults"</b> checkbox appears — off every time until you tick it — which additionally texts attending adults who signed their own consent form.</li>
   </ul>
-  <div class="rule">Texts go <b>only</b> to guardians whose family signed the SMS consent form and was opted in by an admin. Nobody else can be texted from the kiosk, ever.</div>
+  <div class="rule">Texts go <b>only</b> to people with a signed SMS consent form on file and opted in by an admin — guardians for their youth, and (only when the box is ticked on an adult-tracked event) adults for themselves. Nobody else can be texted from the kiosk, ever. STOP is honored automatically for both.</div>
 </section>
 
 <section id="station">
@@ -370,6 +375,8 @@
     <tr><td>Close a stale open sign-in</td><td>Admin → Dashboard → Still on site → Admin close</td></tr>
     <tr><td>Add grandma as a pickup person</td><td>Admin → People → youth → ＋ Add guardian / consent</td></tr>
     <tr><td>Enable texts for a family</td><td>Upload their signed consent form and opt in the pair(s) — same dialog</td></tr>
+    <tr><td>Enable texts for an adult (no youth)</td><td>Admin → People → the adult → SMS messaging → Upload scan &amp; opt in</td></tr>
+    <tr><td>See who's missing health forms</td><td>Admin → Dashboard → click the health-form card (or Reports → Health &amp; medical forms)</td></tr>
     <tr><td>Load a new roster export</td><td>Admin → Import → Preview → Commit</td></tr>
     <tr><td>See who needs to renew membership</td><td>Admin → Reports → Membership renewals (30/60/90 + CSV)</td></tr>
     <tr><td>Pull attendance for the year</td><td>Admin → Reports → date range → Run summary / CSVs</td></tr>
