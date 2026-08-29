@@ -46,6 +46,10 @@
 .card span { color: var(--muted); font-size: 13px; }
 .card.card-warn b { color: var(--blaze); }
 .card.card-warn { border-color: var(--blaze); }
+.card.card-link { cursor: pointer; }
+.card.card-link:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); transform: translateY(-1px); }
+@keyframes panel-flash { 0% { box-shadow: 0 0 0 3px var(--blaze); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.panel-flash { animation: panel-flash 1.5s ease-out; }
 
 .panel {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);

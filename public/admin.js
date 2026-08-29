@@ -138,9 +138,24 @@ async function loadDash() {
     [s.youth_active, 'active youth'], [s.adults_active, 'active adults'],
     [s.visitors, 'visitors'], [s.open_signins, 'on site now'],
     [s.events, 'events'], [s.txns, 'transactions'],
-    [s.expiring_30 || 0, 'renewals due ≤30 days', s.expiring_30 ? 'card-warn' : ''],
+    // clickable: jumps to Reports → Membership renewals (the membership
+    // admin's one-click path to the list)
+    [s.expiring_30 || 0, 'renewals due ≤30 days ›', s.expiring_30 ? 'card-warn' : '', 'renewals'],
   ];
-  $('dash-cards').innerHTML = cards.map(([n, l, cls]) => `<div class="card ${cls || ''}"><b>${n}</b><span>${l}</span></div>`).join('');
+  $('dash-cards').innerHTML = cards.map(([n, l, cls, jump]) =>
+    `<div class="card ${cls || ''}${jump ? ' card-link' : ''}" ${jump ? `data-jump="${jump}" role="button" tabindex="0" title="Open the renewals list"` : ''}><b>${n}</b><span>${l}</span></div>`).join('');
+  $('dash-cards').onclick = (e) => {
+    const c = e.target.closest('[data-jump="renewals"]');
+    if (!c) return;
+    showTab('reports');
+    // loadReports is async — give the panel a beat to exist, then bring it up
+    setTimeout(() => {
+      const panel = $('mx-list').closest('.panel');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      panel.classList.add('panel-flash');
+      setTimeout(() => panel.classList.remove('panel-flash'), 1600);
+    }, 80);
+  };
   $('tool-status').textContent = s.last_ical_sync
     ? `Last iCal sync ${fmtDT(s.last_ical_sync.at)}: +${s.last_ical_sync.added} / ~${s.last_ical_sync.updated} / flagged ${s.last_ical_sync.flagged}`
     : 'iCal has not synced yet.';
