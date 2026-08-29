@@ -858,7 +858,26 @@ router.post('/consent-forms', consentUpload.single('file'), (req, res) => {
      VALUES ('pending', ?, ?, ?, ?)`
   ).run(req.body.signed_by || null, req.body.signed_on || null, req.body.notes || null, req.staff.staff_id);
   const id = Number(r.lastInsertRowid);
-  const name = `${id}.${ext}`;
+  // File naming: the UI sends an editable file_name (defaulted to
+  // Guardian Last_First_date); fall back to deriving it from signed_by +
+  // signed-on/upload date, then to the bare id. Sanitized (the name becomes
+  // a served URL path segment), extension always ours from the mimetype,
+  // uniquified on disk so a re-upload never overwrites an earlier form.
+  const clean = (s) => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9 _.-]/g, '').trim().replace(/[ .]+/g, '_')
+    .replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+  let base = clean(String(req.body.file_name || '').replace(/\.(pdf|jpe?g|png|webp)$/i, ''));
+  if (!base) {
+    const parts = String(req.body.signed_by || '').trim().split(/\s+/).filter(Boolean);
+    const who = parts.length >= 2
+      ? `${clean(parts[parts.length - 1])}_${clean(parts.slice(0, -1).join(' '))}`
+      : clean(parts[0] || '');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.signed_on || '')
+      ? req.body.signed_on : new Date().toISOString().slice(0, 10);
+    if (who) base = `${who}_${date}`;
+  }
+  let name = `${base || id}.${ext}`;
+  for (let n = 2; fs.existsSync(path.join(CONSENT_DIR, name)); n++) name = `${base || id}_${n}.${ext}`;
   fs.writeFileSync(path.join(CONSENT_DIR, name), req.file.buffer);
   db.prepare('UPDATE consent_form SET file_path = ? WHERE id = ?').run(name, id);
   res.json({ ok: true, id, file_path: name });

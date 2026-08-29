@@ -229,6 +229,19 @@ test('consent forms: upload, opt-in requires a form, CSV export', async () => {
   const up = await req('POST', '/api/admin/consent-forms', { form, cookie: adminCookie });
   assert.equal(up.status, 200);
   formId = up.json.id;
+  // default naming: Guardian Last_First + signed date (falls back to upload date)
+  assert.equal(up.json.file_path, 'Brown_Bob_2026-07-20.pdf');
+  // custom name honored (sanitized to a safe URL segment); duplicates suffix, never overwrite
+  const mkUpload = (name) => {
+    const f = new FormData();
+    f.append('file', new Blob([Buffer.from('%PDF-1.4 test2')], { type: 'application/pdf' }), 'x.pdf');
+    f.append('file_name', name);
+    return req('POST', '/api/admin/consent-forms', { form: f, cookie: adminCookie });
+  };
+  const up2 = await mkUpload('Brown Family (open house)!.pdf');
+  assert.equal(up2.json.file_path, 'Brown_Family_open_house.pdf');
+  const up3 = await mkUpload('Brown Family (open house)!.pdf');
+  assert.equal(up3.json.file_path, 'Brown_Family_open_house_2.pdf');
   // now opt-in works, and the same form can cover another pair (cross-link)
   const ok = await req('PATCH', `/api/admin/people/${emma.id}/guardians/${bob.id}`, {
     cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: formId },

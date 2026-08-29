@@ -372,7 +372,7 @@ function smsCell(g, forms) {
     ? `<span class="tag youth">✓ opted in</span>`
     : g.sms_opt_in === 'stop' ? `<span class="tag warn">STOP</span>` : `<span class="tag off">no consent</span>`;
   const formRef = g.consent_form_id
-    ? ` <a href="/consent-forms/${esc(g.consent_file)}" target="_blank" title="signed by ${esc(g.consent_signed_by || '?')}">form #${g.consent_form_id}</a>` : '';
+    ? ` <a href="/consent-forms/${esc(g.consent_file)}" target="_blank" title="signed by ${esc(g.consent_signed_by || '?')}">${esc(g.consent_file)}</a>` : '';
   const sel = `<select data-gform="${g.id}">
       <option value="">— consent form —</option>
       ${forms.map((f) => `<option value="${f.id}" ${f.id === g.consent_form_id ? 'selected' : ''}>#${f.id} ${esc(f.signed_by || f.file_path)}${f.signed_on ? ` (${esc(f.signed_on)})` : ''}</option>`).join('')}
@@ -414,11 +414,35 @@ function wireGuardianForms(p) {
 // Apply one adult + opt-in + consent form to any number of youth at once.
 // Convention: closes automatically on a successful save (with a toast);
 // stays open showing the error otherwise.
-const fam = { fromPerson: null, guardianId: null, youths: [] };
+const fam = { fromPerson: null, guardianId: null, guardianName: null, youths: [], fnameEdited: false };
+
+// Default consent-form file name: Guardian Last_First + signed-on date
+// (falls back to today's upload date). Live-updates until the operator
+// types their own name into the field.
+function famSuggestFname() {
+  if (fam.fnameEdited) return;
+  let last = '', first = '';
+  if ($('fam-gmode-new').checked) {
+    last = $('fam-nlast').value.trim(); first = $('fam-nfirst').value.trim();
+  } else if (fam.guardianName) {
+    ({ last, first } = fam.guardianName);
+  } else {
+    const parts = $('fam-signed-by').value.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) { last = parts[parts.length - 1]; first = parts.slice(0, -1).join(' '); }
+    else first = parts[0] || '';
+  }
+  const clean = (s) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9-]/g, '');
+  const who = [clean(last), clean(first)].filter(Boolean).join('_');
+  const date = $('fam-signed-on').value || new Date().toISOString().slice(0, 10);
+  $('fam-fname').value = who ? `${who}_${date}` : '';
+}
 
 async function openFamilyModal(p) {
   fam.fromPerson = p;
   fam.guardianId = null;
+  fam.guardianName = null;
+  fam.fnameEdited = false;
+  $('fam-fname').value = '';
   $('fam-error').textContent = '';
   $('fam-gsearch').value = ''; $('fam-gresults').innerHTML = '';
   $('fam-gpicked').hidden = true;
@@ -436,7 +460,7 @@ async function openFamilyModal(p) {
   ]);
   fam.youths = youths.filter((y) => y.status !== 'merged');
   $('fam-form').innerHTML = '<option value="">— pick an uploaded form —</option>' +
-    forms.map((f) => `<option value="${f.id}">#${f.id} ${esc(f.signed_by || f.file_path)}${f.signed_on ? ` (${esc(f.signed_on)})` : ''}</option>`).join('');
+    forms.map((f) => `<option value="${f.id}">${esc(f.file_path)}${f.signed_by ? ` · ${esc(f.signed_by)}` : ''}${f.signed_on ? ` (${esc(f.signed_on)})` : ''}</option>`).join('');
   renderFamYouthList(p ? [p.id] : []);
   $('adm-modal').hidden = false;
 }
@@ -451,6 +475,14 @@ function renderFamYouthList(preChecked) {
       ${esc(y.last_name)}, ${esc(y.first_name)}${y.patrol ? ` <span class="tag off">${esc(y.patrol)}</span>` : ''}</label>`)
     .join('') || '<p class="hint left">No youth match.</p>';
 }
+
+// keep the suggested consent file name current until the operator edits it
+$('fam-fname').oninput = () => { fam.fnameEdited = $('fam-fname').value.trim() !== ''; };
+$('fam-signed-on').onchange = famSuggestFname;
+$('fam-signed-by').oninput = famSuggestFname;
+$('fam-nfirst').oninput = famSuggestFname;
+$('fam-nlast').oninput = famSuggestFname;
+$('fam-file').onchange = famSuggestFname;
 
 function closeFamilyModal() { $('adm-modal').hidden = true; }
 function closePersonModal() { $('person-modal').hidden = true; }
@@ -487,9 +519,12 @@ document.addEventListener('input', (e) => {
         b.textContent = `${a.first_name} ${a.last_name}${a.member_id ? ` (#${a.member_id})` : ''}`;
         b.onclick = () => {
           fam.guardianId = a.id;
+          fam.guardianName = { last: a.last_name, first: a.first_name };
           $('fam-gpicked').textContent = `Selected: ${a.first_name} ${a.last_name}`;
           $('fam-gpicked').hidden = false;
           box.innerHTML = ''; $('fam-gsearch').value = '';
+          if (!$('fam-signed-by').value.trim()) $('fam-signed-by').value = `${a.first_name} ${a.last_name}`;
+          famSuggestFname();
         };
         box.appendChild(b);
       }
@@ -524,6 +559,7 @@ document.addEventListener('click', async (e) => {
       form.append('file', file);
       form.append('signed_by', $('fam-signed-by').value.trim());
       form.append('signed_on', $('fam-signed-on').value);
+      form.append('file_name', $('fam-fname').value.trim());
       const r = await fetch('/api/admin/consent-forms', { method: 'POST', body: form, credentials: 'same-origin' });
       const body = await r.json();
       if (!r.ok) return err(body.error || 'Consent form upload failed.');
