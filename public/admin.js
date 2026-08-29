@@ -1019,6 +1019,9 @@ async function loadHealthForms() {
   $('hf-csv').href = `/api/admin/export/health-forms.csv?${q}`;
   const rows = await api(`/admin/health-forms?${q}`).catch(() => []);
   const label = form === 'health' ? 'health form' : 'High Risk form';
+  api('/admin/checkin-flags').then((f) => {
+    if (document.activeElement !== $('hf-flag-checkin')) $('hf-flag-checkin').checked = !!f.health_form;
+  }).catch(() => {});
   $('hf-list').innerHTML = rows.length
     ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th>${missing ? '' : '<th>Submitted</th><th>Expires</th><th>Days left</th>'}</tr>` +
       rows.map((p) => `<tr>
@@ -1060,10 +1063,18 @@ async function loadOptin() {
   enhanceTable('ov-youth'); enhanceTable('ov-adults');
 }
 
-document.addEventListener('change', (e) => {
+document.addEventListener('change', async (e) => {
   if (e.target.id === 'mx-days') loadExpiring();
   if (e.target.id === 'hf-form' || e.target.id === 'hf-view') loadHealthForms();
   if (e.target.id === 'ov-view') loadOptin();
+  if (e.target.id === 'hf-flag-checkin') {
+    try {
+      await jput('/admin/checkin-flags', { health_form: e.target.checked ? 1 : 0 });
+      toast(e.target.checked
+        ? 'Check-in badge ON — kiosks flag missing/expired health forms on sign-in.'
+        : 'Check-in badge off.');
+    } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+  }
 });
 
 function reportQuery() {

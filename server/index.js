@@ -45,6 +45,8 @@ app.get('/api/config', (req, res) => {
   res.json({
     troop_id: env.TROOP_ID, troop_name: env.TROOP_NAME, ical_configured: !!env.ICAL_URL,
     theme: env.THEME,
+    // kiosk health-form badge switch (admin-set, default off; not sensitive)
+    flag_health_forms: require('./lib/healthForms').getCheckinFlags().health_form,
   });
 });
 // theme palette as CSS variables, loaded after styles.css — the 'traillife'

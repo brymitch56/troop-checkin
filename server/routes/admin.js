@@ -935,6 +935,14 @@ router.get('/export/optin.csv', (req, res) => {
     rows);
 });
 
+// check-in badge switch (default OFF — see lib/healthForms.js)
+router.get('/checkin-flags', (req, res) => {
+  res.json(healthForms.getCheckinFlags());
+});
+router.put('/checkin-flags', (req, res) => {
+  res.json(healthForms.saveCheckinFlags(req.body || {}));
+});
+
 // -------------------------------------------------------- consent forms ----
 // One scanned form can cover many youth/guardian pairs; pairs link to it via
 // person_guardian.consent_form_id. Files live under data/ with the other PII,

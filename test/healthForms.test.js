@@ -138,3 +138,14 @@ test('hand-editing a form date locks it against imports (manual_fields)', async 
   assert.equal(after.health_form_date, '2026-08-01');
   assert.ok(JSON.parse(after.manual_fields).includes('health_form_date'));
 });
+
+test('check-in flag: defaults off, PUT flips it, /api/config carries it', async () => {
+  const f0 = (await req('GET', '/api/admin/checkin-flags', { cookie: adminCookie })).json;
+  assert.equal(f0.health_form, 0); // default OFF — data is sparse until the TLC backfill
+  assert.equal((await req('GET', '/api/config')).json.flag_health_forms, 0);
+  const on = await req('PUT', '/api/admin/checkin-flags', { cookie: adminCookie, body: { health_form: 1 } });
+  assert.equal(on.json.health_form, 1);
+  assert.equal((await req('GET', '/api/config')).json.flag_health_forms, 1);
+  assert.equal((await req('PUT', '/api/admin/checkin-flags')).status, 401); // admin-gated
+  await req('PUT', '/api/admin/checkin-flags', { cookie: adminCookie, body: { health_form: 0 } });
+});

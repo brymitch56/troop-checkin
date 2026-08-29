@@ -69,4 +69,29 @@ function expiringPeople(form, days) {
       || a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name));
 }
 
-module.exports = { HEALTH_FORM_VALID_DAYS, FORM_FIELDS, expiryOf, missingPeople, expiringPeople };
+// ------------------------------------------------- check-in badge switch ----
+// meta key 'checkin_flags' — {health_form: 0|1}. Gates the KIOSK badge for
+// missing/expired health forms (default OFF: today's TLC data is nearly all
+// blank, so the badge would flag almost everyone until the backfill lands).
+// The dashboard cards and reports above are admin-facing and always on.
+// The per-event High Adventure badge is driven by
+// event.requires_high_adventure_form, not by this switch.
+const FLAGS_KEY = 'checkin_flags';
+
+function getCheckinFlags() {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(FLAGS_KEY);
+  let v = {};
+  if (row) { try { v = JSON.parse(row.value); } catch { /* ignore */ } }
+  return { health_form: v.health_form ? 1 : 0 };
+}
+
+function saveCheckinFlags(b) {
+  const flags = { health_form: b && b.health_form ? 1 : 0 };
+  db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run(FLAGS_KEY, JSON.stringify(flags));
+  return flags;
+}
+
+module.exports = { HEALTH_FORM_VALID_DAYS, FORM_FIELDS, expiryOf, missingPeople, expiringPeople,
+  getCheckinFlags, saveCheckinFlags };

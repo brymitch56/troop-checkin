@@ -159,7 +159,10 @@
       <p class="hint left">Forms are treated as valid for <b>12 months from the submission date</b> recorded
       in Trail Life Connect (the export has no expiry column — if that assumption is wrong, say so and it's a
       one-line change). "High Risk" is the separate High Adventure medical clearance. Covers active youth and
-      adults — everyone camps.</p>
+      <b>registered</b> adults (visitors and pickup-only designees don't count).</p>
+      <label class="check"><input id="hf-flag-checkin" type="checkbox"> Flag missing/expired health forms at
+      check-in (kiosk badge on sign-in — informational, never blocks). Leave off until the TLC backfill lands,
+      or the badge will flag nearly everyone.</label>
       <div class="row wrap">
         <select id="hf-form">
           <option value="health">Health form</option>
