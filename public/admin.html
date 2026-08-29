@@ -326,7 +326,8 @@
         <p class="hint left">…or upload the scanned form now:</p>
         <div class="row wrap">
           <input id="fam-file" type="file" accept=".pdf,image/*">
-          <input id="fam-signed-by" type="text" placeholder="Signed by">
+          <label for="fam-signed-by">Signed by
+            <input id="fam-signed-by" type="text" placeholder="Auto: the selected adult" title="Who signed the form — follows the selected adult until you type your own"></label>
           <label for="fam-signed-on">Date signed
             <input id="fam-signed-on" type="date" title="The date the form was signed — used in the file name (today's date if left blank)"></label>
         </div>

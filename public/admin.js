@@ -414,7 +414,21 @@ function wireGuardianForms(p) {
 // Apply one adult + opt-in + consent form to any number of youth at once.
 // Convention: closes automatically on a successful save (with a toast);
 // stays open showing the error otherwise.
-const fam = { fromPerson: null, guardianId: null, guardianName: null, youths: [], fnameEdited: false };
+const fam = { fromPerson: null, guardianId: null, guardianName: null, youths: [], fnameEdited: false, signedByEdited: false };
+
+// "Signed by" follows the selected adult (or the new-adult name fields)
+// until the operator types their own value — same convention as the
+// suggested file name below.
+function famSuggestSignedBy() {
+  if (fam.signedByEdited) return;
+  let name = '';
+  if ($('fam-gmode-new').checked) {
+    name = `${$('fam-nfirst').value.trim()} ${$('fam-nlast').value.trim()}`.trim();
+  } else if (fam.guardianName) {
+    name = `${fam.guardianName.first} ${fam.guardianName.last}`;
+  }
+  $('fam-signed-by').value = name;
+}
 
 // Default consent-form file name: Guardian Last_First + signed-on date
 // (falls back to today's upload date). Live-updates until the operator
@@ -442,6 +456,7 @@ async function openFamilyModal(p) {
   fam.guardianId = null;
   fam.guardianName = null;
   fam.fnameEdited = false;
+  fam.signedByEdited = false;
   $('fam-fname').value = '';
   $('fam-error').textContent = '';
   $('fam-gsearch').value = ''; $('fam-gresults').innerHTML = '';
@@ -476,12 +491,16 @@ function renderFamYouthList(preChecked) {
     .join('') || '<p class="hint left">No youth match.</p>';
 }
 
-// keep the suggested consent file name current until the operator edits it
+// keep the suggested "Signed by" + file name current until the operator
+// edits them (clearing a field hands it back to the auto-suggestion)
 $('fam-fname').oninput = () => { fam.fnameEdited = $('fam-fname').value.trim() !== ''; };
 $('fam-signed-on').onchange = famSuggestFname;
-$('fam-signed-by').oninput = famSuggestFname;
-$('fam-nfirst').oninput = famSuggestFname;
-$('fam-nlast').oninput = famSuggestFname;
+$('fam-signed-by').oninput = () => {
+  fam.signedByEdited = $('fam-signed-by').value.trim() !== '';
+  famSuggestFname();
+};
+$('fam-nfirst').oninput = () => { famSuggestSignedBy(); famSuggestFname(); };
+$('fam-nlast').oninput = () => { famSuggestSignedBy(); famSuggestFname(); };
 $('fam-file').onchange = famSuggestFname;
 
 function closeFamilyModal() { $('adm-modal').hidden = true; }
@@ -523,7 +542,7 @@ document.addEventListener('input', (e) => {
           $('fam-gpicked').textContent = `Selected: ${a.first_name} ${a.last_name}`;
           $('fam-gpicked').hidden = false;
           box.innerHTML = ''; $('fam-gsearch').value = '';
-          if (!$('fam-signed-by').value.trim()) $('fam-signed-by').value = `${a.first_name} ${a.last_name}`;
+          famSuggestSignedBy();
           famSuggestFname();
         };
         box.appendChild(b);
@@ -536,6 +555,7 @@ document.addEventListener('change', (e) => {
     const useNew = $('fam-gmode-new').checked;
     $('fam-existing-wrap').hidden = useNew;
     $('fam-new-wrap').hidden = !useNew;
+    famSuggestSignedBy(); famSuggestFname();
   }
   if (e.target.id === 'fam-optin') $('fam-consent-wrap').hidden = !$('fam-optin').checked;
 });
