@@ -128,7 +128,9 @@ function showTab(name) {
   // keep the active tab visible when the tab row scrolls sideways (phones)
   const active = document.querySelector('#tabs button.active');
   if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  loaders[name]();
+  // returned so callers (the dashboard card jumps) can wait for the tab's
+  // data to land before scrolling — a fixed timer loses to slow responses
+  return loaders[name]();
 }
 
 // ------------------------------------------------------------ dashboard ----
@@ -150,29 +152,30 @@ async function loadDash() {
   ];
   $('dash-cards').innerHTML = cards.map(([n, l, cls, jump]) =>
     `<div class="card ${cls || ''}${jump ? ' card-link' : ''}" ${jump ? `data-jump="${jump}" role="button" tabindex="0" title="Open this list in Reports"` : ''}><b>${n}</b><span>${l}</span></div>`).join('');
-  // jump target -> [panel anchor, setup that presets the panel's controls]
+  // jump target -> [panel anchor, preset that sets the panel's controls].
+  // Presets run BEFORE loadReports() so its own pass fetches the right view
+  // (no double fetch); the scroll waits for the data, not a timer — on slow
+  // links the old 80ms timer scrolled an empty page, and the panels growing
+  // above the target then pushed it back below the fold (tc-v50 fix).
   const jumps = {
     renewals: ['mx-list', null],
-    'health-missing': ['hf-list', () => { $('hf-form').value = 'health'; $('hf-view').value = 'missing'; loadHealthForms(); }],
-    'health-expiring': ['hf-list', () => { $('hf-form').value = 'health'; $('hf-view').value = '30'; loadHealthForms(); }],
-    'hr-missing': ['hf-list', () => { $('hf-form').value = 'high_risk'; $('hf-view').value = 'missing'; loadHealthForms(); }],
-    'hr-expiring': ['hf-list', () => { $('hf-form').value = 'high_risk'; $('hf-view').value = '30'; loadHealthForms(); }],
-    'optin-missing': ['ov-list', () => { $('ov-view').value = 'missing'; loadOptin(); }],
-    'optin-declined': ['ov-list', () => { $('ov-view').value = 'declined'; loadOptin(); }],
+    'health-missing': ['hf-list', () => { $('hf-form').value = 'health'; $('hf-view').value = 'missing'; }],
+    'health-expiring': ['hf-list', () => { $('hf-form').value = 'health'; $('hf-view').value = '30'; }],
+    'hr-missing': ['hf-list', () => { $('hf-form').value = 'high_risk'; $('hf-view').value = 'missing'; }],
+    'hr-expiring': ['hf-list', () => { $('hf-form').value = 'high_risk'; $('hf-view').value = '30'; }],
+    'optin-missing': ['ov-list', () => { $('ov-view').value = 'missing'; }],
+    'optin-declined': ['ov-list', () => { $('ov-view').value = 'declined'; }],
   };
-  $('dash-cards').onclick = (e) => {
+  $('dash-cards').onclick = async (e) => {
     const c = e.target.closest('[data-jump]');
     if (!c || !jumps[c.dataset.jump]) return;
-    const [anchor, setup] = jumps[c.dataset.jump];
-    showTab('reports');
-    // loadReports is async — give the panel a beat to exist, then bring it up
-    setTimeout(() => {
-      if (setup) setup();
-      const panel = $(anchor).closest('.panel');
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      panel.classList.add('panel-flash');
-      setTimeout(() => panel.classList.remove('panel-flash'), 1600);
-    }, 80);
+    const [anchor, preset] = jumps[c.dataset.jump];
+    if (preset) preset();
+    try { await showTab('reports'); } catch { /* partial load — still scroll */ }
+    const panel = $(anchor).closest('.panel');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel.classList.add('panel-flash');
+    setTimeout(() => panel.classList.remove('panel-flash'), 1600);
   };
   $('tool-status').textContent = s.last_ical_sync
     ? `Last iCal sync ${fmtDT(s.last_ical_sync.at)}: +${s.last_ical_sync.added} / ~${s.last_ical_sync.updated} / flagged ${s.last_ical_sync.flagged}`
@@ -985,9 +988,9 @@ async function loadReports() {
   $('rp-event').innerHTML = '<option value="">All events</option>' +
     events.map((e) => `<option value="${e.id}">${esc(e.title)} · ${fmtDT(e.start_at)}</option>`).join('');
   renderReportLinks();
-  loadExpiring();
-  loadHealthForms();
-  loadOptin();
+  // awaited so loadReports() resolving means the panels are populated and
+  // the layout has settled — the dashboard card jumps scroll after this
+  await Promise.all([loadExpiring(), loadHealthForms(), loadOptin()]);
   const log = await api('/admin/notifications');
   $('rp-notifications').innerHTML = log.length
     ? `<table><tr><th>When</th><th>Youth</th><th>Guardian</th><th>Event</th><th>Status</th></tr>` +
