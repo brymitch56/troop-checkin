@@ -109,7 +109,7 @@ test('applyGrid: adopts slugs, auto-flags, and never overrides a manual set', ()
 
 test('parseExport: PK sniff, header discovery, Yes/No mapping', () => {
   assert.throws(() => ps.parseExport(Buffer.from('<html>login page</html>')),
-    /other than an xlsx/);
+    /web page/);
   const rows = ps.parseExport(exportBuffer([
     ['Y-2001', 'Andrews', 'Ben', 'Y', 'Yes', 'Going'],
     ['Y-2002', 'Field', 'Finn', 'Y', 'No', 'Going'],
@@ -121,7 +121,8 @@ test('parseExport: PK sniff, header discovery, Yes/No mapping', () => {
     { member_id: 'Y-2002', signed: 0 },
     { member_id: 'A-1001', signed: 0 },
   ]);
-  assert.throws(() => ps.parseExport(exportBuffer([]).slice(0, 2)), /xlsx/);
+  // truncated junk now falls through to the CSV path and fails on the header
+  assert.throws(() => ps.parseExport(exportBuffer([]).slice(0, 2)), /Member Number/);
 });
 
 test('storeStatuses: youth only, replaces prior rows, unsigned query counts absence', () => {
@@ -151,6 +152,27 @@ test('storeStatuses: youth only, replaces prior rows, unsigned query counts abse
   ps.storeStatuses(campId, [{ member_id: 'Y-2002', signed: 1 }]);
   assert.deepEqual(ps.unsignedYouthIds(campId, [finn]), []);
   assert.deepEqual(ps.unsignedYouthIds(campId, [ben]), [ben]); // replaced away = absent = flagged
+});
+
+test('export URL is the VERIFIED one — blank rsvp_type filter pinned', () => {
+  // regression pin (live bug 2026-08-29): without the blank
+  // EventParticipantsSearch[rsvp_type] filter TLC answers 200 with CSV
+  // after long waits; with it, first-attempt XLSX. Never simplify this URL.
+  assert.equal(ps.exportPath('etfakeslug01'),
+    '/calendar/exportexcel/etfakeslug01?format=xlsx&EventParticipantsSearch%5Brsvp_type%5D=');
+});
+
+test('parseExport accepts CSV bytes (TLC mislabels exports) and rejects HTML', () => {
+  const csv = Buffer.from(
+    'Synthetic Event Participants (TEST)\n' +
+    'Member Number,Last Name,First Name,Event Permission Form\n' +
+    'Y-2001,Andrews,Ben,Yes\n' +
+    'Y-2002,Field,Finn,No\n');
+  assert.deepEqual(ps.parseExport(csv), [
+    { member_id: 'Y-2001', signed: 1 },
+    { member_id: 'Y-2002', signed: 0 },
+  ]);
+  assert.throws(() => ps.parseExport(Buffer.from('  <html>login</html>')), /web page/);
 });
 
 test('kiosk refresh rate limit: one fetch per event per minute', () => {

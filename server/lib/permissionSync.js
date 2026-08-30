@@ -156,13 +156,21 @@ async function sweepGrid(s, maxPages = 4) {
 // -------------------------------------------------------- export parse -----
 // Whole-roster participants export -> per-YOUTH signed map. Reuses the
 // roster importer's conventions: sheet_to_json raw:false, header row found
-// by "Member Number".
+// by "Member Number". Accepts xlsx (PK zip magic) OR CSV bytes — TLC has
+// form for answering 200 with CSV where xlsx was asked for (the roster
+// export mislabels content types the same way; live finding 2026-08-29) —
+// and rejects HTML (login page / bad slug) with a readable error.
+const isZip = (buf) => buf && buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b;
+const isHtml = (buf) => /^\s*</.test(String(buf ? buf.slice(0, 200) : ''));
+
 function parseExport(buffer) {
-  if (!(buffer && buffer.length > 3 && buffer[0] === 0x50 && buffer[1] === 0x4b)) {
-    throw new Error('TLC returned something other than an xlsx (bad slug or session?).');
+  if (!buffer || !buffer.length || isHtml(buffer)) {
+    throw new Error('TLC returned a web page instead of an export (bad slug or expired session?).');
   }
   const XLSX = require('xlsx');
-  const wb = XLSX.read(buffer, { type: 'buffer' });
+  const wb = isZip(buffer)
+    ? XLSX.read(buffer, { type: 'buffer' })
+    : XLSX.read(buffer.toString('utf8'), { type: 'string' }); // CSV bytes
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   const norm = (v) => (v == null ? '' : String(v).trim());
@@ -182,17 +190,23 @@ function parseExport(buffer) {
   return out;
 }
 
+// The VERIFIED export URL (live fix 2026-08-29): the blank rsvp_type filter
+// is REQUIRED — without it TLC answers 200 with CSV after long generation
+// waits; with it the same slug returns proper XLSX on the first attempt,
+// covering the WHOLE roster (blank = all RSVP statuses, never just
+// "Going"). Same URL the RSVP tooling uses. Do not "simplify" it away.
+const exportPath = (etSlug) =>
+  `/calendar/exportexcel/${etSlug}?format=xlsx&EventParticipantsSearch%5Brsvp_type%5D=`;
+
 async function fetchExport(s, etSlug) {
   const F = fetcher();
   // first request may 503 while TLC generates the file — bounded retries
   for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await F.request(s.cfg, s.jar,
-      `/calendar/exportexcel/${etSlug}?format=xlsx`, { method: 'GET' });
+    const res = await F.request(s.cfg, s.jar, exportPath(etSlug), { method: 'GET' });
     const buf = Buffer.from(await res.arrayBuffer());
-    if (res.status === 200 && buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b) return buf;
-    if (res.status !== 503 && attempt === 0 && buf[0] !== 0x3c) {
-      // non-503, non-HTML, non-zip: give the retry loop one chance anyway
-    }
+    // accept anything parseable: xlsx OR CSV bytes (parseExport sniffs);
+    // only HTML (login/bad slug) and non-200s keep the retry loop going
+    if (res.status === 200 && buf.length && !isHtml(buf)) return buf;
     await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
   }
   throw new Error(`TLC export for the event did not become ready (slug ending …${etSlug.slice(-4)}).`);
@@ -320,7 +334,7 @@ function scheduleJobs() {
 
 module.exports = {
   getSettings, saveSettings, active,
-  parseGrid, applyGrid, sweepGrid, parseExport, fetchExport, storeStatuses,
+  parseGrid, applyGrid, sweepGrid, parseExport, fetchExport, exportPath, storeStatuses,
   refreshEvent, kioskRefreshAllowed, unsignedYouthIds, lastFetchedAt,
   nightly, imminent, scheduleJobs,
   WINDOW_DAYS, IMMINENT_H, STALE_H,
