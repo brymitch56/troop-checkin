@@ -61,8 +61,17 @@ async function api(path, opts = {}) {
     accessGuard.handleBounce();
     const e = new Error('Session expired — signing you back in…'); e.status = 401; throw e;
   }
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) { const e = new Error(body.error || `Request failed (${res.status})`); e.body = body; e.status = res.status; throw e; }
+  // read text once, then parse: a non-JSON error body (proxy/tunnel HTML,
+  // plain-text crash) must still yield a USEFUL toast, not "failed (502)" —
+  // the server's own JSON errors name the problem precisely; show them
+  const text = await res.text().catch(() => '');
+  let body = {};
+  try { body = JSON.parse(text); } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const snippet = text && !/^\s*</.test(text) ? ` — ${text.slice(0, 160)}` : '';
+    const e = new Error(body.error || `Request failed (${res.status})${snippet}`);
+    e.body = body; e.status = res.status; throw e;
+  }
   if (accessGuard) accessGuard.markGood();
   return body;
 }
