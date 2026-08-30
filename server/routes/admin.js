@@ -400,7 +400,20 @@ router.get('/permission-forms', (req, res) => {
   res.json(permSync.getSettings());
 });
 router.put('/permission-forms', (req, res) => {
-  res.json(permSync.saveSettings(req.body || {}));
+  const before = permSync.getSettings().enabled;
+  const saved = permSync.saveSettings(req.body || {});
+  // flipping ON kicks an immediate background sweep — no restart needed
+  // (live Phase-A finding: nothing got flagged until the next restart, and
+  // the per-event refresh button only rendered on already-flagged events).
+  // Fire-and-forget: the response never waits on TLC.
+  let sweep_started = false;
+  if (!before && saved.enabled) {
+    sweep_started = true;
+    permSync.nightly().then((r) => {
+      if (r && r.skipped) console.log(`[permission-forms] enable sweep skipped: ${r.skipped}`);
+    }).catch((e) => console.error('[permission-forms] enable sweep failed:', e.message));
+  }
+  res.json({ ...saved, sweep_started });
 });
 
 // Per-event status: requirement + per-youth signed list, with fetched_at

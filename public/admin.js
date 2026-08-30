@@ -859,9 +859,19 @@ async function loadEventForms(id) {
   const s = await api(`/admin/events/${id}/form-status`).catch(() => null);
   if (!s) { box.innerHTML = ''; return; }
   if (!s.required) {
+    // the refresh affordance must be reachable from here too — right after
+    // enabling the switch NOTHING is flagged yet, and refreshEvent() sweeps
+    // the grid first when the slug is missing, so this button also flips
+    // the requirement on if TLC says so (live Phase-A finding)
     box.innerHTML = s.enabled
-      ? '<p class="hint left">No parent permission form required for this event (per TLC — override above if that\'s wrong).</p>'
+      ? `<p class="hint left">No parent permission form required for this event (per TLC — override above if
+           that's wrong).</p>
+         ${s.linked ? '<div class="row wrap"><button class="btn ghost small" id="evf-forms-refresh">Check TLC now</button></div>' : ''}`
       : '<p class="hint left">Permission-form tracking is off (enable it on the Import tab).</p>';
+    if ($('evf-forms-refresh')) $('evf-forms-refresh').onclick = async () => {
+      try { await jpost(`/admin/events/${id}/refresh-forms`, {}); toast('Checked TLC'); loadEventForms(id); }
+      catch (e) { toast(e.message, true); }
+    };
     return;
   }
   const signed = s.youth.filter((y) => y.signed);
@@ -1413,7 +1423,11 @@ $('pf-enabled').onchange = async () => {
     $('pf-status').textContent = s.enabled
       ? 'On — requirement sweep runs nightly; per-event status refreshes as events approach.'
       : 'Off — no TLC calls, no kiosk warnings.';
-    toast(s.enabled ? 'Permission-form tracking ON — first sweep runs within a minute of the next restart, or refresh an event now.' : 'Permission-form tracking off.');
+    toast(s.enabled
+      ? (s.sweep_started
+        ? 'Permission-form tracking ON — sweeping TLC now; flagged events appear within a minute or two.'
+        : 'Permission-form tracking ON.')
+      : 'Permission-form tracking off.');
   } catch (e) { toast(e.message, true); $('pf-enabled').checked = !$('pf-enabled').checked; }
 };
 document.addEventListener('click', async (e) => {

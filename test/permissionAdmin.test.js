@@ -64,13 +64,22 @@ before(async () => {
 
 after(() => server && server.close());
 
-test('settings route: default off, PUT flips, admin-gated', async () => {
+test('settings route: default off, PUT flips, 0->1 kicks a background sweep', async () => {
   assert.equal((await req('GET', '/api/admin/permission-forms')).status, 401);
   const s0 = (await req('GET', '/api/admin/permission-forms', { cookie: adminCookie })).json;
   assert.equal(s0.enabled, 0);
   const s1 = (await req('PUT', '/api/admin/permission-forms',
     { cookie: adminCookie, body: { enabled: 1 } })).json;
   assert.equal(s1.enabled, 1);
+  assert.equal(s1.sweep_started, true);   // no restart needed (live finding)
+  // re-saving while already on does NOT re-kick; turning off never kicks
+  const s2 = (await req('PUT', '/api/admin/permission-forms',
+    { cookie: adminCookie, body: { enabled: 1 } })).json;
+  assert.equal(s2.sweep_started, false);
+  const s3 = (await req('PUT', '/api/admin/permission-forms',
+    { cookie: adminCookie, body: { enabled: 0 } })).json;
+  assert.equal(s3.sweep_started, false);
+  await req('PUT', '/api/admin/permission-forms', { cookie: adminCookie, body: { enabled: 1 } });
 });
 
 test('PATCH /events: manual requirement wins; "auto" hands control back', async () => {
