@@ -190,6 +190,13 @@
   <p>If a youth's Trail Life membership has expired or expires within 30 days, their cart row shows an orange <span class="tag orange">⚠ Membership expiring</span> tag, and the sign modal repeats it with the date: <em>"Membership expires Sep 16 — renewal due."</em></p>
   <div class="rule"><b>The warning never blocks check-in.</b> It's a nudge for the family and leadership — sign the youth in normally and mention the renewal to the parent at pickup.</div>
   <p>Admins can see everyone expiring soon under Reports → Membership renewals (see Part 2).</p>
+  <p><b>Permission forms</b> (campouts and other risk-assessed events, with tracking enabled): if a youth's
+  parent hasn't signed the event's permission form in Trail Life Connect, the sign dialog shows a
+  <b>prominent orange banner</b> naming them, with the "forms as of" time. Most events just warn. If the
+  admin set the event to <b>block</b>, saving is refused with two ways forward, right at the kiosk:
+  <b>re-check</b> (fetches fresh signatures from TLC — for the parent who just signed on their phone;
+  once a minute per event) or a <b>staff override</b>, which proceeds and is recorded for review. Offline,
+  the banner still shows from the saved roster but blocking never applies — nobody gets stranded.</p>
   <p><b>Health &amp; High Adventure form flags</b> work the same calm way, in the same spot in the sign modal, at sign-in only:
   when the admin switch is on (Reports → Health &amp; medical forms; off by default), members whose <b>health form</b>
   is missing or past its 12-month validity get a ⚠ note; on events marked as requiring the <b>High Adventure medical
@@ -385,6 +392,8 @@
     <tr><td>Enable texts for a family</td><td>Upload their signed consent form and opt in the pair(s) — same dialog</td></tr>
     <tr><td>Enable texts for an adult (no youth)</td><td>Admin → People → the adult → SMS messaging → Upload scan &amp; opt in</td></tr>
     <tr><td>See who's missing health forms</td><td>Admin → Dashboard → click the health-form card (or Reports → Health &amp; medical forms)</td></tr>
+    <tr><td>See who hasn't signed a campout permission form</td><td>Admin → Events → the event → Permission forms list (Refresh from TLC before departure)</td></tr>
+    <tr><td>Youth blocked at check-in for an unsigned form</td><td>Re-check (parent may have just signed) → or staff override (recorded) → or fix it in TLC and re-check</td></tr>
     <tr><td>Load a new roster export</td><td>Admin → Import → Preview → Commit</td></tr>
     <tr><td>See who needs to renew membership</td><td>Admin → Reports → Membership renewals (30/60/90 + CSV)</td></tr>
     <tr><td>Pull attendance for the year</td><td>Admin → Reports → date range → Run summary / CSVs</td></tr>

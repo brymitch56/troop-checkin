@@ -50,6 +50,7 @@
       kv.put(snap.links, 'links');
       kv.put(snap.badges, 'badges');
       kv.put(snap.events, 'events');
+      kv.put(snap.form_status || [], 'form_status'); // per-event permission forms
       kv.put(snap.taken_at, 'taken_at');
       t.oncomplete = resolve; t.onerror = () => reject(t.error);
     });
@@ -171,10 +172,16 @@
   }
   const clearConflict = (uuid) => tx('conflicts', 'readwrite', (s) => s.delete(uuid));
 
+  // permission-form statuses for one event (empty for pre-upgrade snapshots)
+  async function formStatus(eventId) {
+    const rows = (await kvGet('form_status')) || [];
+    return rows.filter((r) => r.event_id === eventId);
+  }
+
   window.Offline = {
     saveSnapshot, searchPeople, findByBadge, guardiansOf, currentEvents,
     markOpen, onsite, getPerson, queueTxn, queueSize, flush,
-    conflictCount, conflictList, clearConflict,
+    conflictCount, conflictList, clearConflict, formStatus,
     takenAt: () => kvGet('taken_at'),
   };
 })();

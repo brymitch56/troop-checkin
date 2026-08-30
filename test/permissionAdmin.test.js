@@ -127,3 +127,78 @@ test('refresh-forms surfaces TLC failure as 502, never a crash', async () => {
   assert.equal(r.status, 502); // no TLC in tests — clean error path
   assert.ok(r.json.error);
 });
+
+// ------------------------------------------------- kiosk soft-block flow ----
+const PNG_1x1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+let uuidN = 0;
+const uuid = () => `perm-test-${++uuidN}`;
+
+test('sign-in soft-block: 422 with names, recorded force_permission, signed passes', async () => {
+  db.prepare(`INSERT INTO staff (name, role, pin_hash) VALUES ('Door P', 'door', ?)`)
+    .run(auth.hashSecret('4321'));
+  const staff = (await req('GET', '/api/staff-list')).json;
+  const doorCookie = (await fetch(base + '/api/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ staff_id: staff.find((s) => s.role === 'door').id, pin: '4321' }),
+  })).headers.get('set-cookie').split(';')[0];
+
+  const pat = db.prepare(`SELECT id FROM person WHERE member_id = 'Y-3001'`).get();
+  const mom = Number(db.prepare(
+    `INSERT INTO person (is_youth, first_name, last_name, status) VALUES (0, 'May', 'Paddler', 'active')`)
+    .run().lastInsertRowid);
+  db.prepare(`INSERT INTO person_guardian (youth_id, guardian_id, authorized, is_primary, source)
+              VALUES (?, ?, 1, 1, 'manual')`).run(pat.id, mom);
+
+  const body = () => ({
+    client_uuid: uuid(), direction: 'in', event_id: evId,
+    entries: [{ person_id: pat.id }], signer_person_id: mom, signature_data: PNG_1x1,
+  });
+
+  // block on (set in the earlier test), tracking on, Pat unsigned -> 422
+  const blocked = await req('POST', '/api/txn', { cookie: doorCookie, body: body() });
+  assert.equal(blocked.status, 422);
+  assert.deepEqual(blocked.json.permission_unsigned, ['Pat Paddler']);
+  assert.ok('fetched_at' in blocked.json);
+
+  // staff override: succeeds and is RECORDED on the txn
+  const forced = await req('POST', '/api/txn',
+    { cookie: doorCookie, body: { ...body(), force_permission: 1 } });
+  assert.equal(forced.status, 200);
+  assert.equal(db.prepare(
+    `SELECT permission_override FROM txn ORDER BY id DESC LIMIT 1`).get().permission_override, 1);
+  // sign back out (guardian signs)
+  await req('POST', '/api/txn', { cookie: doorCookie, body: {
+    client_uuid: uuid(), direction: 'out', event_id: evId,
+    entries: [{ person_id: pat.id }], signer_person_id: mom, signature_data: PNG_1x1 } });
+
+  // once the form is signed (fresh upload), sign-in flows normally
+  ps.storeStatuses(evId, [{ member_id: 'Y-3001', signed: 1 }], 'upload');
+  const ok = await req('POST', '/api/txn', { cookie: doorCookie, body: body() });
+  assert.equal(ok.status, 200);
+  assert.equal(db.prepare(
+    `SELECT permission_override FROM txn ORDER BY id DESC LIMIT 1`).get().permission_override, 0);
+  await req('POST', '/api/txn', { cookie: doorCookie, body: {
+    client_uuid: uuid(), direction: 'out', event_id: evId,
+    entries: [{ person_id: pat.id }], signer_person_id: mom, signature_data: PNG_1x1 } });
+
+  // switch OFF: block is inert even though the event still demands it
+  ps.saveSettings({ enabled: 0 });
+  ps.storeStatuses(evId, [{ member_id: 'Y-3001', signed: 0 }], 'upload');
+  const off = await req('POST', '/api/txn', { cookie: doorCookie, body: body() });
+  assert.equal(off.status, 200);
+  ps.saveSettings({ enabled: 1 });
+});
+
+test('kiosk endpoints: form-status view and rate-limited re-check', async () => {
+  const s = (await req('GET', `/api/form-status?event_id=${evId}`, {
+    cookie: (await (async () => { // any session works; reuse admin
+      return adminCookie; })()),
+  })).json;
+  assert.equal(s.required, true);
+  assert.ok(Array.isArray(s.signed_ids));
+  // re-check: rate limiter admits the first call, then TLC fails cleanly (no TLC in tests)
+  const r1 = await req('POST', '/api/event-forms-refresh',
+    { cookie: adminCookie, body: { event_id: evId } });
+  assert.ok([429, 502].includes(r1.status)); // 429 if an earlier test consumed the slot
+  assert.ok(r1.json.error);
+});

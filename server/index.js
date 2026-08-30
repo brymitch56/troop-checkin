@@ -47,6 +47,8 @@ app.get('/api/config', (req, res) => {
     theme: env.THEME,
     // kiosk health-form badge switch (admin-set, default off; not sensitive)
     flag_health_forms: require('./lib/healthForms').getCheckinFlags().health_form,
+    // permission-form tracking switch — the kiosk banner keys off this
+    permission_forms_enabled: require('./lib/permissionSync').getSettings().enabled,
   });
 });
 // theme palette as CSS variables, loaded after styles.css — the 'traillife'

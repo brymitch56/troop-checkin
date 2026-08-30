@@ -84,9 +84,16 @@ async function boot() {
     document.title = `${cfg.troop_id} Check-In`;
     // health-form badge switch (admin-set, default off); cached for offline boots
     state.flagHealthForms = !!cfg.flag_health_forms;
-    try { localStorage.setItem('flag-health-forms', state.flagHealthForms ? '1' : '0'); } catch { /* ignore */ }
+    state.permForms = !!cfg.permission_forms_enabled;
+    try {
+      localStorage.setItem('flag-health-forms', state.flagHealthForms ? '1' : '0');
+      localStorage.setItem('flag-perm-forms', state.permForms ? '1' : '0');
+    } catch { /* ignore */ }
   }).catch(() => {
-    try { state.flagHealthForms = localStorage.getItem('flag-health-forms') === '1'; } catch { /* ignore */ }
+    try {
+      state.flagHealthForms = localStorage.getItem('flag-health-forms') === '1';
+      state.permForms = localStorage.getItem('flag-perm-forms') === '1';
+    } catch { /* ignore */ }
   });
   try {
     state.me = await api('/me');
@@ -670,6 +677,7 @@ function openSignModal() {
       for (const n of formNotes(c.person)) expLines.push(`⚠ ${displayName(c.person)}: ${n}`);
     }
   }
+  renderPermissionBanner(); // async — fills #sign-permission when it applies
   $('sign-membership').innerHTML = expLines.join('<br>');
   $('sign-membership').hidden = !expLines.length;
   $('sign-error').textContent = '';
@@ -718,6 +726,40 @@ $('sign-submit').onclick = async () => {
   });
 };
 
+// ------------------------------------- permission-form banner (sign-in) ----
+// Prominent, per-event, youth-only. Data comes live from /form-status when
+// online, or from the roster snapshot offline (where blocking never applies
+// — banner only, by design). "As of" is always shown: parents sign late.
+async function renderPermissionBanner() {
+  const box = $('sign-permission');
+  if (!box) return;
+  box.hidden = true; box.innerHTML = '';
+  if (state.direction !== 'in' || !state.permForms) return;
+  if (!state.event || !state.event.requires_permission_form) return;
+  const youth = state.cart.filter((c) => c.person.is_youth).map((c) => c.person);
+  if (!youth.length) return;
+  let signedIds = null, fetchedAt = null;
+  try {
+    const s = await api('/form-status?event_id=' + state.event.id);
+    if (!s.enabled || !s.required) return;
+    signedIds = new Set(s.signed_ids); fetchedAt = s.fetched_at;
+  } catch (e) {
+    if (e.status) return; // server said no (404 etc.) — no banner
+    const rows = await Offline.formStatus(state.event.id).catch(() => []);
+    signedIds = new Set(rows.filter((r) => r.signed).map((r) => r.person_id));
+    fetchedAt = rows.length ? rows[0].fetched_at : null;
+  }
+  const unsigned = youth.filter((p) => !signedIds.has(p.id));
+  if (!unsigned.length) return;
+  const when = fetchedAt ? new Date(fetchedAt + (fetchedAt.endsWith('Z') ? '' : 'Z'))
+    .toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
+  box.innerHTML = `<b>⚠ Permission form NOT signed</b> — ${unsigned.map((p) => esc2(displayName(p))).join(', ')}.
+    <br>${when ? `Forms as of ${when}.` : 'No form data fetched for this event yet.'}
+    ${state.event.permission_block ? ' Check-in will be <b>blocked</b> until a re-check finds the signature or staff records an override.' : ' Ask the family to sign in Trail Life Connect.'}`;
+  box.hidden = false;
+}
+const esc2 = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
 async function submitTxn(extra, force) {
   const payload = {
     client_uuid: newUuid(),
@@ -753,6 +795,9 @@ async function submitTxn(extra, force) {
       renderCart(); refreshOnsiteCount(); updateQueuePill();
       return;
     }
+    if (e.status === 422 && e.body.permission_unsigned) {
+      return handlePermissionBlock(extra || {}, force, e.body);
+    }
     if (e.status === 422 && e.body.unauthorized) {
       const ok = confirm(`Signer is not on the authorized list for: ${e.body.unauthorized.join(', ')}.\n\nStaff override — record anyway?`);
       if (ok) return submitTxn(extra, true);
@@ -773,6 +818,30 @@ async function submitTxn(extra, force) {
       $('sign-error').textContent = e.message; toast(e.message, true);
     }
   }
+}
+
+// Soft-block resolution: offer a fresh TLC re-check first (the parent may
+// have just signed on their phone), then a RECORDED staff override. Never a
+// dead end (handoff decision 2026-08-30).
+async function handlePermissionBlock(extra, force, body) {
+  const names = (body.permission_unsigned || []).join(', ');
+  const when = body.fetched_at ? ` (forms as of ${new Date(body.fetched_at + 'Z')
+    .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '';
+  if (!extra.__rechecked &&
+      confirm(`Permission form not signed for: ${names}${when}.\n\nRe-check Trail Life Connect now? A parent may have just signed.`)) {
+    try {
+      await jpost('/event-forms-refresh', { event_id: state.event.id });
+      toast('Re-checked — trying again…');
+    } catch (err) {
+      toast(err.message, true); // rate-limited or TLC down: fall through to override
+    }
+    return submitTxn({ ...extra, __rechecked: true }, force);
+  }
+  if (confirm(`Sign in anyway WITHOUT a signed permission form for: ${names}?\n\nStaff override — this is recorded for review.`)) {
+    return submitTxn({ ...extra, force_permission: 1 }, force);
+  }
+  $('sign-error').textContent = 'Blocked — permission form not signed.';
+  renderPermissionBanner();
 }
 
 // signature pad (pointer events, no dependency)

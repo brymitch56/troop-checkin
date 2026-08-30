@@ -325,6 +325,25 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
         });
       }
     }
+    // Per-event permission-form SOFT-block (admin-set, off by default):
+    // unsigned/unknown youth are refused UNLESS staff records an override
+    // (force_permission — stored on the txn, reviewable in admin). The kiosk
+    // offers a fresh TLC re-check first; offline traffic never reaches this
+    // path and degrades to the banner (by design — never strand the line).
+    if (event.requires_permission_form && event.permission_block && !b.force_permission) {
+      const permSync = require('../lib/permissionSync');
+      if (permSync.getSettings().enabled) {
+        const unsignedIds = new Set(permSync.unsignedYouthIds(event.id, youthEntries.map((y) => y.id)));
+        if (unsignedIds.size) {
+          return res.status(422).json({
+            error: 'Permission form not signed.',
+            permission_unsigned: youthEntries.filter((y) => unsignedIds.has(y.id))
+              .map((y) => `${y.first_name} ${y.last_name}`),
+            fetched_at: permSync.lastFetchedAt(event.id),
+          });
+        }
+      }
+    }
   } else {
     // Close the right open when someone is signed into several events at
     // once: the kiosk's selected event wins; a person with exactly one open
@@ -387,14 +406,15 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
   const write = db.transaction(() => {
     const t = db.prepare(
       `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id,
-                        signer_person_id, signer_name_override, signature_path, close_method, forced)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                        signer_person_id, signer_name_override, signature_path, close_method,
+                        forced, permission_override)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       b.client_uuid, b.event_id, b.direction, b.signed_at || new Date().toISOString(),
       req.staff.staff_id, b.signer_person_id || null, b.signer_name_override || null,
       sigPath ? path.basename(sigPath) : null,
       b.direction === 'out' && youthEntries.length ? 'signature' : null,
-      b.force ? 1 : 0
+      b.force ? 1 : 0, b.force_permission ? 1 : 0
     );
     const txnId = Number(t.lastInsertRowid);
 
@@ -475,7 +495,13 @@ router.get('/roster-snapshot', (req, res) => {
         AND datetime(start_at) <= datetime(?, '+7 days')
       ORDER BY datetime(start_at)`
   ).all(now, now);
-  res.json({ taken_at: now, people, links, badges, events });
+  // permission-form statuses for the snapshot's events, so the sign-in
+  // banner works offline too (block never applies offline — banner only)
+  const form_status = events.length ? db.prepare(
+    `SELECT event_id, person_id, signed, fetched_at FROM event_form_status
+      WHERE event_id IN (${events.map(() => '?').join(',')})`
+  ).all(...events.map((e) => e.id)) : [];
+  res.json({ taken_at: now, people, links, badges, events, form_status });
 });
 
 // who's still here
@@ -592,6 +618,49 @@ router.post('/message-onsite', express.json(), async (req, res) => {
     onsite_youth: rows.length, adults_included: b.include_adults ? 1 : 0,
     sent: [...r.sent, ...adults.sent], skipped: [...r.skipped, ...adults.skipped],
   });
+});
+
+// ---------------------------------------------- permission forms (kiosk) ----
+// Signed-status view for the banner. signed_ids (not unsigned) so the client
+// can flag absence-of-data as unsigned too (no data is not consent).
+const permStatusView = (ev) => {
+  const permSync = require('../lib/permissionSync');
+  return {
+    enabled: permSync.getSettings().enabled === 1,
+    required: !!ev.requires_permission_form,
+    block: !!ev.permission_block,
+    fetched_at: permSync.lastFetchedAt(ev.id),
+    signed_ids: db.prepare(
+      'SELECT person_id FROM event_form_status WHERE event_id = ? AND signed = 1'
+    ).all(ev.id).map((r) => r.person_id),
+  };
+};
+
+router.get('/form-status', (req, res) => {
+  const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(req.query.event_id);
+  if (!ev) return res.status(404).json({ error: 'No such event.' });
+  res.json(permStatusView(ev));
+});
+
+// Door-role re-check: fresh TLC fetch for ONE event — the parent who signed
+// on their phone in the parking lot. Rate-limited per event so a tapping
+// leader can't hammer TLC; admins can always refresh from the event editor.
+router.post('/event-forms-refresh', express.json(), async (req, res) => {
+  const permSync = require('../lib/permissionSync');
+  const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(req.body && req.body.event_id);
+  if (!ev) return res.status(404).json({ error: 'No such event.' });
+  if (!permSync.getSettings().enabled) {
+    return res.status(409).json({ error: 'Permission-form tracking is off.' });
+  }
+  if (!permSync.kioskRefreshAllowed(ev.id)) {
+    return res.status(429).json({ error: 'Just checked — wait a minute before re-checking.' });
+  }
+  try {
+    await permSync.refreshEvent(ev.id);
+    res.json({ ok: true, ...permStatusView(ev) });
+  } catch (e) {
+    res.status(502).json({ error: `TLC re-check failed: ${e.message}` });
+  }
 });
 
 router.get('/patrols', (req, res) => {

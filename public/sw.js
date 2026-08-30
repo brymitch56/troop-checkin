@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v52'; // v52: permission-form tracking - admin controls, sync switch, event status
+const VERSION = 'tc-v53'; // v53: kiosk permission-form banner + per-event soft-block with re-check
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
