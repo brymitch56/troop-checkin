@@ -837,10 +837,18 @@ async function handlePermissionBlock(extra, force, body) {
     }
     return submitTxn({ ...extra, __rechecked: true }, force);
   }
-  if (confirm(`Sign in anyway WITHOUT a signed permission form for: ${names}?\n\nStaff override — this is recorded for review.`)) {
+  // Say plainly when a SUCCESSFUL re-check simply found no new signature —
+  // in live testing the silent fall-through to the override dialog read as
+  // "the re-check failed" (Phase C finding, 2026-08-30).
+  const lead = extra.__rechecked
+    ? `Re-checked Trail Life Connect — ${names} still NOT signed${when}.`
+    : `Permission form not signed for: ${names}${when}.`;
+  if (confirm(`${lead}\n\nSign in anyway WITHOUT a signed permission form?\nStaff override — this is recorded for review.`)) {
     return submitTxn({ ...extra, force_permission: 1 }, force);
   }
-  $('sign-error').textContent = 'Blocked — permission form not signed.';
+  $('sign-error').textContent = extra.__rechecked
+    ? 'Blocked — re-checked TLC, still not signed.'
+    : 'Blocked — permission form not signed.';
   renderPermissionBanner();
 }
 
