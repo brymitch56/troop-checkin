@@ -36,6 +36,12 @@ const state = {
 // lookups; queued txns are idempotent server-side (client_uuid), so a
 // timed-out POST that actually landed is safe to retry from the queue.
 const API_TIMEOUT_MS = 6000, API_WRITE_TIMEOUT_MS = 12000;
+// The block-screen TLC re-check is a deliberate round trip to Trail Life
+// Connect (login + export fetch, 15–25s on the Pi) — not a kiosk save. The
+// 12s write budget aborted it client-side while the server finished anyway,
+// so the retry then showed a STALE forms-as-of time (live finding
+// 2026-08-30). That one call gets a longer leash.
+const TLC_RECHECK_TIMEOUT_MS = 45000;
 function timeoutSignal(ms) {
   if (AbortSignal.timeout) return AbortSignal.timeout(ms);
   const c = new AbortController();
@@ -53,10 +59,10 @@ async function api(path, opts = {}) {
   if (!res.ok) { const e = new Error(body.error || `Request failed (${res.status})`); e.body = body; e.status = res.status; throw e; }
   return body;
 }
-const jpost = (path, data) =>
+const jpost = (path, data, timeoutMs) =>
   api(path, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data), timeoutMs: API_WRITE_TIMEOUT_MS,
+    body: JSON.stringify(data), timeoutMs: timeoutMs || API_WRITE_TIMEOUT_MS,
   });
 
 let toastTimer;
@@ -830,10 +836,13 @@ async function handlePermissionBlock(extra, force, body) {
   if (!extra.__rechecked &&
       confirm(`Permission form not signed for: ${names}${when}.\n\nRe-check Trail Life Connect now? A parent may have just signed.`)) {
     try {
-      await jpost('/event-forms-refresh', { event_id: state.event.id });
+      await jpost('/event-forms-refresh', { event_id: state.event.id }, TLC_RECHECK_TIMEOUT_MS);
       toast('Re-checked — trying again…');
     } catch (err) {
-      toast(err.message, true); // rate-limited or TLC down: fall through to override
+      // rate-limited or TLC down: fall through to override. An abort has no
+      // .status — name the situation instead of the raw "signal timed out".
+      toast(err.status ? err.message
+        : 'TLC re-check timed out — retry in a minute or use the recorded override.', true);
     }
     return submitTxn({ ...extra, __rechecked: true }, force);
   }
