@@ -347,7 +347,9 @@
     <li>Re-import as often as you like — it's idempotent. Blank cells never wipe existing data; your hand-edited (🔒) fields and guardian edits are never touched.</li>
     <li>People missing from the new file are marked inactive (never deleted) — scoped to the classes in the file, so a youth-only export leaves adults alone. Visitors are never deactivated. Returning members reactivate automatically.</li>
     <li>Membership expiration dates come in from the export's "Membership Exp." column automatically.</li>
-    <li>Every upload is archived, and the import log shows who imported what, when, with counts.</li>
+    <li>Every upload is archived, and the import log shows who imported what, when, with counts. The
+    <b>Import history</b> and the <b>TLC push log</b> both take a date range and a higher row limit, and
+    export to CSV — nothing ages out of reach.</li>
   </ul>
   <h3>Automatic roster sync</h3>
   <p>The Import tab can also fetch the export from Trail Life Connect <em>for</em> you — on a weekly schedule (if the server admin enabled the timer) or via <b>Sync now</b>. A fetch never changes anything by itself: it stages a <b>pending import</b> showing when it was fetched, the row count, and the full add/update/deactivate diff, with <b>Approve</b> / <b>Discard</b> buttons. Approving runs exactly the same commit path as a manual upload; only one pending import exists at a time (a newer fetch replaces the old one and says so). The panel shows the last run's status, so a broken sync is visible instead of silent. The Trail Life Connect login it uses can be entered and updated right in the panel ("Trail Life Connect credentials") — the password is stored on the check-in server, used only to download the export, and never displayed again. One caution: if that account has multiple Trail Life Connect roles, TLC signs in under whichever role was used <em>last</em>, and the export only works from a role with member-list access (like Troopmaster) — if a sync fails or looks too small, check the account's active role first.</p>
