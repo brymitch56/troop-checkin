@@ -239,3 +239,33 @@ test('sweep stamps the global default onto NEWLY flagged events only', () => {
   assert.deepEqual(block(handSet), { b: 0, s: 'manual' }); // hand-set choice survives flagging
   ps.saveSettings({ block_default: 0 });
 });
+
+test('nightly schedule: fixed small-hours local time, DST-safe next-run math', () => {
+  const scheduler = require('../server/lib/scheduler');
+  assert.equal(ps.NIGHTLY_HH, 3);
+  assert.equal(ps.NIGHTLY_MM, 10);
+  // before 03:10 local -> today; after -> tomorrow (never 24h-from-restart)
+  const before = new Date(2026, 8, 1, 1, 0);
+  const after = new Date(2026, 8, 1, 22, 0);
+  const n1 = scheduler.nextDaily(before, ps.NIGHTLY_HH, ps.NIGHTLY_MM);
+  const n2 = scheduler.nextDaily(after, ps.NIGHTLY_HH, ps.NIGHTLY_MM);
+  assert.deepEqual([n1.getDate(), n1.getHours(), n1.getMinutes()], [1, 3, 10]);
+  assert.deepEqual([n2.getDate(), n2.getHours(), n2.getMinutes()], [2, 3, 10]);
+  // scheduleJobs arms without keeping the process alive and returns handles
+  const jobs = ps.scheduleJobs();
+  assert.ok(jobs.nightlyTimer && jobs.hourlyTimer);
+  clearInterval(jobs.hourlyTimer);
+});
+
+test('logNightly: one summary line on a real run, silence when skipped', () => {
+  const lines = [];
+  const orig = console.log;
+  console.log = (s) => lines.push(String(s));
+  try {
+    ps.logNightly('nightly sweep', { grid: { rows: 40, flagged: 2, cleared: 1, slugs: 3 }, fetched: 4, failed: 0 });
+    ps.logNightly('nightly sweep', { skipped: 'disabled' });
+    ps.logNightly('nightly sweep', null);
+  } finally { console.log = orig; }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /\[permission-forms\] nightly sweep: 40 grid rows, 2 flagged, 1 cleared, 3 slug\(s\) learned, 4 event export\(s\) fetched, 0 failed/);
+});

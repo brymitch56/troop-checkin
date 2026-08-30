@@ -346,18 +346,35 @@ async function imminent() {
   return { fetched };
 }
 
+// One quiet line per nightly run so "did the timer fire?" is answerable
+// from the journal (live-testing pain point: success was silent).
+function logNightly(prefix, r) {
+  if (!r || r.skipped) return; // switch off: stay silent
+  const g = r.grid || {};
+  console.log(`[permission-forms] ${prefix}: ${g.rows ?? 0} grid rows, ` +
+    `${g.flagged ?? 0} flagged, ${g.cleared ?? 0} cleared, ${g.slugs ?? 0} slug(s) learned, ` +
+    `${r.fetched ?? 0} event export(s) fetched, ${r.failed ?? 0} failed`);
+}
+
+// Nightly at a fixed small-hours LOCAL time (scheduler.js is DST-safe and
+// recomputes per fire) — a 24h setInterval drifted with every restart and
+// was about to run mid-evening on the Pi (live finding 2026-08-30).
+const NIGHTLY_HH = 3, NIGHTLY_MM = 10;
+
 function scheduleJobs() {
-  const nightlyTimer = setInterval(() => {
-    nightly().catch((e) => console.error('[permission-forms] nightly failed:', e.message));
-  }, 24 * 60 * 60 * 1000);
-  nightlyTimer.unref();
+  const scheduler = require('./scheduler');
+  const nightlyTimer = scheduler.scheduleDaily('permission-forms nightly', NIGHTLY_HH, NIGHTLY_MM, () =>
+    nightly().then((r) => logNightly('nightly sweep', r))
+      .catch((e) => console.error('[permission-forms] nightly failed:', e.message)),
+  5 * 60 * 1000); // ≤5min jitter, mirroring the other scheduled jobs
   const hourlyTimer = setInterval(() => {
     imminent().catch((e) => console.error('[permission-forms] imminent failed:', e.message));
   }, 60 * 60 * 1000);
   hourlyTimer.unref();
   // one sweep shortly after boot (mirrors icalSync) so a restart never
   // leaves a campout morning stale; no-op while the switch is off
-  setTimeout(() => nightly().catch((e) => console.error('[permission-forms] boot sweep failed:', e.message)), 30_000).unref();
+  setTimeout(() => nightly().then((r) => logNightly('boot sweep', r))
+    .catch((e) => console.error('[permission-forms] boot sweep failed:', e.message)), 30_000).unref();
   return { nightlyTimer, hourlyTimer };
 }
 
@@ -365,6 +382,6 @@ module.exports = {
   getSettings, saveSettings, applyBlockDefault, active,
   parseGrid, applyGrid, sweepGrid, parseExport, fetchExport, exportPath, storeStatuses,
   refreshEvent, kioskRefreshAllowed, unsignedYouthIds, lastFetchedAt,
-  nightly, imminent, scheduleJobs,
-  WINDOW_DAYS, IMMINENT_H, STALE_H,
+  nightly, imminent, scheduleJobs, logNightly,
+  WINDOW_DAYS, IMMINENT_H, STALE_H, NIGHTLY_HH, NIGHTLY_MM,
 };
