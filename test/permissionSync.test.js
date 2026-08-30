@@ -187,3 +187,55 @@ test('imminent selection: only stale, soon-starting, form-required events', asyn
   // (window/staleness math is exercised through statusWindowEvents via
   // nightly/imminent in live runs; the pure pieces are covered above)
 });
+
+// ---------------------------------------------- global Warn/Block default ----
+test('saveSettings merges keys — a block_default PUT never resets enabled', () => {
+  ps.saveSettings({ enabled: 1 });
+  ps.saveSettings({ block_default: 1 });
+  assert.deepEqual(ps.getSettings(), { enabled: 1, block_default: 1 });
+  ps.saveSettings({ enabled: 0 });
+  assert.deepEqual(ps.getSettings(), { enabled: 0, block_default: 1 });
+  ps.saveSettings({ block_default: 0, enabled: 1 });
+});
+
+test('applyBlockDefault: future form-required events flip; manual and past are spared', () => {
+  const future = addEvent('Future Camp A', { required: 1, source: 'auto' });
+  const manual = addEvent('Hand-set Camp', { required: 1, source: 'auto' });
+  db.prepare(`UPDATE event SET permission_block = 1, permission_block_source = 'manual' WHERE id = ?`).run(manual);
+  const past = addEvent('Past Camp', {
+    required: 1, source: 'auto',
+    start_at: new Date(Date.now() - 5 * 86400e3).toISOString(),
+    end_at: new Date(Date.now() - 3 * 86400e3).toISOString(),
+  });
+  const notRequired = addEvent('Plain Future Meeting');
+
+  const changed = ps.applyBlockDefault(1);
+  const block = (id) => db.prepare(
+    'SELECT permission_block AS b, permission_block_source AS s FROM event WHERE id = ?').get(id);
+  assert.deepEqual(block(future), { b: 1, s: 'auto' });   // flipped
+  assert.deepEqual(block(manual), { b: 1, s: 'manual' }); // untouched (was already hand-set)
+  assert.equal(block(past).b, 0);                          // past: never touched
+  assert.equal(block(notRequired).b, 0);                   // not form-required: untouched
+  assert.ok(changed >= 1);
+
+  // and back to Warn: manual STILL spared
+  ps.applyBlockDefault(0);
+  assert.deepEqual(block(future), { b: 0, s: 'auto' });
+  assert.deepEqual(block(manual), { b: 1, s: 'manual' });
+});
+
+test('sweep stamps the global default onto NEWLY flagged events only', () => {
+  ps.saveSettings({ block_default: 1 });
+  const fresh = addEvent('Fresh Campout', { tlc_event_id: 'evteststamp1' });
+  const handSet = addEvent('Pre-set Campout', { tlc_event_id: 'evteststamp2' });
+  db.prepare(`UPDATE event SET permission_block = 0, permission_block_source = 'manual' WHERE id = ?`).run(handSet);
+  ps.applyGrid([
+    { tlc_event_id: 'evteststamp1', et_slug: 'etteststamp1', required: 1 },
+    { tlc_event_id: 'evteststamp2', et_slug: 'etteststamp2', required: 1 },
+  ]);
+  const block = (id) => db.prepare(
+    'SELECT permission_block AS b, permission_block_source AS s FROM event WHERE id = ?').get(id);
+  assert.deepEqual(block(fresh), { b: 1, s: 'auto' });    // stamped with global Block
+  assert.deepEqual(block(handSet), { b: 0, s: 'manual' }); // hand-set choice survives flagging
+  ps.saveSettings({ block_default: 0 });
+});

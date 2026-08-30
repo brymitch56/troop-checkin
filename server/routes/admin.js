@@ -370,8 +370,18 @@ router.patch('/events/:id', (req, res) => {
   for (const f of ['title', 'location', 'description', 'start_at', 'end_at']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
   }
-  for (const f of ['track_adults', 'all_day', 'requires_high_adventure_form', 'permission_block']) {
+  for (const f of ['track_adults', 'all_day', 'requires_high_adventure_form']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
+  }
+  // Warn/Block: a hand-set value goes 'manual' (bulk-apply and sweep spare
+  // it); permission_block_source:'auto' returns the event to "follow
+  // global" and snaps it to the current global default immediately
+  if ('permission_block' in b) {
+    sets.push('permission_block = ?', `permission_block_source = 'manual'`);
+    vals.push(b.permission_block ? 1 : 0);
+  } else if (b.permission_block_source === 'auto') {
+    sets.push(`permission_block_source = 'auto'`, 'permission_block = ?');
+    vals.push(require('../lib/permissionSync').getSettings().block_default);
   }
   // permission-form requirement: an admin edit takes the flag over from the
   // sweep ('manual' wins forever); sending permission_form_source:'auto'
@@ -400,8 +410,15 @@ router.get('/permission-forms', (req, res) => {
   res.json(permSync.getSettings());
 });
 router.put('/permission-forms', (req, res) => {
-  const before = permSync.getSettings().enabled;
+  const beforeAll = permSync.getSettings();
+  const before = beforeAll.enabled;
   const saved = permSync.saveSettings(req.body || {});
+  // changing the global Warn/Block default bulk-applies to future
+  // form-required events, sparing hand-set (source 'manual') choices
+  let block_applied;
+  if ('block_default' in (req.body || {}) && saved.block_default !== beforeAll.block_default) {
+    block_applied = permSync.applyBlockDefault(saved.block_default);
+  }
   // flipping ON kicks an immediate background sweep — no restart needed
   // (live Phase-A finding: nothing got flagged until the next restart, and
   // the per-event refresh button only rendered on already-flagged events).
@@ -413,7 +430,7 @@ router.put('/permission-forms', (req, res) => {
       if (r && r.skipped) console.log(`[permission-forms] enable sweep skipped: ${r.skipped}`);
     }).catch((e) => console.error('[permission-forms] enable sweep failed:', e.message));
   }
-  res.json({ ...saved, sweep_started });
+  res.json({ ...saved, sweep_started, ...(block_applied != null ? { block_applied } : {}) });
 });
 
 // Per-event status: requirement + per-youth signed list, with fetched_at

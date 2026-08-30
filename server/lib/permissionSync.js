@@ -42,22 +42,42 @@ const STALE_H = 6;         // ...refetched when data is older than this
 const KIOSK_REFRESH_MIN_S = 60; // per-event floor between kiosk-triggered fetches
 
 // ----------------------------------------------------------- settings ------
-// meta key 'permission_forms' — {enabled: 0|1}. Default OFF.
+// meta key 'permission_forms' — {enabled: 0|1, block_default: 0|1}.
+// Defaults: OFF, Warn. saveSettings MERGES — a PUT carrying only one key
+// never resets the other.
 const KEY = 'permission_forms';
 
 function getSettings() {
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(KEY);
   let v = {};
   if (row) { try { v = JSON.parse(row.value); } catch { /* ignore */ } }
-  return { enabled: v.enabled ? 1 : 0 };
+  return { enabled: v.enabled ? 1 : 0, block_default: v.block_default ? 1 : 0 };
 }
 
 function saveSettings(b) {
-  const v = { enabled: b && b.enabled ? 1 : 0 };
+  const cur = getSettings();
+  const v = {
+    enabled: (b && 'enabled' in b) ? (b.enabled ? 1 : 0) : cur.enabled,
+    block_default: (b && 'block_default' in b) ? (b.block_default ? 1 : 0) : cur.block_default,
+  };
   db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     .run(KEY, JSON.stringify(v));
   return v;
+}
+
+// Bulk-apply the global Warn/Block default to FUTURE form-required events,
+// sparing every hand-set (source 'manual') per-event choice. Past events
+// are never touched (mirrors the sweep's forward-looking window).
+function applyBlockDefault(val) {
+  const r = db.prepare(
+    `UPDATE event SET permission_block = ?, permission_block_source = 'auto'
+      WHERE requires_permission_form = 1
+        AND datetime(end_at) >= datetime('now')
+        AND (permission_block_source IS NULL OR permission_block_source != 'manual')
+        AND (permission_block != ? OR permission_block_source IS NULL)`
+  ).run(val ? 1 : 0, val ? 1 : 0);
+  return r.changes;
 }
 
 const active = (env = process.env) =>
@@ -116,6 +136,15 @@ function applyGrid(rows) {
         db.prepare(
           `UPDATE event SET requires_permission_form = ?, permission_form_source = 'auto'
             WHERE id = ?`).run(r.required, ev.id);
+        // a NEWLY flagged event gets the current global Warn/Block default
+        // (never touching a hand-set choice; clearing leaves block alone)
+        if (r.required) {
+          db.prepare(
+            `UPDATE event SET permission_block = ?, permission_block_source = 'auto'
+              WHERE id = ? AND (permission_block_source IS NULL
+                                OR permission_block_source != 'manual')`
+          ).run(getSettings().block_default, ev.id);
+        }
         r.required ? flagged++ : cleared++;
       } else if (!ev.permission_form_source) {
         db.prepare(`UPDATE event SET permission_form_source = 'auto' WHERE id = ?`).run(ev.id);
@@ -333,7 +362,7 @@ function scheduleJobs() {
 }
 
 module.exports = {
-  getSettings, saveSettings, active,
+  getSettings, saveSettings, applyBlockDefault, active,
   parseGrid, applyGrid, sweepGrid, parseExport, fetchExport, exportPath, storeStatuses,
   refreshEvent, kioskRefreshAllowed, unsignedYouthIds, lastFetchedAt,
   nightly, imminent, scheduleJobs,

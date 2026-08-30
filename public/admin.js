@@ -802,10 +802,12 @@ function openEvent(e) {
         <option value="auto" ${e?.permission_form_source !== 'manual' ? 'selected' : ''}>Auto from TLC (currently: ${e?.requires_permission_form ? 'required' : 'not required'})</option>
         <option value="1" ${e?.permission_form_source === 'manual' && e?.requires_permission_form ? 'selected' : ''}>Required (manual)</option>
         <option value="0" ${e?.permission_form_source === 'manual' && !e?.requires_permission_form ? 'selected' : ''}>Not required (manual)</option></select></div>
-      <div><label>Unsigned permission forms at check-in</label>
+      <div><label>Unsigned permission forms at check-in
+          ${e?.permission_block_source === 'manual' ? '<span class="tag off" title="Hand-set — the global default and the sweep will not change this">manual</span>' : ''}</label>
         <select id="evf-permblock">
-        <option value="0" ${!e?.permission_block ? 'selected' : ''}>Warn (prominent banner, never blocks)</option>
-        <option value="1" ${e?.permission_block ? 'selected' : ''}>Block — until re-check clears or staff overrides (recorded)</option></select></div>
+        <option value="auto" ${e?.permission_block_source !== 'manual' ? 'selected' : ''}>Follow global default (currently: ${e?.permission_block ? 'Block' : 'Warn'})</option>
+        <option value="0" ${e?.permission_block_source === 'manual' && !e?.permission_block ? 'selected' : ''}>Warn (manual) — banner only, never blocks</option>
+        <option value="1" ${e?.permission_block_source === 'manual' && e?.permission_block ? 'selected' : ''}>Block (manual) — until re-check clears or staff overrides (recorded)</option></select></div>
       <div><label>SMS reminder delay (min after end; blank = default 30)</label>
         <input id="evf-notify" type="number" min="0" value="${e?.notify_after_min ?? ''}"></div>
       ${e ? `<div><label>TLC attendance push ${e.tlc_event_id ? '<span class="tag" title="Matched to a Trail Life Connect event through the iCal feed">linked ✓</span>' : '<span class="tag off" title="Manual events have no TLC calendar entry to push to">not linked</span>'}</label>
@@ -830,7 +832,6 @@ function openEvent(e) {
       end_at: new Date($('evf-end').value).toISOString(),
       track_adults: $('evf-adults').value === '1',
       requires_high_adventure_form: $('evf-haform').value === '1',
-      permission_block: $('evf-permblock').value === '1',
       notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
     // permission requirement: only a manual choice takes the flag over from
@@ -840,6 +841,13 @@ function openEvent(e) {
       if (e && e.permission_form_source === 'manual') body.permission_form_source = 'auto';
     } else {
       body.requires_permission_form = perm === '1';
+    }
+    // Warn/Block: same manual-wins dance against the global default
+    const pblock = $('evf-permblock').value;
+    if (pblock === 'auto') {
+      if (e && e.permission_block_source === 'manual') body.permission_block_source = 'auto';
+    } else {
+      body.permission_block = pblock === '1';
     }
     if (e && $('evf-tlc')) {
       body.tlc_push = $('evf-tlc').value === '' ? null : Number($('evf-tlc').value);
@@ -1430,6 +1438,19 @@ $('pf-enabled').onchange = async () => {
       : 'Permission-form tracking off.');
   } catch (e) { toast(e.message, true); $('pf-enabled').checked = !$('pf-enabled').checked; }
 };
+$('pf-block-default').onchange = async () => {
+  const val = $('pf-block-default').value === '1';
+  if (val && !confirm('Set the GLOBAL default to Block?\n\nEvery future form-required event will refuse ' +
+      'check-in for unsigned youth (staff can always re-check or record an override). Hand-set events keep ' +
+      'their own setting.')) {
+    $('pf-block-default').value = '0';
+    return;
+  }
+  try {
+    const s = await jput('/admin/permission-forms', { block_default: val ? 1 : 0 });
+    toast(`Default is now ${s.block_default ? 'Block' : 'Warn'} — applied to ${s.block_applied ?? 0} future event(s); hand-set events untouched.`);
+  } catch (e) { toast(e.message, true); }
+};
 document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-push') {
     try { await jpost('/admin/tlc-attendance/push', {}); toast('Push started'); loadTlca(); }
@@ -1449,6 +1470,7 @@ async function loadImport() {
   loadTlca();
   api('/admin/permission-forms').then((s) => {
     if (document.activeElement !== $('pf-enabled')) $('pf-enabled').checked = !!s.enabled;
+    if (document.activeElement !== $('pf-block-default')) $('pf-block-default').value = s.block_default ? '1' : '0';
     $('pf-status').textContent = s.enabled
       ? 'On — requirement sweep runs nightly; per-event status refreshes as events approach.'
       : 'Off — no TLC calls, no kiosk warnings.';

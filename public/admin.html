@@ -283,6 +283,17 @@
       always re-check or record an override — nobody gets stranded at the door). Uses the same stored TLC
       credentials as the roster sync.</p>
       <label class="check"><input id="pf-enabled" type="checkbox"> Track permission forms from Trail Life Connect</label>
+      <div class="row wrap">
+        <label>Default for form-required events
+          <select id="pf-block-default">
+            <option value="0">Warn — prominent banner at sign-in, never blocks</option>
+            <option value="1">Block — until re-check clears or staff overrides (recorded)</option>
+          </select></label>
+      </div>
+      <p class="hint left">Changing the default applies to all <b>future</b> form-required events at once —
+      except events whose Warn/Block was hand-set in the event editor (marked <i>manual</i> there; use the
+      editor's "Follow global default" option to hand one back). Newly detected events pick up the default
+      automatically.</p>
       <p id="pf-status" class="hint left"></p>
     </div>
     <div class="panel">
