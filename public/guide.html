@@ -293,6 +293,14 @@
     <li><b>TLC attendance push</b>: calendar-synced events show <b>linked ✓</b> (they map automatically to their Trail Life Connect event) and a per-event override — follow the global setting, never push, or always push. "Always" is handy for testing one event before enabling the write-back troop-wide; manual events aren't linked and are skipped.</li>
     <li>An event that disappears from the calendar feed is deleted if unused, or kept and flagged "gone from feed" if it has attendance records.</li>
     <li>Events with transactions can't be deleted — history is permanent.</li>
+    <li><b>Parent permission forms</b> (with tracking enabled on the Import tab): the app detects nightly
+    which TLC events require a permission form — and keeps re-checking, since that's often turned on in TLC
+    long after the event is created — and pulls each youth's signed Yes/No as the event approaches (hourly
+    inside the final day). The event editor shows the requirement (auto from TLC, or set it by hand — a hand
+    setting is never overridden), the per-youth signed list with its "as of" time, a <b>Refresh from TLC
+    now</b> button, and a manual upload of the event's participants export as a fallback. Per event you
+    choose <b>Warn</b> (prominent banner at sign-in, default) or <b>Block</b> — blocking still always allows
+    a fresh re-check or a recorded staff override at the kiosk, so nobody gets stranded at the door.</li>
   </ul>
 </section>
 

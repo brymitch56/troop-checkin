@@ -273,6 +273,19 @@
       <div id="tlca-log" class="tbl"></div>
     </div>
     <div class="panel">
+      <h3>Permission-form tracking</h3>
+      <p class="hint left">Some TLC events (campouts, range days…) require a parent-signed <b>permission
+      form</b>. When enabled, the app checks the TLC calendar nightly for which events require one (the
+      troop often turns that on in TLC well after creating the event, so it re-checks continuously) and
+      pulls per-youth signed status — nightly for events within a week, hourly once an event is less than
+      a day out, and on demand from the event editor or the kiosk. At sign-in on such events, unsigned
+      youth get a prominent warning; each event can optionally <b>block</b> check-in instead (staff can
+      always re-check or record an override — nobody gets stranded at the door). Uses the same stored TLC
+      credentials as the roster sync.</p>
+      <label class="check"><input id="pf-enabled" type="checkbox"> Track permission forms from Trail Life Connect</label>
+      <p id="pf-status" class="hint left"></p>
+    </div>
+    <div class="panel">
       <h3>Upload Trail Life Connect export (.xlsx)</h3>
       <p class="hint left">Preview first — nothing is written until you commit. Every committed file is archived under the data directory.</p>
       <input id="imp-file" type="file" accept=".xlsx,.xls">

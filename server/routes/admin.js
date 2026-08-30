@@ -370,8 +370,17 @@ router.patch('/events/:id', (req, res) => {
   for (const f of ['title', 'location', 'description', 'start_at', 'end_at']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
   }
-  for (const f of ['track_adults', 'all_day', 'requires_high_adventure_form']) {
+  for (const f of ['track_adults', 'all_day', 'requires_high_adventure_form', 'permission_block']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
+  }
+  // permission-form requirement: an admin edit takes the flag over from the
+  // sweep ('manual' wins forever); sending permission_form_source:'auto'
+  // hands it back to auto-detection untouched-until-next-sweep
+  if ('requires_permission_form' in b) {
+    sets.push('requires_permission_form = ?', `permission_form_source = 'manual'`);
+    vals.push(b.requires_permission_form ? 1 : 0);
+  } else if (b.permission_form_source === 'auto') {
+    sets.push(`permission_form_source = 'auto'`);
   }
   if ('notify_after_min' in b) { sets.push('notify_after_min = ?'); vals.push(b.notify_after_min ?? null); }
   // TLC write-back override: null = follow the global setting, 0 = never, 1 = always
@@ -382,6 +391,64 @@ router.patch('/events/:id', (req, res) => {
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
   db.prepare(`UPDATE event SET ${sets.join(', ')} WHERE id = ?`).run(...vals, ev.id);
   res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(ev.id));
+});
+
+// ------------------------------------------- permission forms (per event) ----
+const permSync = require('../lib/permissionSync');
+
+router.get('/permission-forms', (req, res) => {
+  res.json(permSync.getSettings());
+});
+router.put('/permission-forms', (req, res) => {
+  res.json(permSync.saveSettings(req.body || {}));
+});
+
+// Per-event status: requirement + per-youth signed list, with fetched_at
+// (staleness stays visible — parents sign at the last minute).
+router.get('/events/:id/form-status', (req, res) => {
+  const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'No such event.' });
+  const youth = db.prepare(
+    `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol,
+            fs.signed, fs.fetched_at, fs.source
+       FROM event_form_status fs JOIN person p ON p.id = fs.person_id
+      WHERE fs.event_id = ?
+      ORDER BY fs.signed, p.last_name, p.first_name`).all(ev.id);
+  res.json({
+    required: !!ev.requires_permission_form,
+    source: ev.permission_form_source,
+    block: !!ev.permission_block,
+    linked: !!ev.tlc_event_id,
+    et_slug_known: !!ev.tlc_et_slug,
+    fetched_at: permSync.lastFetchedAt(ev.id),
+    enabled: permSync.getSettings().enabled === 1,
+    youth,
+  });
+});
+
+router.post('/events/:id/refresh-forms', async (req, res) => {
+  try {
+    const r = await permSync.refreshEvent(Number(req.params.id));
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Manual fallback: upload the event's participants export (RSVP roster)
+// downloaded from TLC by hand — for when TLC is unreachable or automation
+// breaks (e.g. MFA). Parsed with the same code as the sync.
+const formStatusUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+router.post('/events/:id/form-upload', formStatusUpload.single('file'), (req, res) => {
+  const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'No such event.' });
+  if (!req.file) return res.status(400).json({ error: 'Attach the event participants xlsx.' });
+  try {
+    const stored = permSync.storeStatuses(ev.id, permSync.parseExport(req.file.buffer), 'upload');
+    res.json({ ok: true, stored, fetched_at: permSync.lastFetchedAt(ev.id) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 router.delete('/events/:id', (req, res) => {

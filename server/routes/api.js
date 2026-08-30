@@ -241,16 +241,22 @@ router.get('/events/current', (req, res) => {
 });
 
 router.post('/events', express.json(), (req, res) => {
-  const { title, start_at, end_at, location, track_adults, requires_high_adventure_form } = req.body || {};
+  const { title, start_at, end_at, location, track_adults, requires_high_adventure_form,
+          requires_permission_form, permission_block } = req.body || {};
   if (!title || !start_at || !end_at) {
     return res.status(400).json({ error: 'Title, start, and end are required.' });
   }
   const r = db.prepare(
     `INSERT INTO event (source, title, location, start_at, end_at, track_adults,
-                        requires_high_adventure_form)
-     VALUES ('manual', ?, ?, ?, ?, ?, ?)`
+                        requires_high_adventure_form, requires_permission_form,
+                        permission_form_source, permission_block)
+     VALUES ('manual', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(title.trim(), location || null, start_at, end_at, track_adults ? 1 : 0,
-        requires_high_adventure_form ? 1 : 0);
+        requires_high_adventure_form ? 1 : 0,
+        requires_permission_form ? 1 : 0,
+        // a manual event's requirement is inherently hand-set; TLC can't see it
+        requires_permission_form != null ? 'manual' : null,
+        permission_block ? 1 : 0);
   res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(Number(r.lastInsertRowid)));
 });
 

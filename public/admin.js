@@ -787,6 +787,16 @@ function openEvent(e) {
         <select id="evf-haform">
         <option value="0" ${!e?.requires_high_adventure_form ? 'selected' : ''}>Not required</option>
         <option value="1" ${e?.requires_high_adventure_form ? 'selected' : ''}>Required — kiosk flags missing/expired at sign-in</option></select></div>
+      <div><label>Parent permission form
+          ${e?.permission_form_source === 'manual' ? '<span class="tag off" title="Hand-set — the TLC sweep will not change this">manual</span>' : ''}</label>
+        <select id="evf-perm">
+        <option value="auto" ${e?.permission_form_source !== 'manual' ? 'selected' : ''}>Auto from TLC (currently: ${e?.requires_permission_form ? 'required' : 'not required'})</option>
+        <option value="1" ${e?.permission_form_source === 'manual' && e?.requires_permission_form ? 'selected' : ''}>Required (manual)</option>
+        <option value="0" ${e?.permission_form_source === 'manual' && !e?.requires_permission_form ? 'selected' : ''}>Not required (manual)</option></select></div>
+      <div><label>Unsigned permission forms at check-in</label>
+        <select id="evf-permblock">
+        <option value="0" ${!e?.permission_block ? 'selected' : ''}>Warn (prominent banner, never blocks)</option>
+        <option value="1" ${e?.permission_block ? 'selected' : ''}>Block — until re-check clears or staff overrides (recorded)</option></select></div>
       <div><label>SMS reminder delay (min after end; blank = default 30)</label>
         <input id="evf-notify" type="number" min="0" value="${e?.notify_after_min ?? ''}"></div>
       ${e ? `<div><label>TLC attendance push ${e.tlc_event_id ? '<span class="tag" title="Matched to a Trail Life Connect event through the iCal feed">linked ✓</span>' : '<span class="tag off" title="Manual events have no TLC calendar entry to push to">not linked</span>'}</label>
@@ -795,12 +805,14 @@ function openEvent(e) {
           <option value="0" ${e.tlc_push === 0 ? 'selected' : ''}>Never push this event</option>
           <option value="1" ${e.tlc_push === 1 ? 'selected' : ''}>Always push this event</option></select></div>` : ''}
     </div>
+    ${e ? '<div id="evf-forms"></div>' : ''}
     <div class="row wrap">
       <button class="btn primary small" id="evf-save">Save</button>
       <button class="btn ghost small" id="evf-close">Close</button>
     </div>`;
   d.hidden = false;
   $('event-modal').hidden = false;
+  if (e) loadEventForms(e.id);
   $('evf-close').onclick = closeEventModal;
   $('evf-save').onclick = async () => {
     const body = {
@@ -809,8 +821,17 @@ function openEvent(e) {
       end_at: new Date($('evf-end').value).toISOString(),
       track_adults: $('evf-adults').value === '1',
       requires_high_adventure_form: $('evf-haform').value === '1',
+      permission_block: $('evf-permblock').value === '1',
       notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
+    // permission requirement: only a manual choice takes the flag over from
+    // the TLC sweep; picking Auto hands it back
+    const perm = $('evf-perm').value;
+    if (perm === 'auto') {
+      if (e && e.permission_form_source === 'manual') body.permission_form_source = 'auto';
+    } else {
+      body.requires_permission_form = perm === '1';
+    }
     if (e && $('evf-tlc')) {
       body.tlc_push = $('evf-tlc').value === '' ? null : Number($('evf-tlc').value);
     }
@@ -821,6 +842,53 @@ function openEvent(e) {
     } catch (err) { toast(err.message, true); }
   };
 }
+// per-event permission-form status: per-youth signed list + fetched_at,
+// TLC refresh, and the manual export-upload fallback
+async function loadEventForms(id) {
+  const box = $('evf-forms');
+  if (!box) return;
+  const s = await api(`/admin/events/${id}/form-status`).catch(() => null);
+  if (!s) { box.innerHTML = ''; return; }
+  if (!s.required) {
+    box.innerHTML = s.enabled
+      ? '<p class="hint left">No parent permission form required for this event (per TLC — override above if that\'s wrong).</p>'
+      : '<p class="hint left">Permission-form tracking is off (enable it on the Import tab).</p>';
+    return;
+  }
+  const signed = s.youth.filter((y) => y.signed);
+  box.innerHTML = `
+    <h4>Permission forms — ${signed.length} signed of ${s.youth.length} youth on file
+      ${s.block ? '<span class="tag warn">blocking</span>' : ''}</h4>
+    <p class="hint left">${s.fetched_at ? `As of ${fmtDT(s.fetched_at)}.` : 'Never fetched yet.'}
+      Parents often sign at the last minute — refresh before departure.
+      ${s.linked ? '' : '⚠ This event isn\'t linked to a TLC calendar entry, so only a manual upload can populate it.'}</p>
+    <div class="row wrap">
+      ${s.enabled && s.linked ? '<button class="btn ghost small" id="evf-forms-refresh">Refresh from TLC now</button>' : ''}
+      <input id="evf-forms-file" type="file" accept=".xlsx" aria-label="Event participants export">
+      <button class="btn ghost small" id="evf-forms-upload">Upload participants export</button>
+    </div>
+    <div class="tbl">${s.youth.length
+      ? '<table><tr><th>Youth</th><th>Patrol</th><th>Signed</th></tr>' + s.youth.map((y) => `<tr>
+          <td>${esc(y.last_name)}, ${esc(y.first_name)}</td><td>${esc(y.patrol || '')}</td>
+          <td data-sort="${y.signed}">${y.signed ? '✓' : '<span class="tag warn">not signed</span>'}</td>
+        </tr>`).join('') + '</table>'
+      : '<p class="hint left">No per-youth data yet — refresh from TLC or upload the export.</p>'}</div>`;
+  if ($('evf-forms-refresh')) $('evf-forms-refresh').onclick = async () => {
+    try { await jpost(`/admin/events/${id}/refresh-forms`, {}); toast('Refreshed'); loadEventForms(id); }
+    catch (e) { toast(e.message, true); }
+  };
+  $('evf-forms-upload').onclick = async () => {
+    const file = $('evf-forms-file').files[0];
+    if (!file) return toast('Choose the participants export first (TLC → event → export).', true);
+    const form = new FormData();
+    form.append('file', file);
+    const r = await fetch(`/api/admin/events/${id}/form-upload`, { method: 'POST', body: form, credentials: 'same-origin' });
+    const body = await r.json();
+    if (!r.ok) return toast(body.error || 'Upload failed.', true);
+    toast(`Stored ${body.stored} youth statuses.`); loadEventForms(id);
+  };
+}
+
 function closeEventModal() { $('event-modal').hidden = true; $('ev-detail').hidden = true; }
 $('ev-new').onclick = () => openEvent(null);
 $('ev-past').onchange = loadEvents;
@@ -1330,6 +1398,15 @@ $('tlca-enabled').onchange = () => {
   saveTlcaSettings();
 };
 $('tlca-lessons').onchange = saveTlcaSettings;
+$('pf-enabled').onchange = async () => {
+  try {
+    const s = await jput('/admin/permission-forms', { enabled: $('pf-enabled').checked ? 1 : 0 });
+    $('pf-status').textContent = s.enabled
+      ? 'On — requirement sweep runs nightly; per-event status refreshes as events approach.'
+      : 'Off — no TLC calls, no kiosk warnings.';
+    toast(s.enabled ? 'Permission-form tracking ON — first sweep runs within a minute of the next restart, or refresh an event now.' : 'Permission-form tracking off.');
+  } catch (e) { toast(e.message, true); $('pf-enabled').checked = !$('pf-enabled').checked; }
+};
 document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-push') {
     try { await jpost('/admin/tlc-attendance/push', {}); toast('Push started'); loadTlca(); }
@@ -1347,6 +1424,12 @@ async function loadImport() {
   $('imp-result').innerHTML = '';
   loadSync();
   loadTlca();
+  api('/admin/permission-forms').then((s) => {
+    if (document.activeElement !== $('pf-enabled')) $('pf-enabled').checked = !!s.enabled;
+    $('pf-status').textContent = s.enabled
+      ? 'On — requirement sweep runs nightly; per-event status refreshes as events approach.'
+      : 'Off — no TLC calls, no kiosk warnings.';
+  }).catch(() => {});
   const log = await api('/admin/imports');
   $('imp-log').innerHTML = log.length ? `<table><tr><th>When</th><th>File</th><th>By</th><th>Added</th><th>Updated</th><th>Deactivated</th><th>Linked</th></tr>` +
     log.map((r) => `<tr>${dtCell(r.imported_at)}<td>${esc(r.filename)}</td><td>${esc(r.staff_name || '')}</td>
