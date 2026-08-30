@@ -793,11 +793,50 @@ router.get('/duplicate-names', (req, res) => {
 });
 
 // -------------------------------------------------------------- reports ----
+// History endpoints follow the Transactions/Messages pattern: ?limit=
+// (cap 1000) + from/to date range, plus CSV exports — rows older than the
+// default caps stay reachable (live finding 2026-08-30).
+const historyRange = (q, def) => ({
+  limit: Math.min(Number(q.limit) || def, 1000),
+  from: q.from || null, to: q.to || null,
+});
+
+const importRows = ({ limit, from, to }) => db.prepare(
+  `SELECT ri.*, s.name AS staff_name FROM roster_import ri
+     LEFT JOIN staff s ON s.id = ri.staff_id
+    WHERE (? IS NULL OR datetime(ri.imported_at) >= datetime(?))
+      AND (? IS NULL OR datetime(ri.imported_at) <= datetime(?))
+    ORDER BY ri.id DESC LIMIT ?`)
+  .all(from, from, to, to, limit);
+
 router.get('/imports', (req, res) => {
-  res.json(db.prepare(
-    `SELECT ri.*, s.name AS staff_name FROM roster_import ri
-       LEFT JOIN staff s ON s.id = ri.staff_id
-      ORDER BY ri.id DESC LIMIT 50`).all());
+  res.json(importRows(historyRange(req.query, 50)));
+});
+
+router.get('/export/imports.csv', (req, res) => {
+  const rows = importRows(historyRange(req.query, 1000)).map((r) => [
+    r.imported_at, r.filename, r.staff_name || '', r.added, r.updated,
+    r.deactivated, r.linked_guardians,
+  ]);
+  sendCsv(res, 'roster-imports.csv',
+    ['imported_at', 'filename', 'staff', 'added', 'updated', 'deactivated', 'linked_guardians'],
+    rows);
+});
+
+router.get('/push-log', (req, res) => {
+  const { limit, from, to } = historyRange(req.query, 30);
+  res.json(attendanceSync.recentRows(limit, from, to));
+});
+
+router.get('/export/push-log.csv', (req, res) => {
+  const { limit, from, to } = historyRange(req.query, 1000);
+  const rows = attendanceSync.recentRows(limit, from, to).map((r) => [
+    r.created_at, r.sent_at || '', r.status, r.attempts,
+    r.person_name, r.event_title, r.event_start, r.detail || '',
+  ]);
+  sendCsv(res, 'tlc-push-log.csv',
+    ['queued_at', 'sent_at', 'status', 'attempts', 'person', 'event', 'event_start', 'detail'],
+    rows);
 });
 
 // Attendance detail — filterable by event, person, and date range (records

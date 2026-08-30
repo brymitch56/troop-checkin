@@ -1194,6 +1194,8 @@ async function loadOptin() {
 }
 
 document.addEventListener('change', async (e) => {
+  if (['il-from', 'il-to', 'il-limit'].includes(e.target.id)) loadImport();
+  if (['pl-from', 'pl-to', 'pl-limit'].includes(e.target.id)) loadPushLog();
   if (e.target.id === 'mx-days') loadExpiring();
   if (e.target.id === 'hf-form' || e.target.id === 'hf-view') loadHealthForms();
   if (e.target.id === 'ov-view') loadOptin();
@@ -1395,18 +1397,35 @@ async function loadTlca() {
   $('tlca-status').innerHTML = bits.join('<br>');
   $('tlca-push').disabled = !!s.running || !s.credentials_configured || !s.queue.pending;
 
-  $('tlca-log').innerHTML = s.recent.length
+  renderPushLog(s.recent);
+
+  clearTimeout(tlcaTimer);
+  if ((s.running || s.queue.pending) && !$('tab-import').hidden) tlcaTimer = setTimeout(loadTlca, 5000);
+}
+function renderPushLog(rows) {
+  $('tlca-log').innerHTML = rows.length
     ? `<table><tr><th>When</th><th>Person</th><th>Event</th><th>Status</th><th>Detail</th></tr>` +
-      s.recent.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
+      rows.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
         <td>${esc(r.event_title)}</td>
         <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed' : '⏳ pending'}</td>
         <td>${esc(r.detail || '')}</td></tr>`).join('') + '</table>'
     : '<p class="hint left">Nothing queued yet — sign-ins appear here once the push is enabled (or an event is set to “Always push”).</p>';
   enhanceTable('tlca-log');
-
-  clearTimeout(tlcaTimer);
-  if ((s.running || s.queue.pending) && !$('tab-import').hidden) tlcaTimer = setTimeout(loadTlca, 5000);
 }
+
+// push-log history: date range + limit + CSV (older rows stay reachable)
+function pushLogQuery() {
+  const q = new URLSearchParams();
+  if ($('pl-from').value) q.set('from', $('pl-from').value);
+  if ($('pl-to').value) q.set('to', $('pl-to').value + 'T23:59:59');
+  q.set('limit', $('pl-limit').value);
+  return q.toString();
+}
+async function loadPushLog() {
+  $('pl-csv').href = '/api/admin/export/push-log.csv?' + pushLogQuery();
+  renderPushLog(await api('/admin/push-log?' + pushLogQuery()).catch(() => []));
+}
+
 async function saveTlcaSettings() {
   try {
     await jput('/admin/tlc-attendance/settings', {
@@ -1475,7 +1494,12 @@ async function loadImport() {
       ? 'On — requirement sweep runs nightly; per-event status refreshes as events approach.'
       : 'Off — no TLC calls, no kiosk warnings.';
   }).catch(() => {});
-  const log = await api('/admin/imports');
+  const iq = new URLSearchParams();
+  if ($('il-from').value) iq.set('from', $('il-from').value);
+  if ($('il-to').value) iq.set('to', $('il-to').value + 'T23:59:59');
+  iq.set('limit', $('il-limit').value);
+  $('il-csv').href = '/api/admin/export/imports.csv?' + iq.toString();
+  const log = await api('/admin/imports?' + iq.toString());
   $('imp-log').innerHTML = log.length ? `<table><tr><th>When</th><th>File</th><th>By</th><th>Added</th><th>Updated</th><th>Deactivated</th><th>Linked</th></tr>` +
     log.map((r) => `<tr>${dtCell(r.imported_at)}<td>${esc(r.filename)}</td><td>${esc(r.staff_name || '')}</td>
       <td>${r.added}</td><td>${r.updated}</td><td>${r.deactivated}</td><td>${r.linked_guardians}</td></tr>`).join('') + '</table>'

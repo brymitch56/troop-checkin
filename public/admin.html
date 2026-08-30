@@ -270,6 +270,16 @@
         <label class="check"><input id="tlca-lessons" type="checkbox"> Track advancement with event activity plans</label>
       </div>
       <p id="tlca-status" class="hint left"></p>
+      <div class="row wrap">
+        <label>From <input id="pl-from" type="date"></label>
+        <label>To <input id="pl-to" type="date"></label>
+        <select id="pl-limit">
+          <option value="30">Last 30</option>
+          <option value="200">Last 200</option>
+          <option value="1000">Last 1000</option>
+        </select>
+        <a id="pl-csv" class="btn ghost small" href="/api/admin/export/push-log.csv">CSV</a>
+      </div>
       <div id="tlca-log" class="tbl"></div>
     </div>
     <div class="panel">
@@ -308,6 +318,16 @@
     </div>
     <div class="panel">
       <h3>Import history</h3>
+      <div class="row wrap">
+        <label>From <input id="il-from" type="date"></label>
+        <label>To <input id="il-to" type="date"></label>
+        <select id="il-limit">
+          <option value="50">Last 50</option>
+          <option value="200">Last 200</option>
+          <option value="1000">Last 1000</option>
+        </select>
+        <a id="il-csv" class="btn ghost small" href="/api/admin/export/imports.csv">CSV</a>
+      </div>
       <div id="imp-log" class="tbl"></div>
     </div>
   </div>

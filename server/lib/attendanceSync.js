@@ -127,7 +127,7 @@ function queueSummary() {
   return { pending: g('pending'), sent: g('sent'), failed: g('failed') };
 }
 
-function recentRows(limit = 30) {
+function recentRows(limit = 30, from = null, to = null) {
   return db.prepare(
     `SELECT q.id, q.status, q.detail, q.attempts, q.created_at, q.sent_at,
             q.tlc_event_id, q.tlc_user_id,
@@ -136,7 +136,10 @@ function recentRows(limit = 30) {
        FROM tlc_attendance_push q
        JOIN person p ON p.id = q.person_id
        JOIN event e  ON e.id = q.event_id
-      ORDER BY q.id DESC LIMIT ?`).all(limit);
+      WHERE (? IS NULL OR datetime(q.created_at) >= datetime(?))
+        AND (? IS NULL OR datetime(q.created_at) <= datetime(?))
+      ORDER BY q.id DESC LIMIT ?`)
+    .all(from || null, from || null, to || null, to || null, limit);
 }
 
 function retryFailed() {
