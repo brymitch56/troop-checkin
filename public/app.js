@@ -886,35 +886,64 @@ sig.addEventListener('pointerup', () => (drawing = false));
 $('sig-clear').onclick = sigClear;
 
 // ------------------------------------------------------------- visitor ----
+// Siblings share one parent record: "Add + another youth" saves this child,
+// keeps the parent fields (locked) and clears only the child's name, and
+// every following child is linked to the SAME guardian (open-house finding
+// 2026-08-30 — re-typing the parent per child created duplicate parents).
+let visitorGuardian = null; // {id, name} while chaining siblings
+function setVisitorParentLock(g) {
+  visitorGuardian = g;
+  for (const id of ['vis-guardian', 'vis-phone', 'vis-email']) $(id).readOnly = !!g;
+  $('vis-parent-note').hidden = !g;
+  if (g) $('vis-parent-note').textContent = `Same parent as the last child (${g.name}) — just add the next child's name.`;
+}
 $('btn-visitor').onclick = () => {
   for (const id of ['vis-first', 'vis-last', 'vis-guardian', 'vis-phone', 'vis-email']) $(id).value = '';
   $('vis-error').textContent = '';
+  $('vis-youth').checked = true; $('vis-guardian-wrap').hidden = false;
+  setVisitorParentLock(null);
   openModal('modal-visitor');
 };
-$('vis-youth').onchange = () => ($('vis-guardian-wrap').hidden = !$('vis-youth').checked);
-$('vis-cancel').onclick = closeModal;
-$('vis-save').onclick = async () => {
+$('vis-youth').onchange = () => {
+  $('vis-guardian-wrap').hidden = !$('vis-youth').checked;
+  $('vis-save-more').hidden = !$('vis-youth').checked; // siblings are a youth thing
+};
+$('vis-cancel').onclick = () => { setVisitorParentLock(null); closeModal(); };
+async function saveVisitor(andAnother) {
   // Youth visitors: EVERY field is required (name, parent name, phone, email)
   // — open-house follow-up depends on complete contact info. Adults: name only.
+  // When chaining a sibling the locked parent fields already satisfied that.
   if (!$('vis-first').value.trim() || !$('vis-last').value.trim()) {
     return ($('vis-error').textContent = 'First and last name are required.');
   }
-  if ($('vis-youth').checked &&
+  const youth = $('vis-youth').checked;
+  if (youth && !visitorGuardian &&
       (!$('vis-guardian').value.trim() || !$('vis-phone').value.trim() || !$('vis-email').value.trim())) {
     return ($('vis-error').textContent = "Parent/guardian name, phone, AND email are all required for a youth visitor.");
   }
   try {
-    const { person } = await jpost('/visitor', {
-      is_youth: $('vis-youth').checked,
+    const r = await jpost('/visitor', {
+      is_youth: youth,
       first_name: $('vis-first').value.trim(),
       last_name: $('vis-last').value.trim(),
+      guardian_id: youth && visitorGuardian ? visitorGuardian.id : undefined,
       guardian_name: $('vis-guardian').value.trim() || undefined,
       guardian_phone: $('vis-phone').value.trim() || undefined,
       guardian_email: $('vis-email').value.trim() || undefined,
     });
-    closeModal(); addToCart(person);
+    addToCart(r.person);
+    if (andAnother && youth && r.guardian_id) {
+      setVisitorParentLock({ id: r.guardian_id, name: r.guardian_name || $('vis-guardian').value.trim() });
+      $('vis-first').value = ''; $('vis-last').value = ''; $('vis-error').textContent = '';
+      $('vis-first').focus();
+      toast(`${displayName(r.person)} added — next child for the same parent.`);
+      return;
+    }
+    setVisitorParentLock(null); closeModal();
   } catch (e) { $('vis-error').textContent = e.message; }
-};
+}
+$('vis-save').onclick = () => saveVisitor(false);
+$('vis-save-more').onclick = () => saveVisitor(true);
 
 // ------------------------------------------------------------- on site ----
 async function refreshOnsiteCount() {

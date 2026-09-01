@@ -150,10 +150,43 @@ router.get('/person/:id/guardians', (req, res) => {
 // quick-add: visitor youth (with guardian) or unregistered adult.
 // Youth visitors REQUIRE the full contact set (name, guardian name, phone,
 // email) — open-house follow-up depends on it. Adults need a name only.
+// Siblings share ONE guardian record (open-house finding 2026-08-30: every
+// youth visitor used to INSERT a fresh parent row, so a two-child family
+// became two duplicate parents). Two paths keep that from recurring:
+//   - guardian_id: the kiosk's "add another youth for this parent" chains
+//     siblings onto the guardian created for the first child;
+//   - dedupe: with no id, an existing adult with the same normalized email
+//     (or, failing that, the same phone digits) is reused instead of
+//     duplicated — including one created earlier the same night.
+const normEmail = (v) => String(v || '').trim().toLowerCase();
+const normPhone = (v) => String(v || '').replace(/\D/g, '');
+function findExistingGuardian(email, phone) {
+  const e = normEmail(email), ph = normPhone(phone);
+  if (e) {
+    const hit = db.prepare(
+      `SELECT id FROM person WHERE is_youth = 0 AND status != 'merged'
+        AND email IS NOT NULL AND lower(trim(email)) = ? ORDER BY id LIMIT 1`).get(e);
+    if (hit) return hit.id;
+  }
+  if (ph.length >= 7) {
+    for (const row of db.prepare(
+      `SELECT id, phone_mobile FROM person WHERE is_youth = 0 AND status != 'merged'
+        AND phone_mobile IS NOT NULL ORDER BY id`).all()) {
+      if (normPhone(row.phone_mobile) === ph) return row.id;
+    }
+  }
+  return null;
+}
+
 router.post('/visitor', express.json(), (req, res) => {
   const { first_name, last_name, is_youth, guardian_name, guardian_phone, guardian_email, notes } = req.body || {};
+  const guardianId = req.body && req.body.guardian_id ? Number(req.body.guardian_id) : null;
   if (!first_name || !last_name) return res.status(400).json({ error: 'First and last name are required.' });
-  if (is_youth) {
+  if (is_youth && guardianId) {
+    // chaining a sibling: the parent record already carries the contact set
+    const g = db.prepare(`SELECT id FROM person WHERE id = ? AND is_youth = 0 AND status != 'merged'`).get(guardianId);
+    if (!g) return res.status(400).json({ error: 'That parent record is not available — add the parent details again.' });
+  } else if (is_youth) {
     if (!String(guardian_name || '').trim() || !String(guardian_phone || '').trim() ||
         !String(guardian_email || '').trim()) {
       return res.status(400).json({ error: "Parent/guardian name, phone, AND email are all required for a youth visitor." });
@@ -168,23 +201,33 @@ router.post('/visitor', express.json(), (req, res) => {
        VALUES (?, ?, ?, ?, ?)`
     ).run(is_youth ? 1 : 0, first_name.trim(), last_name.trim(), is_youth ? 'visitor' : 'active', notes || null);
     const pid = Number(p.lastInsertRowid);
-    if (is_youth && guardian_name) {
-      const parts = String(guardian_name).trim().split(/\s+/);
-      const gfirst = parts.shift() || guardian_name;
-      const glast = parts.join(' ') || last_name.trim();
-      const g = db.prepare(
-        `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, email, status)
-         VALUES (0, ?, ?, ?, ?, 'active')`
-      ).run(gfirst, glast, guardian_phone || null, String(guardian_email || '').trim() || null);
+    let gid = null;
+    if (is_youth) {
+      gid = guardianId || findExistingGuardian(guardian_email, guardian_phone);
+      if (!gid) {
+        const parts = String(guardian_name).trim().split(/\s+/);
+        const gfirst = parts.shift() || guardian_name;
+        const glast = parts.join(' ') || last_name.trim();
+        const g = db.prepare(
+          `INSERT INTO person (is_youth, first_name, last_name, phone_mobile, email, status)
+           VALUES (0, ?, ?, ?, ?, 'active')`
+        ).run(gfirst, glast, guardian_phone || null, String(guardian_email || '').trim() || null);
+        gid = Number(g.lastInsertRowid);
+      }
       db.prepare(
         `INSERT INTO person_guardian (youth_id, guardian_id, authorized, is_primary, source)
          VALUES (?, ?, 1, 1, 'manual')`
-      ).run(pid, Number(g.lastInsertRowid));
+      ).run(pid, gid);
     }
-    return pid;
+    return { pid, gid };
   });
-  const pid = tx();
-  res.json({ person: personView(db.prepare('SELECT * FROM person WHERE id = ?').get(pid)) });
+  const { pid, gid } = tx();
+  const guardian = gid ? db.prepare('SELECT id, first_name, last_name FROM person WHERE id = ?').get(gid) : null;
+  res.json({
+    person: personView(db.prepare('SELECT * FROM person WHERE id = ?').get(pid)),
+    guardian_id: gid,
+    guardian_name: guardian ? `${guardian.first_name} ${guardian.last_name}` : null,
+  });
 });
 
 // -------------------------------------------------------------- events ----
