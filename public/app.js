@@ -374,13 +374,21 @@ $('ev-create').onclick = async () => {
 // counted and scrubbed from the field when the scan completes.
 let wedgeBuf = '', wedgeLast = 0, wedgeFast = true, wedgeLeaked = 0;
 window.addEventListener('keydown', (e) => {
+  // Some on-screen keyboards / IMEs (ChromeOS virtual keyboard in touch mode,
+  // several Android keyboards) fire a placeholder keydown with e.key
+  // undefined or 'Unidentified' (keyCode 229) the moment a field gets focus
+  // — field lesson 2026-08-31: one volunteer saw an "App error … reading
+  // 'length'" toast on every tap into a text box. Those events carry no
+  // character, so they must never touch the wedge buffer.
+  const key = typeof e.key === 'string' ? e.key : '';
+  if (!key || key === 'Unidentified' || key === 'Process' || e.isComposing) return;
   const el = document.activeElement;
   const typingInField = /INPUT|TEXTAREA/.test(el?.tagName || '');
   const now = Date.now();
   const gap = now - wedgeLast;
   if (gap > 120) { wedgeBuf = ''; wedgeFast = true; wedgeLeaked = 0; }
   wedgeLast = now;
-  if (e.key === 'Enter') {
+  if (key === 'Enter') {
     if (wedgeBuf.length >= 6 && wedgeFast) {
       const code = wedgeBuf; wedgeBuf = '';
       e.preventDefault();
@@ -392,9 +400,9 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
-  if (e.key.length === 1) {
+  if (key.length === 1) {
     if (wedgeBuf) wedgeFast = wedgeFast && gap < 35;
-    wedgeBuf += e.key;
+    wedgeBuf += key;
     if (typingInField) {
       if (wedgeFast && wedgeBuf.length >= 4) e.preventDefault(); // burst confirmed: suppress
       else wedgeLeaked++;
