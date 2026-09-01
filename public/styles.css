@@ -151,6 +151,9 @@ a.pill { text-decoration: none; display: inline-flex; align-items: center; }
 /* ---------- on-site list ---------- */
 .patrol-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .patrol-filters .pill.active { background: var(--pine); color: #fff; }
+/* on-site sort pills: same row style, visually secondary to the patrol filter */
+.onsite-sort { margin-top: -4px; }
+.onsite-sort .sort-label { align-self: center; color: var(--muted); font-size: 13px; margin-right: 2px; }
 .onsite-list .group h4 {
   margin: 16px 0 6px; font-size: 13px; letter-spacing: .1em;
   text-transform: uppercase; color: var(--muted);

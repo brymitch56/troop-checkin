@@ -1036,6 +1036,50 @@ async function onsiteRowsOffline() {
     }));
 }
 
+// On-site sort (open-house request 2026-08-30): default LAST NAME within each
+// event group; Sign-in time / Patrol / First name selectable; remembered per
+// device like the station patrol. Client-side so it works offline — offline
+// rows have no signed_at, so the time sort falls back to name order instead
+// of scrambling.
+const ONSITE_SORTS = [
+  ['last', 'Last name'], ['time', 'Sign-in time'], ['patrol', 'Patrol'], ['first', 'First name'],
+];
+let onsiteSort = localStorage.getItem('onsite-sort') || 'last';
+function onsiteComparator(key) {
+  const name = (r) => `${r.last_name}|${r.first_name}`.toLowerCase();
+  const byName = (a, b) => name(a).localeCompare(name(b));
+  if (key === 'first') return (a, b) => `${a.first_name}|${a.last_name}`.toLowerCase()
+    .localeCompare(`${b.first_name}|${b.last_name}`.toLowerCase());
+  if (key === 'patrol') return (a, b) => {
+    // no patrol (adults, visitors) sorts LAST, then alphabetical, then by name
+    if (!a.patrol !== !b.patrol) return a.patrol ? -1 : 1;
+    return (a.patrol || '').localeCompare(b.patrol || '') || byName(a, b);
+  };
+  if (key === 'time') return (a, b) => {
+    const ta = a.signed_at ? new Date(a.signed_at).getTime() : null;
+    const tb = b.signed_at ? new Date(b.signed_at).getTime() : null;
+    if (ta != null && tb != null && ta !== tb) return ta - tb;
+    return byName(a, b);
+  };
+  return byName;
+}
+function renderOnsiteSortPills() {
+  const box = $('onsite-sort'); box.innerHTML = '';
+  const lab = document.createElement('span'); lab.className = 'sort-label'; lab.textContent = 'Sort:';
+  box.appendChild(lab);
+  for (const [key, label] of ONSITE_SORTS) {
+    const b = document.createElement('button');
+    b.className = 'pill ghost-pill' + (onsiteSort === key ? ' active' : '');
+    b.textContent = label;
+    b.onclick = () => {
+      onsiteSort = key;
+      try { localStorage.setItem('onsite-sort', key); } catch { /* ignore */ }
+      renderOnsite();
+    };
+    box.appendChild(b);
+  }
+}
+
 async function renderOnsite() {
   let offlineData = false;
   const rows = await api('/onsite' + (state.patrol ? '?patrol=' + encodeURIComponent(state.patrol) : ''))
@@ -1060,6 +1104,7 @@ async function renderOnsite() {
   };
   mk('All', null);
   patrols.forEach((p) => mk(p, p));
+  renderOnsiteSortPills();
 
   const wrap = $('onsite-list'); wrap.innerHTML = '';
   if (offlineData) {
@@ -1074,12 +1119,13 @@ async function renderOnsite() {
     if (!byEvent.has(r.event_id)) byEvent.set(r.event_id, { title: r.event_title, rows: [] });
     byEvent.get(r.event_id).rows.push(r);
   }
+  const cmp = onsiteComparator(onsiteSort);
   for (const g of byEvent.values()) {
     const div = document.createElement('div');
     div.className = 'group';
     div.innerHTML = `<h4>${g.title} · ${g.rows.length}</h4>`;
     wrap.appendChild(div);
-    for (const r of g.rows) {
+    for (const r of [...g.rows].sort(cmp)) {
       const el = document.createElement('button');
       el.className = 'person onsite-person';
       el.type = 'button';
