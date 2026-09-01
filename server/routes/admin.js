@@ -201,6 +201,21 @@ router.post('/guardian-bulk', (req, res) => {
   const youths = youthIds.map((id) =>
     db.prepare(`SELECT * FROM person WHERE id = ? AND is_youth = 1 AND status != 'merged'`).get(id));
   if (youths.some((y) => !y)) return res.status(400).json({ error: 'One of the selected youth was not found.' });
+  // opting in an EXISTING adult: the form must be theirs (overridable warning);
+  // a brand-new adult is created below and checked by name the same way
+  if (b.opt_in && b.consent_form_id && !b.signer_confirmed) {
+    const cc = require('../lib/consentCheck');
+    const form = db.prepare('SELECT signed_by FROM consent_form WHERE id = ?').get(b.consent_form_id);
+    const target = b.guardian_id
+      ? db.prepare('SELECT first_name, last_name, nickname FROM person WHERE id = ?').get(Number(b.guardian_id))
+      : (b.new_guardian ? { first_name: b.new_guardian.first_name, last_name: b.new_guardian.last_name } : null);
+    if (form && target && !cc.signerMatches(form.signed_by, target)) {
+      return res.status(422).json({
+        error: `That form was signed by "${form.signed_by || 'nobody recorded'}", not ${target.first_name} ${target.last_name}. The consent form covers only its signer.`,
+        signer_mismatch: true, signed_by: form.signed_by || '', person_name: `${target.first_name} ${target.last_name}`,
+      });
+    }
+  }
 
   const run = db.transaction(() => {
     // resolve the adult
@@ -278,6 +293,10 @@ router.patch('/people/:id/opt-in', (req, res) => {
     if (b.sms_opt_in === 'yes' && !formAfter) {
       return res.status(422).json({ error: 'Opt-in requires attaching the signed consent form first.' });
     }
+    if (b.sms_opt_in === 'yes' && !b.signer_confirmed) {
+      const mm = require('../lib/consentCheck').mismatchFor(p.id, formAfter);
+      if (mm) return res.status(422).json({ error: `That form was signed by "${mm.signed_by || 'nobody recorded'}", not ${mm.person_name}. The consent form covers only its signer.`, signer_mismatch: true, ...mm });
+    }
     sets.push('sms_opt_in = ?'); vals.push(b.sms_opt_in);
   }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -313,6 +332,11 @@ router.patch('/people/:youthId/guardians/:guardianId', (req, res) => {
     const formAfter = 'consent_form_id' in b ? b.consent_form_id : link.consent_form_id;
     if (b.sms_opt_in === 'yes' && !formAfter) {
       return res.status(422).json({ error: 'Opt-in requires attaching the signed consent form first.' });
+    }
+    // the form covers only its signer — warn (overridable) when it wasn't this guardian
+    if (b.sms_opt_in === 'yes' && !b.signer_confirmed) {
+      const mm = require('../lib/consentCheck').mismatchFor(Number(guardianId), formAfter);
+      if (mm) return res.status(422).json({ error: `That form was signed by "${mm.signed_by || 'nobody recorded'}", not ${mm.person_name}. The consent form covers only its signer.`, signer_mismatch: true, ...mm });
     }
     sets.push('sms_opt_in = ?'); vals.push(b.sms_opt_in);
   }
@@ -929,6 +953,18 @@ router.post('/sms-reply', async (req, res) => {
   ).run(g.id, g.phone_mobile, body, sid, status);
   if (status !== 'sent') return res.status(502).json({ error: `Send failed: ${err}` });
   res.json({ ok: true });
+});
+
+// Consent signer audit: opt-ins whose attached form wasn't signed by the
+// opted-in adult (the form covers only its signer). Report + CSV.
+router.get('/consent-audit', (req, res) => {
+  res.json(require('../lib/consentCheck').audit());
+});
+router.get('/export/consent-audit.csv', (req, res) => {
+  const rows = require('../lib/consentCheck').audit().map((r) => [
+    r.kind, r.guardian_name, r.youth_name, r.signed_by, r.form, r.reason]);
+  sendCsv(res, 'sms-consent-signer-audit.csv',
+    ['kind', 'opted_in_adult', 'youth', 'form_signed_by', 'form_file', 'reason'], rows);
 });
 
 // SMS recipient mode — who gets texted per youth (see lib/notifySweep.js).

@@ -207,6 +207,14 @@
       <div id="ov-list" class="tbl"></div>
     </div>
     <div class="panel">
+      <h3>SMS consent signer check <a id="ca-csv" class="btn ghost small" href="/api/admin/export/consent-audit.csv">CSV</a></h3>
+      <p class="hint left">The consent form covers <b>only the person who signed it</b>. This lists every current
+      opt-in whose attached form wasn't signed by that adult (or has no signer / no form) — e.g. a second parent
+      opted in on the first parent's form. Fix by having that adult sign their own copy (adult-only info is
+      fine) and attaching it, or revoke the opt-in. Empty is the goal.</p>
+      <div id="ca-list" class="tbl"></div>
+    </div>
+    <div class="panel">
       <h3>SMS notification log</h3>
       <div id="rp-notifications" class="tbl"></div>
     </div>

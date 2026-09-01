@@ -423,7 +423,12 @@ async function openPerson(id) {
       if (b.dataset.aact === 'on') {
         const formId = $('pp-aform').value ? Number($('pp-aform').value) : null;
         if (!formId) return toast('Pick a stored consent form, or upload the scan right here with "Upload scan & opt in".', true);
-        await jpatch(`/admin/people/${id}/opt-in`, { sms_opt_in: 'yes', consent_form_id: formId });
+        const body = { sms_opt_in: 'yes', consent_form_id: formId };
+        try { await jpatch(`/admin/people/${id}/opt-in`, body); }
+        catch (e) {
+          if (!confirmSignerMismatch(e)) throw e;
+          await jpatch(`/admin/people/${id}/opt-in`, { ...body, signer_confirmed: true });
+        }
       } else if (b.dataset.aact === 'upload') {
         // adult self-consent: upload the scan and opt in, one step — the
         // signer IS this adult (no youth, no guardian links involved)
@@ -676,26 +681,40 @@ document.addEventListener('click', async (e) => {
       return err('Opt-in needs a consent form — pick one or upload the scan.');
     }
   }
+  const payload = {
+    guardian_id: useNew ? undefined : fam.guardianId,
+    new_guardian: useNew ? {
+      first_name: $('fam-nfirst').value.trim(),
+      last_name: $('fam-nlast').value.trim(),
+      phone_mobile: $('fam-nphone').value.trim() || null,
+    } : undefined,
+    youth_ids: youthIds,
+    relationship: $('fam-rel').value.trim() || undefined,
+    is_primary: $('fam-primary').checked,
+    opt_in: $('fam-optin').checked,
+    consent_form_id: consentFormId || undefined,
+  };
   try {
-    const r = await jpost('/admin/guardian-bulk', {
-      guardian_id: useNew ? undefined : fam.guardianId,
-      new_guardian: useNew ? {
-        first_name: $('fam-nfirst').value.trim(),
-        last_name: $('fam-nlast').value.trim(),
-        phone_mobile: $('fam-nphone').value.trim() || null,
-      } : undefined,
-      youth_ids: youthIds,
-      relationship: $('fam-rel').value.trim() || undefined,
-      is_primary: $('fam-primary').checked,
-      opt_in: $('fam-optin').checked,
-      consent_form_id: consentFormId || undefined,
-    });
+    let r;
+    try { r = await jpost('/admin/guardian-bulk', payload); }
+    catch (e2) {
+      if (!confirmSignerMismatch(e2)) throw e2;
+      r = await jpost('/admin/guardian-bulk', { ...payload, signer_confirmed: true });
+    }
     closeFamilyModal();
     toast(`Applied to ${r.applied} youth ✓`);
     if (fam.fromPerson) openPerson(fam.fromPerson.id);
     loadPeople();
   } catch (e2) { err(e2.message); }
 });
+
+// The consent form covers only its signer: when an opt-in points at a form
+// somebody else signed, the server answers 422 signer_mismatch and the admin
+// must explicitly confirm (only if this adult personally signed a form).
+function confirmSignerMismatch(e) {
+  if (!(e && e.status === 422 && e.body && e.body.signer_mismatch)) return false;
+  return confirm(`${e.message}\n\nOpt in anyway? Only do this if ${e.body.person_name} personally signed a consent form (each adult who receives texts must sign their own).`);
+}
 // Adult self-consent for SMS — same strictly-opt-in rule as youth pairs:
 // opting in requires a stored signed consent form. Used when messaging
 // adults at adult-tracked events.
@@ -743,7 +762,12 @@ async function guardianAction(p, btn) {
       const sel = document.querySelector(`select[data-gform="${gid}"]`);
       const formId = sel && sel.value ? Number(sel.value) : null;
       if (!formId) return toast('Pick the signed consent form first (upload it below if needed).', true);
-      await jpatch(`/admin/people/${p.id}/guardians/${gid}`, { sms_opt_in: 'yes', consent_form_id: formId });
+      const body = { sms_opt_in: 'yes', consent_form_id: formId };
+      try { await jpatch(`/admin/people/${p.id}/guardians/${gid}`, body); }
+      catch (e) {
+        if (!confirmSignerMismatch(e)) throw e;
+        await jpatch(`/admin/people/${p.id}/guardians/${gid}`, { ...body, signer_confirmed: true });
+      }
     }
     if (btn.dataset.gact === 'smsoff') {
       if (!confirm('Revoke SMS opt-in for this guardian on this youth?')) return;
@@ -1132,7 +1156,7 @@ async function loadReports() {
   renderReportLinks();
   // awaited so loadReports() resolving means the panels are populated and
   // the layout has settled — the dashboard card jumps scroll after this
-  await Promise.all([loadExpiring(), loadHealthForms(), loadOptin()]);
+  await Promise.all([loadExpiring(), loadHealthForms(), loadOptin(), loadConsentAudit()]);
   const log = await api('/admin/notifications');
   $('rp-notifications').innerHTML = log.length
     ? `<table><tr><th>When</th><th>Youth</th><th>Guardian</th><th>Event</th><th>Status</th></tr>` +
@@ -1184,6 +1208,22 @@ async function loadHealthForms() {
       </tr>`).join('') + '</table>'
     : `<p class="hint left">${missing ? `Everyone active has a ${label} on file. 🎉` : `No ${label} expires within ${view} days. 🎉`}</p>`;
   enhanceTable('hf-list');
+}
+
+// consent signer audit: opt-ins attached to a form somebody else signed
+async function loadConsentAudit() {
+  const rows = await api('/admin/consent-audit').catch(() => []);
+  $('ca-list').innerHTML = rows.length
+    ? `<table><tr><th>Opted-in adult</th><th>For youth</th><th>Form signed by</th><th>Form</th><th>Issue</th></tr>` +
+      rows.map((r) => `<tr>
+        <td>${esc(r.guardian_name)}${r.kind === 'adult' ? ' <span class="tag off">self</span>' : ''}</td>
+        <td>${esc(r.youth_name)}</td>
+        <td>${esc(r.signed_by) || '<span class="tag warn">none</span>'}</td>
+        <td>${r.form ? `<a href="/consent-forms/${esc(r.form)}" target="_blank">${esc(r.form)}</a>` : ''}</td>
+        <td><span class="tag warn">${esc(r.reason)}</span></td>
+      </tr>`).join('') + '</table>'
+    : '<p class="hint left">Every opt-in is backed by a form signed by that adult. 🎉</p>';
+  enhanceTable('ca-list');
 }
 
 // messaging opt-in: youth families + a separate adults section

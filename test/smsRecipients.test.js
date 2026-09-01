@@ -129,3 +129,62 @@ test('settings route: default primary, PUT flips, /api/config carries it, admin-
   // junk values fall back to primary, never to something broader
   assert.equal((await req('PUT', '/api/admin/sms-recipients', { cookie: adminCookie, body: { mode: 'everyone' } })).json.mode, 'primary');
 });
+
+// ------------------------------------------------ consent signer check ----
+const cc = require('../server/lib/consentCheck');
+
+test('signerMatches: tolerant name match, blank signer never matches', () => {
+  const p = { first_name: 'Mia', last_name: 'Family', nickname: null };
+  assert.equal(cc.signerMatches('Mia Family', p), true);
+  assert.equal(cc.signerMatches('  family, MIA  ', p), true);
+  assert.equal(cc.signerMatches('Dan Family', p), false);   // other parent
+  assert.equal(cc.signerMatches('', p), false);
+  assert.equal(cc.signerMatches('Mia F.', p), false);       // last name required
+  assert.equal(cc.signerMatches('Mimi Family', { ...p, nickname: 'Mimi' }), true);
+});
+
+test("opt-in on someone else's form: 422 signer_mismatch, then explicit confirm proceeds", async () => {
+  // dad's link currently carries mom's form ("Mia Family" signed it) but is
+  // already 'yes' from the fixture; exercise the PATCH path on the aunt
+  const momForm = db.prepare(`SELECT consent_form_id AS id FROM person_guardian WHERE youth_id = ? AND guardian_id = ?`).get(kid1, mom).id;
+  let r = await req('PATCH', `/api/admin/people/${kid1}/guardians/${aunt}`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: momForm } });
+  assert.equal(r.status, 422);
+  assert.equal(r.json.signer_mismatch, true);
+  assert.equal(r.json.signed_by, 'Mia Family');
+  assert.equal(db.prepare(`SELECT sms_opt_in FROM person_guardian WHERE youth_id = ? AND guardian_id = ?`).get(kid1, aunt).sms_opt_in, 'unknown');
+  // a form the aunt signed herself sails through
+  const auntForm = Number(db.prepare(`INSERT INTO consent_form (file_path, signed_by) VALUES ('a.pdf', 'Ann Family')`).run().lastInsertRowid);
+  r = await req('PATCH', `/api/admin/people/${kid1}/guardians/${aunt}`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: auntForm } });
+  assert.equal(r.status, 200);
+  // explicit override is honored (admin asserts she signed something on paper)
+  r = await req('PATCH', `/api/admin/people/${kid2}/guardians/${aunt}`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: momForm, signer_confirmed: true } });
+  assert.equal(r.status, 200);
+  // adult self-consent path checks too
+  r = await req('PATCH', `/api/admin/people/${dad}/opt-in`,
+    { cookie: adminCookie, body: { sms_opt_in: 'yes', consent_form_id: momForm } });
+  assert.equal(r.status, 422);
+  assert.equal(r.json.signer_mismatch, true);
+  // guardian-bulk path: existing adult on someone else's form
+  r = await req('POST', '/api/admin/guardian-bulk',
+    { cookie: adminCookie, body: { guardian_id: aunt, youth_ids: [kid1], opt_in: true, consent_form_id: momForm } });
+  assert.equal(r.status, 422);
+  assert.equal(r.json.signer_mismatch, true);
+});
+
+test('consent audit lists mismatched opt-ins (guardian links + adults) and the CSV exports them', async () => {
+  const rows = (await req('GET', '/api/admin/consent-audit', { cookie: adminCookie })).json;
+  // dad is opted in on mom's form (fixture) -> flagged for both kids; aunt on kid2 was force-confirmed -> flagged
+  const dadRows = rows.filter((r) => r.guardian_name === 'Dan Family');
+  assert.equal(dadRows.length, 2);
+  assert.match(dadRows[0].reason, /does not match/);
+  assert.ok(rows.some((r) => r.guardian_name === 'Ann Family' && r.youth_name === 'Kai Family'));
+  assert.ok(!rows.some((r) => r.guardian_name === 'Mia Family'));      // her own form: clean
+  assert.ok(!rows.some((r) => r.guardian_name === 'Ann Family' && r.youth_name === 'Kim Family')); // her own form: clean
+  const csv = await fetch(base + '/api/admin/export/consent-audit.csv', { headers: { cookie: adminCookie } });
+  const text = await csv.text();
+  assert.match(text.split('\r\n')[0], /^kind,opted_in_adult,youth,form_signed_by/);
+  assert.match(text, /Dan Family/);
+});
