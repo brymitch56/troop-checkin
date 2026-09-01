@@ -117,3 +117,42 @@ test('bad guardian_id (youth, merged, or missing) → 400; adults never link', a
   // youth without any parent info still refused (rule unchanged)
   assert.equal((await post('/api/visitor', { is_youth: true, first_name: 'No', last_name: 'Parent' })).status, 400);
 });
+
+// --------------------------------------- merge: unregistered into unregistered ----
+test('merge tool: duplicate unregistered parents merge into each other; merged target refused', async () => {
+  db.prepare(`INSERT INTO staff (name, role, password_hash) VALUES ('Admin V', 'admin', ?)`)
+    .run(auth.hashSecret('adminpass'));
+  const staff = await (await fetch(base + '/api/staff-list')).json();
+  const adminCookie = (await fetch(base + '/api/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ staff_id: staff.find((s) => s.role === 'admin').id, pin: 'adminpass' }),
+  })).headers.get('set-cookie').split(';')[0];
+  const adminPost = async (url, body) => {
+    const res = await fetch(base + url, { method: 'POST', headers: { 'content-type': 'application/json', cookie: adminCookie }, body: JSON.stringify(body) });
+    return { status: res.status, json: await res.json().catch(() => null) };
+  };
+
+  // two pre-fix duplicate parents (neither on the roster), each linked to a youth
+  const dup1 = Number(db.prepare(`INSERT INTO person (is_youth, first_name, last_name, phone_mobile, status) VALUES (0, 'Dee', 'Duplicate', '555-0350', 'active')`).run().lastInsertRowid);
+  const dup2 = Number(db.prepare(`INSERT INTO person (is_youth, first_name, last_name, email, status) VALUES (0, 'Dee', 'Duplicate', 'dee.duplicate@example.com', 'active')`).run().lastInsertRowid);
+  const kidA = Number(db.prepare(`INSERT INTO person (is_youth, first_name, last_name, status) VALUES (1, 'Ava', 'Duplicate', 'visitor')`).run().lastInsertRowid);
+  const kidB = Number(db.prepare(`INSERT INTO person (is_youth, first_name, last_name, status) VALUES (1, 'Bo', 'Duplicate', 'visitor')`).run().lastInsertRowid);
+  db.prepare(`INSERT INTO person_guardian (youth_id, guardian_id, authorized, is_primary, source) VALUES (?, ?, 1, 1, 'manual')`).run(kidA, dup1);
+  db.prepare(`INSERT INTO person_guardian (youth_id, guardian_id, authorized, is_primary, source) VALUES (?, ?, 1, 1, 'manual')`).run(kidB, dup2);
+
+  // the picker's candidate list now includes unregistered adults (with phone for the confirm text)
+  const cands = await (await fetch(base + '/api/admin/people?type=adult&q=Duplicate', { headers: { cookie: adminCookie } })).json();
+  assert.ok(cands.some((c) => c.id === dup2 && !c.member_id));
+  assert.ok('phone_mobile' in cands[0]);
+
+  const m = await adminPost('/api/admin/merge', { from_id: dup2, into_id: dup1 });
+  assert.equal(m.status, 200);
+  assert.equal(db.prepare('SELECT status, merged_into_id FROM person WHERE id = ?').get(dup2).status, 'merged');
+  const links = db.prepare('SELECT youth_id FROM person_guardian WHERE guardian_id = ? ORDER BY youth_id').all(dup1);
+  assert.deepEqual(links.map((l) => l.youth_id), [kidA, kidB]); // both kids now on the survivor
+
+  // merging INTO the retired record is refused
+  const dup3 = Number(db.prepare(`INSERT INTO person (is_youth, first_name, last_name, status) VALUES (0, 'Dee', 'Duplicate', 'active')`).run().lastInsertRowid);
+  const bad = await adminPost('/api/admin/merge', { from_id: dup3, into_id: dup2 });
+  assert.equal(bad.status, 409);
+});

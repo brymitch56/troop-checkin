@@ -317,7 +317,7 @@ async function openPerson(id) {
       : 'Fields you edit here are locked so roster re-imports never overwrite them.'}</p>
     <div class="row wrap">
       <button class="btn primary small" id="pp-save">Save</button>
-      ${!p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into roster member…</button>' : ''}
+      ${!p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into another record…</button>' : ''}
       <button class="btn ghost small" id="pp-close">Close</button>
     </div>
     ${p.is_youth ? guardianBlock(p, forms) : adultSmsBlock(p, forms) + wardBlock(p)}`;
@@ -354,13 +354,19 @@ async function openPerson(id) {
 
   if ($('pp-merge')) $('pp-merge').onclick = async () => {
     const kind = p.is_youth ? 'youth' : 'adult';
-    const q = prompt(`Merge this record into which roster ${kind}? Type part of their name:\n\n(Use this when the same individual has two records — e.g. a parent record plus a registered-leader record.)`);
+    // targets: any OTHER same-type record — roster member OR another
+    // unregistered record (duplicate visitor-created parents, open-house
+    // finding 2026-08-30; the server always allowed it, the picker didn't)
+    const q = prompt(`Merge this record into which other ${kind}? Type part of their name:\n\n(Use this when the same individual has two records — a parent record plus a registered-leader record, or two visitor-created copies of the same parent. Keep the record with the better phone/email/links; merge the other INTO it.)`);
     if (!q) return;
     const hits = (await api(`/admin/people?type=${kind}&q=` + encodeURIComponent(q)))
-      .filter((x) => x.id !== id && x.member_id);
-    if (!hits.length) return toast(`No matching roster ${kind}.`, true);
+      .filter((x) => x.id !== id && x.status !== 'merged');
+    if (!hits.length) return toast(`No other matching ${kind}.`, true);
     for (const pick of hits) {
-      if (confirm(`Merge into ${pick.first_name} ${pick.last_name} (#${pick.member_id})? Attendance history, guardian links, badge, and TLC mapping transfer; this cannot be undone.` +
+      const who = pick.member_id
+        ? `${pick.first_name} ${pick.last_name} (roster #${pick.member_id})`
+        : `${pick.first_name} ${pick.last_name} (unregistered record${pick.phone_mobile ? `, ${pick.phone_mobile}` : ''})`;
+      if (confirm(`Merge into ${who}? Attendance history, guardian links, badge, and TLC mapping transfer to it; this record is retired. Cannot be undone.` +
         (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : ''))) {
         try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); closePersonModal(); loadDupes(true); loadPeople(); }
         catch (e) { toast(e.message, true); }

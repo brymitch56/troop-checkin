@@ -40,7 +40,7 @@ router.get('/people', (req, res) => {
   const like = `%${q}%`;
   const rows = db.prepare(
     `SELECT id, is_youth, member_id, first_name, last_name, nickname, patrol, level,
-            role, status, badge_code IS NOT NULL AS has_badge
+            role, status, phone_mobile, badge_code IS NOT NULL AS has_badge
        FROM person
       WHERE status != 'merged'
         AND (? = '' OR first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ? OR member_id LIKE ?)
@@ -609,6 +609,7 @@ router.post('/merge', (req, res) => {
   if (!from || !into) return res.status(400).json({ error: 'from_id and into_id are required.' });
   if (from.id === into.id) return res.status(400).json({ error: 'Cannot merge a person into themselves.' });
   if (from.status === 'merged') return res.status(409).json({ error: 'Already merged.' });
+  if (into.status === 'merged') return res.status(409).json({ error: 'That target was itself merged away — pick the surviving record.' });
   if (from.member_id) return res.status(400).json({ error: 'Only visitor/unregistered records (no member number) can be merged.' });
   if (from.is_youth !== into.is_youth) return res.status(400).json({ error: 'Youth records merge into youth; adults into adults.' });
   const run = db.transaction(() => {
