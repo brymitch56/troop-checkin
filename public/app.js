@@ -91,14 +91,17 @@ async function boot() {
     // health-form badge switch (admin-set, default off); cached for offline boots
     state.flagHealthForms = !!cfg.flag_health_forms;
     state.permForms = !!cfg.permission_forms_enabled;
+    state.smsRecipients = cfg.sms_recipients === 'all' ? 'all' : 'primary';
     try {
       localStorage.setItem('flag-health-forms', state.flagHealthForms ? '1' : '0');
       localStorage.setItem('flag-perm-forms', state.permForms ? '1' : '0');
+      localStorage.setItem('sms-recipients', state.smsRecipients);
     } catch { /* ignore */ }
   }).catch(() => {
     try {
       state.flagHealthForms = localStorage.getItem('flag-health-forms') === '1';
       state.permForms = localStorage.getItem('flag-perm-forms') === '1';
+      state.smsRecipients = localStorage.getItem('sms-recipients') === 'all' ? 'all' : 'primary';
     } catch { /* ignore */ }
   });
   try {
@@ -1005,6 +1008,9 @@ $('onsite-message').onclick = () => {
   // (off by default every time — including adults is an explicit choice)
   $('msg-adults').checked = false;
   $('msg-adults-wrap').hidden = !(state.event && state.event.track_adults);
+  // recipient choice defaults to the admin's global setting every time
+  $('msg-recip-all').checked = state.smsRecipients === 'all';
+  $('msg-recip-primary').checked = state.smsRecipients !== 'all';
   openModal('modal-message');
 };
 $('msg-cancel').onclick = closeModal;
@@ -1019,6 +1025,7 @@ $('msg-send').onclick = async () => {
       scope: attended ? 'attended' : 'onsite',
       event_id: attended && state.event ? state.event.id : undefined,
       include_adults: !$('msg-adults-wrap').hidden && $('msg-adults').checked ? 1 : undefined,
+      recipients: $('msg-recip-all').checked ? 'all' : 'primary',
     }));
   } catch (e) { $('msg-error').textContent = e.message; }
 };

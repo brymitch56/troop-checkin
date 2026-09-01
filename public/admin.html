@@ -112,6 +112,18 @@
         </div>
         <div id="msg-compose-error" class="error"></div>
       </div>
+      <div class="row wrap">
+        <label>Who gets texted for each youth
+          <select id="sms-recipients">
+            <option value="primary">Primary guardian only (one text per family)</option>
+            <option value="all">All opted-in guardians (each parent who signed)</option>
+          </select></label>
+      </div>
+      <p class="hint left">Consent stays per adult either way: a guardian is texted only if <b>their own</b> link
+      is opted in with a stored signed form. "All opted-in guardians" never widens that — it just stops
+      skipping a second parent who also signed. Each guardian still gets one text covering all their youth,
+      and either parent's <b>Y</b> reply closes the pickup. Applies to pickup alerts and is the default for
+      broadcasts (the kiosk can choose per message).</p>
       <p class="hint left">Everything sent and received: pickup alerts, broadcasts, and parent replies.
       Replies to broadcasts (like "on our way") land here — check after sending an ETA update.
       This view refreshes automatically while open.</p>

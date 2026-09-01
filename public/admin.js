@@ -1060,7 +1060,21 @@ function closeTxnModal() { $('txn-modal').hidden = true; $('tx-detail').hidden =
 
 // ------------------------------------------------------------- messages ----
 let msgTimer = null;
+$('sms-recipients').onchange = async () => {
+  const mode = $('sms-recipients').value;
+  if (mode === 'all' && !confirm('Text ALL opted-in guardians of each youth?\n\nOnly adults whose own link is opted in (with a stored signed form) are ever texted — a second parent must have signed their own form. Each guardian still gets one text per message.')) {
+    $('sms-recipients').value = 'primary';
+    return;
+  }
+  try {
+    const r = await jput('/admin/sms-recipients', { mode });
+    toast(r.mode === 'all' ? 'Texting all opted-in guardians.' : 'Texting the primary guardian only.');
+  } catch (e) { toast(e.message, true); }
+};
 async function loadMessages() {
+  api('/admin/sms-recipients').then((s) => {
+    if (document.activeElement !== $('sms-recipients')) $('sms-recipients').value = s.mode;
+  }).catch(() => {});
   const rows = await api('/admin/messages');
   const kindTag = (m) => m.direction === 'in'
     ? (m.kind === 'reply' ? '<span class="tag warn">reply</span>' : '<span class="tag off">keyword</span>')
