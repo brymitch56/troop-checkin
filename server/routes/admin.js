@@ -931,6 +931,15 @@ router.post('/sms-reply', async (req, res) => {
   res.json({ ok: true });
 });
 
+// SMS recipient mode — who gets texted per youth (see lib/notifySweep.js).
+router.get('/sms-recipients', (req, res) => {
+  res.json({ mode: require('../lib/notifySweep').getRecipientMode() });
+});
+router.put('/sms-recipients', (req, res) => {
+  const mode = require('../lib/notifySweep').saveRecipientMode((req.body || {}).mode);
+  res.json({ mode });
+});
+
 // Full SMS message log: broadcasts, alerts, and every inbound reply.
 router.get('/messages', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 1000);

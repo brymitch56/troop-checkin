@@ -625,7 +625,10 @@ router.post('/message-onsite', express.json(), async (req, res) => {
   } else {
     rows = onsiteYouthRows(patrol);
   }
-  const r = await messageGuardians(rows, message);
+  // per-broadcast recipient choice (primary guardian only / all opted-in
+  // guardians); omitted = the global setting
+  const mode = b.recipients === 'all' ? 'all' : b.recipients === 'primary' ? 'primary' : undefined;
+  const r = await messageGuardians(rows, message, { mode });
 
   // Optional, additive, off by default: when the leader explicitly ticks
   // "include adults" on an ADULT-TRACKED event, opted-in adults who
@@ -662,6 +665,7 @@ router.post('/message-onsite', express.json(), async (req, res) => {
   res.json({
     scope: b.scope === 'attended' ? 'attended' : 'onsite', youth: rows.length,
     onsite_youth: rows.length, adults_included: b.include_adults ? 1 : 0,
+    recipients: mode || require('../lib/notifySweep').getRecipientMode(),
     sent: [...r.sent, ...adults.sent], skipped: [...r.skipped, ...adults.skipped],
   });
 });

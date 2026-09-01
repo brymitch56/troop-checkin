@@ -49,6 +49,9 @@ app.get('/api/config', (req, res) => {
     flag_health_forms: require('./lib/healthForms').getCheckinFlags().health_form,
     // permission-form tracking switch — the kiosk banner keys off this
     permission_forms_enabled: require('./lib/permissionSync').getSettings().enabled,
+    // who gets texted per youth: 'primary' (one guardian) or 'all' opted-in —
+    // the kiosk broadcast dialog defaults its choice to this
+    sms_recipients: require('./lib/notifySweep').getRecipientMode(),
   });
 });
 // theme palette as CSS variables, loaded after styles.css — the 'traillife'

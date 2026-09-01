@@ -32,43 +32,85 @@ function findLingering(now = new Date()) {
   ).all(DEFAULT_GRACE_MIN, DEFAULT_GRACE_MIN, now.toISOString());
 }
 
-// The one guardian who gets texted for a youth: authorized + opted in + has a
-// mobile, primary preferred. Returns undefined when nobody qualifies.
-function pickGuardian(youthId) {
+// ------------------------------------------------------ recipient mode -----
+// meta key 'sms_recipients' — {mode: 'primary' | 'all'} (decided 2026-09-01):
+//   primary = ONE guardian per youth (the primary if eligible, else the first
+//             eligible in a DETERMINISTIC order) — the original behavior;
+//   all     = every eligible guardian of the youth. Consent is per adult
+//             either way: a guardian is eligible only when THEIR OWN link is
+//             opted in with a stored form, so 'all' never widens consent —
+//             it stops skipping adults who already gave it.
+// Default 'primary' so a deploy changes nothing until an admin flips it.
+const RECIPIENTS_KEY = 'sms_recipients';
+function getRecipientMode() {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(RECIPIENTS_KEY);
+  try { return row && JSON.parse(row.value).mode === 'all' ? 'all' : 'primary'; }
+  catch { return 'primary'; }
+}
+function saveRecipientMode(mode) {
+  const v = { mode: mode === 'all' ? 'all' : 'primary' };
+  db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run(RECIPIENTS_KEY, JSON.stringify(v));
+  return v.mode;
+}
+
+// Eligible guardians of a youth: authorized + opted in (own link) + has a
+// mobile. Deterministic order: primary first, then by name, then link id —
+// so "primary" mode's fallback is predictable, not row-order luck.
+function eligibleGuardians(youthId) {
   return db.prepare(
     `SELECT pg.guardian_id, g.phone_mobile,
             g.first_name || ' ' || g.last_name AS guardian_name
        FROM person_guardian pg JOIN person g ON g.id = pg.guardian_id
       WHERE pg.youth_id = ? AND pg.authorized = 1 AND pg.sms_opt_in = 'yes'
         AND g.status != 'merged' AND g.phone_mobile IS NOT NULL AND g.phone_mobile != ''
-      ORDER BY pg.is_primary DESC LIMIT 1`).get(youthId);
+      ORDER BY pg.is_primary DESC, g.last_name, g.first_name, pg.guardian_id`).all(youthId);
+}
+
+// Recipients for a youth under a mode. Returns [] when nobody qualifies.
+function recipientsFor(youthId, mode = getRecipientMode()) {
+  const all = eligibleGuardians(youthId);
+  return mode === 'all' ? all : all.slice(0, 1);
+}
+
+// Back-compat: the one guardian "primary" mode would text (or undefined).
+function pickGuardian(youthId) {
+  return recipientsFor(youthId, 'primary')[0];
 }
 
 const youthName = (row) => `${row.nickname || row.first_name} ${row.last_name}`;
 
 // Group eligible rows by guardian. `dedupe` (lingering only) drops youth
-// already notified for their event. Returns { groups: Map, skipped: [] }.
-function groupByGuardian(rows, { dedupe }) {
+// already notified for their event. `mode` picks one or all eligible
+// guardians per youth; one text per guardian either way (a parent with
+// three kids on site still gets ONE message). Returns { groups, skipped }.
+function groupByGuardian(rows, { dedupe, mode = getRecipientMode() }) {
   const groups = new Map();
   const skipped = [];
   for (const row of rows) {
     const name = youthName(row);
-    const g = pickGuardian(row.person_id);
-    if (!g) {
+    const recipients = recipientsFor(row.person_id, mode);
+    if (!recipients.length) {
       skipped.push({ youth: name, reason: 'no opted-in guardian with a mobile number — contact another way' });
       continue;
     }
-    if (dedupe) {
-      const dup = db.prepare(
-        `SELECT 1 FROM notification
-          WHERE person_id = ? AND guardian_id = ? AND event_id = ? AND kind = 'lingering' LIMIT 1`
-      ).get(row.person_id, g.guardian_id, row.event_id);
-      if (dup) { skipped.push({ youth: name, reason: 'already notified for this event' }); continue; }
+    let reached = 0;
+    for (const g of recipients) {
+      if (dedupe) {
+        const dup = db.prepare(
+          `SELECT 1 FROM notification
+            WHERE person_id = ? AND guardian_id = ? AND event_id = ? AND kind = 'lingering' LIMIT 1`
+        ).get(row.person_id, g.guardian_id, row.event_id);
+        if (dup) continue;
+      }
+      if (!groups.has(g.guardian_id)) groups.set(g.guardian_id, { ...g, rows: [], names: [] });
+      const grp = groups.get(g.guardian_id);
+      grp.rows.push(row);
+      grp.names.push(name);
+      reached++;
     }
-    if (!groups.has(g.guardian_id)) groups.set(g.guardian_id, { ...g, rows: [], names: [] });
-    const grp = groups.get(g.guardian_id);
-    grp.rows.push(row);
-    grp.names.push(name);
+    if (dedupe && !reached) skipped.push({ youth: name, reason: 'already notified for this event' });
   }
   return { groups, skipped };
 }
@@ -117,16 +159,17 @@ function lingeringBody(grp) {
 }
 
 // Lingering alerts (deduped, Y-closeable). rows: person_id/names/event_id/title.
-async function notifyLingering(rows) {
-  const { groups, skipped } = groupByGuardian(rows, { dedupe: true });
+async function notifyLingering(rows, opts = {}) {
+  const { groups, skipped } = groupByGuardian(rows, { dedupe: true, mode: opts.mode });
   const r = await sendGroups(groups, 'lingering', lingeringBody);
   return { sent: r.sent, skipped: [...skipped, ...r.failed], recorded: r.recorded, sentCount: r.sentCount };
 }
 
 // Custom broadcast (ETA updates etc.) — repeatable, no dedupe, never closes
 // sign-ins. One text per guardian regardless of how many youth they cover.
-async function messageGuardians(rows, message) {
-  const { groups, skipped } = groupByGuardian(rows, { dedupe: false });
+// opts.mode overrides the global recipient mode for this one broadcast.
+async function messageGuardians(rows, message, opts = {}) {
+  const { groups, skipped } = groupByGuardian(rows, { dedupe: false, mode: opts.mode });
   const body = `${env.TROOP_ID}: ${message} — Reply STOP to opt out.`;
   const r = await sendGroups(groups, 'custom', () => body);
   return { sent: r.sent, skipped: [...skipped, ...r.failed], recorded: r.recorded, sentCount: r.sentCount };
@@ -189,6 +232,7 @@ function scheduleSweep() {
 }
 
 module.exports = {
-  sweep, findLingering, pickGuardian, notifyLingering, messageGuardians, messageAdults,
-  scheduleSweep,
+  sweep, findLingering, pickGuardian, eligibleGuardians, recipientsFor,
+  getRecipientMode, saveRecipientMode,
+  notifyLingering, messageGuardians, messageAdults, scheduleSweep,
 };
