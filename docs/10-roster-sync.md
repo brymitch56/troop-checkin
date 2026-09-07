@@ -55,7 +55,7 @@ A working starting implementation exists and should be reviewed, corrected, and 
 |---|---|
 | `TLC_EMAIL` / `TLC_PASSWORD` | login credentials |
 | `TLC_BASE` | defaults to `https://www.traillifeconnect.com` |
-| `TLC_EXPORT_PATH` | defaults to the csv path; set to `/user/index?export=xlsx&new=0` |
+| `TLC_EXPORT_PATH` | defaults to `/user/index?export=xlsx&new=0` (TLC). Sibling portals on the same platform need their own: AHGfamily is `/user/exportexcel?format=xlsx` (the TLC path returns HTML there). The importer maps that portal's `Squad` → patrol and `Health Form On File` → health-form date (Yes/No cells are ignored) |
 | `TLC_ENABLED` | kill switch; `false` makes the job a no-op |
 | `HEALTHCHECK_URL` | optional success ping (healthchecks.io) |
 

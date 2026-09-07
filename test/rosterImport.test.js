@@ -44,6 +44,42 @@ test('parseWorkbook: captures "Membership Exp." and normalizes to ISO', () => {
   assert.ok(roster.UPDATABLE.includes('membership_expires')); // import-managed, lockable
 });
 
+test('parseWorkbook: sibling-portal header aliases (Squad → Patrol, Health Form On File → Health Form); Yes/No never stored as a date', () => {
+  const XLSX = require('xlsx');
+  const { HEADERS } = require('../server/scripts/make-synthetic-roster');
+  // an export shaped like a sibling portal's: no Patrol / High Risk Form columns,
+  // "Squad" and "Health Form On File" instead, and extra columns the importer ignores
+  const hdr = HEADERS.map((h) => (h === 'Patrol' ? 'Squad' : h === 'Health Form' ? 'Health Form On File' : h))
+    .filter((h) => h !== 'High Risk Form').concat(['Age', 'Grade', 'KEYS Taken']);
+  const idx = (name) => hdr.indexOf(name);
+  const rows = DEFAULT_ROWS.map((row) => {
+    const r = [...row]; r.splice(18, 1); // drop High Risk Form cell
+    return r.concat(['', '', '']);
+  });
+  const danny = rows.find((r) => r[2] === 'Danny');
+  danny[idx('Squad')] = 'Sparrows';
+  danny[idx('Health Form On File')] = 'Yes';            // flag, not a date → null
+  const emma = rows.find((r) => r[2] === 'Emma');
+  emma[idx('Health Form On File')] = '8/15/2026';       // a real date still maps
+  const aoa = [['Sibling portal export (SYNTHETIC)'], [], hdr, ...rows];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Members');
+  const people = roster.parseWorkbook(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+  const d = people.find((p) => p.first_name === 'Danny');
+  assert.equal(d.patrol, 'Sparrows');
+  assert.equal(d.health_form_date, null);
+  assert.equal(d.high_risk_form_date, null);            // column absent → null, no crash
+  assert.equal(people.find((p) => p.first_name === 'Emma').health_form_date, '2026-08-15');
+  // the canonical header wins when both are present
+  const both = DEFAULT_ROWS.map((row) => [...row, 'Robins']);
+  both.find((r) => r[2] === 'Danny')[6] = 'Eagles';
+  const wb2 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([[''], [], [...HEADERS, 'Squad'], ...both]), 'Members');
+  assert.equal(roster.parseWorkbook(XLSX.write(wb2, { type: 'buffer', bookType: 'xlsx' }))
+    .find((p) => p.first_name === 'Danny').patrol, 'Eagles');
+  assert.deepEqual(roster.HEADER_ALIASES, { Patrol: ['Squad'], 'Health Form': ['Health Form On File'] });
+});
+
 test('parseWorkbook: captures "Health Form" / "High Risk Form" submission dates', () => {
   const rows = DEFAULT_ROWS.map((row) => [...row]);
   rows.find((r) => r[2] === 'Emma')[17] = '8/15/2026';   // Health Form, US format

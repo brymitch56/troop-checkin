@@ -12,6 +12,23 @@ const { db } = require('../db');
 const { normalizeDateCell } = require('./membership');
 
 const norm = (v) => (v == null ? '' : String(v).trim());
+
+// Header aliases: canonical (TLC) name → other names seen on sibling portals
+// built on the same platform (verified against an AHGFamily member export,
+// 2026-09-07: "Squad" is that portal's patrol equivalent; its health-form
+// column is "Health Form On File"). Kept generic — a mapping, not a mode.
+const HEADER_ALIASES = {
+  'Patrol': ['Squad'],
+  'Health Form': ['Health Form On File'],
+};
+
+// Form-date cells must be dates: an alias column may carry Yes/No instead of
+// a submission date, and a stored "Yes" would only ever read as "no date" at
+// compare time (lib/healthForms) — store null and keep the column clean.
+const dateOnly = (v) => {
+  const n = normalizeDateCell(v);
+  return n && /^\d{4}-\d{2}-\d{2}$/.test(n) ? n : null;
+};
 const lower = (v) => norm(v).toLowerCase();
 const normAddr = (a1, zip) =>
   lower(a1).replace(/[.,]/g, '').replace(/\s+/g, ' ') + '|' + norm(zip);
@@ -27,6 +44,13 @@ function parseWorkbook(buffer) {
   }
   const col = {};
   rows[hdrIdx].forEach((name, i) => { const n = norm(name); if (n) col[n] = i; });
+  // Sibling portals on the same platform name a few columns differently;
+  // an alias only applies when the canonical header is absent.
+  for (const [canonical, aliases] of Object.entries(HEADER_ALIASES)) {
+    if (canonical in col) continue;
+    const hit = aliases.find((a) => a in col);
+    if (hit) col[canonical] = col[hit];
+  }
   const need = ['Last Name', 'First Name', 'Youth', 'Member Number'];
   for (const n of need) if (!(n in col)) throw new Error(`Missing expected column: ${n}`);
 
@@ -59,8 +83,8 @@ function parseWorkbook(buffer) {
       membership_expires: normalizeDateCell(g(r, 'Membership Exp.')),
       // health-form SUBMISSION dates (valid 12 months — lib/healthForms.js).
       // "High Risk Form" is the separate High Adventure medical clearance.
-      health_form_date: normalizeDateCell(g(r, 'Health Form')),
-      high_risk_form_date: normalizeDateCell(g(r, 'High Risk Form')),
+      health_form_date: dateOnly(g(r, 'Health Form')),
+      high_risk_form_date: dateOnly(g(r, 'High Risk Form')),
       // used only for guardian-link fallback, not persisted:
       _cc_email: lower(g(r, 'Adult Cc Email')),
       _addr: normAddr(g(r, 'Address Line 1'), g(r, 'Zip')),
@@ -230,4 +254,5 @@ const applyImport = (people, links, staffId, filename, rawPath) => {
   return run();
 };
 
-module.exports = { parseWorkbook, suggestLinks, computePreview, applyImport, UPDATABLE };
+module.exports = {
+  HEADER_ALIASES, parseWorkbook, suggestLinks, computePreview, applyImport, UPDATABLE };
