@@ -817,6 +817,32 @@ router.get('/duplicate-names', (req, res) => {
     .map((g) => ({ name: `${g[0].last_name}, ${g[0].first_name}`, people: g })));
 });
 
+// --------------------------------------------------------- integrations ----
+// Integration API key (docs/13-integration-api.md). Off by default; the
+// plaintext key is returned exactly once at generation.
+const integrationAuth = require('../lib/integrationAuth');
+
+router.get('/integration', (req, res) => {
+  res.json({ api: integrationAuth.status() });
+});
+
+router.put('/integration/api', (req, res) => {
+  const b = req.body || {};
+  if (b.enabled && !integrationAuth.status().key_set) {
+    return res.status(422).json({ error: 'Generate an API key before enabling.' });
+  }
+  res.json({ ok: true, api: integrationAuth.setEnabled(!!b.enabled) });
+});
+
+router.post('/integration/api/key', (req, res) => {
+  const r = integrationAuth.generateKey((req.body || {}).label);
+  res.json({ ok: true, key: r.key, api: integrationAuth.status() });
+});
+
+router.delete('/integration/api/key', (req, res) => {
+  res.json({ ok: true, api: integrationAuth.revokeKey() });
+});
+
 // -------------------------------------------------------------- reports ----
 // History endpoints follow the Transactions/Messages pattern: ?limit=
 // (cap 1000) + from/to date range, plus CSV exports — rows older than the

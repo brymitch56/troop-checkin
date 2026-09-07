@@ -77,6 +77,9 @@ app.get('/manifest.webmanifest', (req, res) => {
 });
 
 app.use('/api/sms', require('./routes/sms')); // Twilio webhook — signature-authed, no session
+// Integration API — Bearer API key, no session (docs/13-integration-api.md);
+// 401 on everything until enabled + a key exists (Admin → Integrations)
+app.use('/api/integration', require('./routes/integration'));
 app.use('/api/admin', admin);
 app.use('/api', api);
 
