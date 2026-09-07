@@ -117,7 +117,7 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
           .run(open.in_txn_id, r.youth_id);
         db.prepare(`UPDATE notification SET status = 'replied_y' WHERE id = ?`).run(notified.id);
         closed.push(open.nickname || open.first_name);
-        tlcQueue.push({ event_id: open.event_id, person_id: r.youth_id });
+        tlcQueue.push({ event_id: open.event_id, person_id: r.youth_id, txn_id: Number(t.lastInsertRowid) });
       }
     });
     run();
@@ -126,6 +126,7 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
     for (const q of tlcQueue) {
       try { require('../lib/attendanceSync').enqueue(q.event_id, [q.person_id]); }
       catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
+      require('../lib/webhook').emitTxnCreated(q.txn_id); // integration webhook, off by default
     }
     return twiml(res, closed.length
       ? `Thanks — ${closed.join(', ')} marked as picked up.`

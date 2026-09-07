@@ -593,7 +593,9 @@ router.post('/txns/:id/void', (req, res) => {
     db.prepare('UPDATE txn SET voided_by_txn_id = ? WHERE id = ?').run(voidId, t.id);
     return voidId;
   });
-  res.json({ ok: true, void_txn_id: run() });
+  const voidTxnId = run();
+  require('../lib/webhook').emitTxnVoided(t.id, voidTxnId); // after commit; no-op unless enabled
+  res.json({ ok: true, void_txn_id: voidTxnId });
 });
 
 // Close a lingering open sign-in without a guardian present (audited).
@@ -622,6 +624,7 @@ router.post('/close-open', (req, res) => {
   // defaults to yes; the write-back is off unless enabled in Admin → Import)
   try { require('../lib/attendanceSync').enqueue(open.event_id, [person_id]); }
   catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
+  require('../lib/webhook').emitTxnCreated(txnId);
   res.json({ ok: true, txn_id: txnId });
 });
 
@@ -818,12 +821,21 @@ router.get('/duplicate-names', (req, res) => {
 });
 
 // --------------------------------------------------------- integrations ----
-// Integration API key (docs/13-integration-api.md). Off by default; the
-// plaintext key is returned exactly once at generation.
+// Integration API key + outbound webhook (docs/13-integration-api.md). Both
+// off by default; the plaintext key is returned exactly once at generation.
 const integrationAuth = require('../lib/integrationAuth');
+const webhook = require('../lib/webhook');
 
 router.get('/integration', (req, res) => {
-  res.json({ api: integrationAuth.status() });
+  res.json({
+    api: integrationAuth.status(),
+    webhook: webhook.status(),
+    webhook_events: webhook.ALL_EVENTS,
+    queue: webhook.queueSummary(),
+    last_delivery: webhook.lastDelivery(),
+    recent: webhook.recentRows(30),
+    cred_key_ready: !!require('../lib/credCrypto').loadKey(),
+  });
 });
 
 router.put('/integration/api', (req, res) => {
@@ -841,6 +853,20 @@ router.post('/integration/api/key', (req, res) => {
 
 router.delete('/integration/api/key', (req, res) => {
   res.json({ ok: true, api: integrationAuth.revokeKey() });
+});
+
+router.put('/integration/webhook', (req, res) => {
+  try { res.json({ ok: true, webhook: webhook.saveSettings(req.body || {}) }); }
+  catch (e) { res.status(e.code && e.code >= 400 && e.code < 600 ? e.code : 500).json({ error: e.message }); }
+});
+
+router.post('/integration/webhook/test', async (req, res) => {
+  try { res.json(await webhook.sendTest()); }
+  catch (e) { res.status(e.code && e.code >= 400 && e.code < 600 ? e.code : 500).json({ error: e.message }); }
+});
+
+router.post('/integration/webhook/retry', (req, res) => {
+  res.json({ ok: true, ...webhook.retryFailed() });
 });
 
 // -------------------------------------------------------------- reports ----

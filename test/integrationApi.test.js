@@ -1,6 +1,6 @@
 'use strict';
-// Integration API (docs/13-integration-api.md): API-key auth and the
-// read-only endpoints.
+// Integration API (docs/13-integration-api.md): API-key auth, the read-only
+// endpoints, and the outbound webhook (signature, queue, backoff, hooks).
 // SYNTHETIC DATA ONLY — invented names, placeholder ids.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +16,7 @@ process.env.CRED_KEY = 'ab'.repeat(32);
 const auth = require('../server/auth');
 const { db } = require('../server/db');
 const integrationAuth = require('../server/lib/integrationAuth');
+const webhook = require('../server/lib/webhook');
 
 const PNG_1x1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
@@ -248,6 +249,138 @@ test('people: active + visitors, youth and adults, merged/inactive excluded, no 
     for (const k of ['phone_mobile', 'phone_home', 'email', 'birthdate', 'photo_path', 'health_form_date', 'consent_form_id', 'badge_code']) {
       assert.ok(!(k in p), `${k} must not be exposed`);
     }
+  }
+});
+
+// --------------------------------------------------------------- webhook ----
+test('webhook signature: computed and verified per the documented scheme; stale timestamps rejected', () => {
+  const body = '{"type":"test"}';
+  const sig = webhook.sign('shared-secret-fake', '1700000000', body);
+  assert.match(sig, /^sha256=[0-9a-f]{64}$/);
+  assert.equal(webhook.verifySignature('shared-secret-fake', '1700000000', body, sig, 1700000100), true);
+  assert.equal(webhook.verifySignature('shared-secret-fake', '1700000000', body, sig, 1700000000 + 301), false);
+  assert.equal(webhook.verifySignature('other-secret', '1700000000', body, sig, 1700000100), false);
+  assert.equal(webhook.verifySignature('shared-secret-fake', '1700000000', body + ' ', sig, 1700000100), false);
+});
+
+test('webhook settings: URL validated, secret encrypted at rest and never echoed, enabling needs both', async () => {
+  const bad = await req('PUT', '/api/admin/integration/webhook', { cookie: adminCookie, body: { url: 'ftp://x' } });
+  assert.equal(bad.status, 400);
+  const early = await req('PUT', '/api/admin/integration/webhook', { cookie: adminCookie, body: { enabled: 1 } });
+  assert.equal(early.status, 422);
+  const ok = await req('PUT', '/api/admin/integration/webhook', { cookie: adminCookie, body: {
+    url: 'http://127.0.0.1:9/hook', secret: 'fake-webhook-secret-never-real', events: ['txn.created', 'txn.voided', 'bogus'],
+  } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.json.webhook, { enabled: 0, url: 'http://127.0.0.1:9/hook', secret_set: true, events: ['txn.created', 'txn.voided'] });
+  const raw = db.prepare(`SELECT value FROM meta WHERE key = 'integration_webhook'`).get().value;
+  assert.ok(!raw.includes('fake-webhook-secret-never-real'));
+  assert.equal(webhook.secretPlain(), 'fake-webhook-secret-never-real');
+  const status = await req('GET', '/api/admin/integration', { cookie: adminCookie });
+  assert.equal(status.json.webhook.secret_set, true);
+  assert.ok(!JSON.stringify(status.json).includes('fake-webhook-secret-never-real'));
+  // nothing is queued while disabled
+  await signIn(evCampout, [youthB]);
+  assert.equal(webhook.queueSummary().pending, 0);
+});
+
+test('webhook delivery: sign-in unaffected when unreachable; retried with backoff; sent on 200; voids emit', async () => {
+  const calls = [];
+  let mode = 'throw';
+  webhook.setTransport(async (url, opts) => {
+    calls.push({ url, headers: opts.headers, body: opts.body });
+    if (mode === 'throw') throw new Error('connect ECONNREFUSED');
+    if (mode === '500') return { status: 500 };
+    return { status: 200 };
+  });
+  try {
+    await req('PUT', '/api/admin/integration/webhook', { cookie: adminCookie, body: { enabled: 1 } });
+
+    // 1. unreachable consumer: the kiosk still gets its 200; row queued
+    const inId = await signIn(evMeeting, [youthB]);
+    await new Promise((r) => setTimeout(r, 120)); // let the nudge sweep run
+    let row = db.prepare(`SELECT * FROM webhook_delivery WHERE type = 'txn.created' ORDER BY id DESC LIMIT 1`).get();
+    assert.equal(row.status, 'pending');
+    assert.equal(row.attempts, 1);
+    assert.match(row.last_error, /ECONNREFUSED/);
+    assert.ok(row.next_attempt_at > row.created_at); // backed off (+60s)
+    const payload = JSON.parse(row.payload);
+    assert.equal(payload.type, 'txn.created');
+    assert.equal(payload.txn.id, inId);
+    assert.equal(payload.txn.ical_uid, 'uid-meeting@example');
+    assert.equal(payload.txn.direction, 'in');
+    assert.deepEqual(payload.persons, [{ person_id: youthB, member_id: 'M-YOUTH-2', tlc_user_id: null, is_youth: 1 }]);
+    assert.ok(!row.payload.includes('Andrews') && !row.payload.includes('555-')); // ids only
+
+    // 2. not due yet → the sweep leaves it alone
+    assert.deepEqual(await webhook.sweep(), { sent: 0, failed: 0 });
+    // 3. force due, consumer answers 500 → attempt 2, next delay 5m
+    db.prepare(`UPDATE webhook_delivery SET next_attempt_at = datetime('now', '-1 second') WHERE id = ?`).run(row.id);
+    mode = '500';
+    assert.deepEqual(await webhook.sweep(), { sent: 0, failed: 1 });
+    row = db.prepare('SELECT * FROM webhook_delivery WHERE id = ?').get(row.id);
+    assert.equal(row.attempts, 2);
+    assert.match(row.last_error, /HTTP 500/);
+    // 4. consumer healthy → sent, with the documented headers and a valid signature
+    db.prepare(`UPDATE webhook_delivery SET next_attempt_at = datetime('now', '-1 second') WHERE id = ?`).run(row.id);
+    mode = '200';
+    assert.deepEqual(await webhook.sweep(), { sent: 1, failed: 0 });
+    row = db.prepare('SELECT * FROM webhook_delivery WHERE id = ?').get(row.id);
+    assert.equal(row.status, 'sent');
+    assert.ok(row.sent_at);
+    const last = calls[calls.length - 1];
+    assert.equal(last.url, 'http://127.0.0.1:9/hook');
+    assert.equal(last.headers['X-Troop-Checkin-Event'], 'txn.created');
+    assert.equal(webhook.verifySignature('fake-webhook-secret-never-real', last.headers['X-Troop-Checkin-Timestamp'],
+      last.body, last.headers['X-Troop-Checkin-Signature']), true);
+    assert.equal(last.headers['Content-Type'], 'application/json');
+
+    // 5. void → txn.voided with both ids, delivered by the nudge
+    const v = await req('POST', `/api/admin/txns/${inId}/void`, { cookie: adminCookie, body: {} });
+    await new Promise((r) => setTimeout(r, 120));
+    const vrow = db.prepare(`SELECT * FROM webhook_delivery WHERE type = 'txn.voided' ORDER BY id DESC LIMIT 1`).get();
+    assert.equal(vrow.status, 'sent');
+    const vp = JSON.parse(vrow.payload);
+    assert.equal(vp.voided_txn_id, inId);
+    assert.equal(vp.voiding_txn_id, v.json.void_txn_id);
+    assert.equal(vp.txn.voided_by_txn_id, v.json.void_txn_id);
+
+    // 6. a late-replayed offline txn keeps its original signed_at in the payload
+    const late = new Date(Date.now() - 5 * 3600_000).toISOString();
+    const lateId = await signIn(evCampout, [youthA], { signed_at: late });
+    await new Promise((r) => setTimeout(r, 120));
+    const lrow = db.prepare(`SELECT payload FROM webhook_delivery WHERE type = 'txn.created' ORDER BY id DESC LIMIT 1`).get();
+    assert.equal(JSON.parse(lrow.payload).txn.id, lateId);
+    assert.equal(JSON.parse(lrow.payload).txn.signed_at, late);
+
+    // 7. event filter: ical.synced is not subscribed → nothing queued
+    assert.equal(webhook.emitIcalSynced({ added: 1 }), null);
+    await req('PUT', '/api/admin/integration/webhook', { cookie: adminCookie, body: { events: webhook.ALL_EVENTS } });
+    assert.ok(webhook.emitIcalSynced({ added: 1, updated: 2 }));
+    await new Promise((r) => setTimeout(r, 120));
+    const srow = db.prepare(`SELECT * FROM webhook_delivery WHERE type = 'ical.synced' ORDER BY id DESC LIMIT 1`).get();
+    assert.deepEqual(JSON.parse(srow.payload).counts, { added: 1, updated: 2, flagged: 0, deleted: 0, feed_events: 0 });
+
+    // 8. Send test event: synchronous result; a failing test row is marked failed, never retried;
+    //    give-up after MAX_ATTEMPTS → failed; Retry failed re-queues non-test rows only
+    mode = '200';
+    const t = await req('POST', '/api/admin/integration/webhook/test', { cookie: adminCookie, body: {} });
+    assert.equal(t.json.ok, true);
+    mode = '500';
+    const t2 = await req('POST', '/api/admin/integration/webhook/test', { cookie: adminCookie, body: {} });
+    assert.equal(t2.json.ok, false);
+    db.prepare(`UPDATE webhook_delivery SET status = 'failed', attempts = ? WHERE type = 'ical.synced'`).run(webhook.MAX_ATTEMPTS);
+    const retry = await req('POST', '/api/admin/integration/webhook/retry', { cookie: adminCookie, body: {} });
+    assert.equal(retry.json.retried, 1);
+    assert.equal(db.prepare(`SELECT status FROM webhook_delivery WHERE id = ?`).get(t2.json.id).status, 'failed');
+    // prune: old sent rows go, pending/failed stay
+    db.prepare(`UPDATE webhook_delivery SET sent_at = datetime('now', '-40 days') WHERE status = 'sent'`).run();
+    const pruned = webhook.prune(30);
+    assert.ok(pruned >= 3);
+    assert.equal(db.prepare(`SELECT COUNT(*) n FROM webhook_delivery WHERE status = 'sent'`).get().n, 0);
+  } finally {
+    webhook.setTransport(null);
+    await req('PUT', '/api/admin/integration/webhook', { cookie: adminCookie, body: { enabled: 0 } });
   }
 });
 

@@ -514,6 +514,9 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
       console.error('[tlc-attendance] enqueue failed:', e.message);
     }
   }
+  // Integration webhook (off by default): queued after the commit, delivered
+  // by a background sweep — a slow consumer can never slow the door.
+  require('../lib/webhook').emitTxnCreated(txnId);
 
   res.json({ ok: true, txn_id: txnId });
 });

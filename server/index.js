@@ -112,6 +112,7 @@ if (require.main === module) {
   require('./lib/notifySweep').scheduleSweep(); // no-op unless SMS_ENABLED=true
   require('./lib/attendanceSync').scheduleSweep(); // TLC write-back — no-op while queue is empty/disabled
   require('./lib/permissionSync').scheduleJobs(); // permission-form sync — no-op until the admin switch is on
+  require('./lib/webhook').scheduleSweep(); // integration webhook deliveries — no-op while disabled
   try { require('./lib/attendanceSync').backfillFromBadges(); } // badges carry TLC hashids — fill empty mappings
   catch (e) { console.error('[tlc-attendance] badge backfill failed:', e.message); }
   app.listen(PORT, () => console.log(`troop-checkin listening on :${PORT}`));

@@ -61,6 +61,7 @@ async function syncIcal(url = env.ICAL_URL) {
   db.prepare(`INSERT INTO meta (key, value) VALUES ('last_ical_sync', ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     .run(JSON.stringify({ at: new Date().toISOString(), ...result }));
+  require('./webhook').emitIcalSynced(result); // integration webhook — counts only; off by default
   return result;
 }
 
