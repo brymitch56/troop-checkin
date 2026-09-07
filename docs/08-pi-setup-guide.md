@@ -112,6 +112,30 @@ bash scripts/deploy-verify.sh <expected-head-short> <expected-sw-version>   # AL
 
 Backups write themselves nightly to `~/troop-checkin/data/backups/` (kept: 14). Remote access via Cloudflare Tunnel is covered in the README ("Remote access").
 
+## Running a second instance on the same Pi (another troop or program)
+
+One Pi can host two independent check-in instances — say a Trail Life troop and an AHG troop — each with its own database, staff, roster, admin switches, and (if wanted) tunnel hostname. Nothing is shared between them. The recipe is "a second clone with its own `.env`, port and service name":
+
+```bash
+sudo git clone https://github.com/brymitch56/troop-checkin.git /opt/troop-checkin-ahg
+sudo chown -R "$USER" /opt/troop-checkin-ahg
+cd /opt/troop-checkin-ahg
+sudo bash scripts/install-pi.sh --name troop-checkin-ahg          # --with-roster-sync adds troop-checkin-ahg-roster-sync.timer
+```
+
+`--name` sets the systemd unit names (`troop-checkin-ahg.service`, `troop-checkin-ahg-roster-sync.*`); **without it the installer would overwrite the first instance's unit.** Then in `/opt/troop-checkin-ahg/.env` set at least:
+
+```
+PORT=3001                      # anything free — the first instance keeps 3000
+TROOP_ID=…  TROOP_NAME=…  THEME=ahg
+ICAL_URL=<that portal's calendar feed>
+PUBLIC_URL=https://<its hostname>   # once it has a tunnel hostname
+```
+
+and `sudo systemctl restart troop-checkin-ahg`. The data directory defaults to `<clone>/data`, so the two databases, signature stores and nightly backups never touch (`/opt/troop-checkin/data` vs `/opt/troop-checkin-ahg/data`); push the second `data/backups` to its own remote folder (e.g. `rclone copy /opt/troop-checkin-ahg/data/backups gdrive-crypt:ahg …`). `deploy-verify` takes `PORT=3001 SERVICE=troop-checkin-ahg` as environment overrides. Updates are per clone (`git pull` in each). A sibling portal on the same platform (AHGfamily) needs `TLC_BASE` / `TLC_EXPORT_PATH` per `.env.example`.
+
+Things that cannot be shared: **one Twilio number can only deliver inbound texts to one instance** (the "message comes in" webhook is a single URL), so a second instance that wants SMS needs its own number and A2P registration — otherwise leave `SMS_ENABLED=false` there. A Cloudflare tunnel, on the other hand, happily carries both: add a second public hostname pointing at `localhost:3001`, plus its own Access application for that hostname's `/admin.html` and `/api/admin/*` with that troop's leaders. Phones treat each hostname as a separate app (separate home-screen icon, separate offline queue).
+
 ## Push backups to Google Drive (encrypted)
 
 One-time setup on the Pi. Backups contain youth PII, so they go up encrypted — Google only ever sees scrambled files that rclone (with your password) can decrypt.
