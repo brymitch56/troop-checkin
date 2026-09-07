@@ -1,4 +1,5 @@
 'use strict';
+const portal = require('../lib/portal');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -712,7 +713,7 @@ router.post('/event-forms-refresh', express.json(), async (req, res) => {
     await permSync.refreshEvent(ev.id);
     res.json({ ok: true, ...permStatusView(ev) });
   } catch (e) {
-    res.status(502).json({ error: `TLC re-check failed: ${e.message}` });
+    res.status(502).json({ error: portal.t(`TLC re-check failed: ${e.message}`) });
   }
 });
 

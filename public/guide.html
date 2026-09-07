@@ -341,7 +341,7 @@
 <section id="import">
   <h3>Roster import</h3>
   <ol>
-    <li>Export the member list from Trail Life Connect (.xlsx). Exports from a sibling portal on the same platform (AHGfamily) import too — its "Squad" column becomes the patrol and "Health Form On File" the health-form date (a Yes/No there is ignored, not stored).</li>
+    <li>Export the member list from Trail Life Connect (.xlsx). If the export has a "Squad" column instead of "Patrol" it becomes the patrol, and "Health Form On File" is read as the health-form date (a Yes/No there is ignored, not stored).</li>
     <li>Import tab → choose the file → <b>Preview</b>: see exactly who would be added, updated (and which fields), or deactivated. Nothing changes yet.</li>
     <li><b>Commit</b> when the preview looks right.</li>
   </ol>
@@ -447,6 +447,7 @@
 
 </div>
 <button class="btn-print" onclick="window.print()">Print this guide</button>
+<script src="portal.js"></script>
 <script>
   // Brand from server config (.env) — same pattern as the kiosk; falls back to
   // generic wording offline/unbranded. No session needed (/api/config is public).
@@ -456,6 +457,7 @@
       document.querySelectorAll('[data-brand-id]').forEach((el) => (el.textContent = cfg.troop_id));
       document.querySelectorAll('[data-brand-name]').forEach((el) => (el.textContent = cfg.troop_name));
       document.title = `User Guide · ${cfg.troop_id} Check-In`;
+      if (window.Portal) Portal.set(cfg.portal); // wording follows the configured portal (AHGfamily / Trail Life Connect)
     })
     .catch(() => {});
 </script>

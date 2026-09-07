@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v61'; // v61: guide — sibling-portal export aliases (Squad, Health Form On File)
+const VERSION = 'tc-v62'; // v62: portal wording follows ROSTER_SOURCE_NAME (AHGfamily instances stop saying TLC); portal.js precached
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
@@ -14,7 +14,7 @@ const VERSION = 'tc-v61'; // v61: guide — sibling-portal export aliases (Squad
 // the population that can pass Access anyway. Admin's static assets
 // (admin.css/js etc.) are NOT behind Access and stay precached.
 const SHELL = [
-  '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js',
+  '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js', '/portal.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
   '/icon-192.png', '/icon-512.png', '/favicon.ico',
   '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/guide.html',

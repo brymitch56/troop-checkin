@@ -88,6 +88,7 @@ async function boot() {
     document.querySelectorAll('[data-brand-id]').forEach((el) => (el.textContent = cfg.troop_id));
     document.querySelectorAll('[data-brand-name]').forEach((el) => (el.textContent = cfg.troop_name));
     document.title = `${cfg.troop_id} Check-In`;
+    if (window.Portal) Portal.set(cfg.portal); // portal wording (AHGfamily vs Trail Life Connect)
     // health-form badge switch (admin-set, default off); cached for offline boots
     state.flagHealthForms = !!cfg.flag_health_forms;
     state.permForms = !!cfg.permission_forms_enabled;
@@ -845,7 +846,7 @@ async function handlePermissionBlock(extra, force, body) {
   const when = body.fetched_at ? ` (forms as of ${new Date(body.fetched_at + 'Z')
     .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '';
   if (!extra.__rechecked &&
-      confirm(`Permission form not signed for: ${names}${when}.\n\nRe-check Trail Life Connect now? A parent may have just signed.`)) {
+      confirm(Portal.t(`Permission form not signed for: ${names}${when}.\n\nRe-check Trail Life Connect now? A parent may have just signed.`))) {
     try {
       await jpost('/event-forms-refresh', { event_id: state.event.id }, TLC_RECHECK_TIMEOUT_MS);
       toast('Re-checked — trying again…');

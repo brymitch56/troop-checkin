@@ -93,6 +93,7 @@ async function boot() {
   if (cfg) {
     document.querySelectorAll('[data-brand-id]').forEach((el) => (el.textContent = cfg.troop_id));
     document.title = `Admin · ${cfg.troop_id}`;
+    if (window.Portal) Portal.set(cfg.portal); // "Trail Life Connect"/"TLC" → the configured portal's name
   }
   try {
     me = await api('/me');
@@ -366,8 +367,8 @@ async function openPerson(id) {
       const who = pick.member_id
         ? `${pick.first_name} ${pick.last_name} (roster #${pick.member_id})`
         : `${pick.first_name} ${pick.last_name} (unregistered record${pick.phone_mobile ? `, ${pick.phone_mobile}` : ''})`;
-      if (confirm(`Merge into ${who}? Attendance history, guardian links, badge, and TLC mapping transfer to it; this record is retired. Cannot be undone.` +
-        (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : ''))) {
+      if (confirm(Portal.t(`Merge into ${who}? Attendance history, guardian links, badge, and TLC mapping transfer to it; this record is retired. Cannot be undone.` +
+        (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : '')))) {
         try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); closePersonModal(); loadDupes(true); loadPeople(); }
         catch (e) { toast(e.message, true); }
         return;
@@ -1496,8 +1497,8 @@ async function saveTlcaSettings() {
 }
 $('tlca-enabled').onchange = () => {
   if ($('tlca-enabled').checked &&
-      !confirm('Enable attendance write-back?\n\nEvery kiosk sign-in will also mark the person Attended ' +
-        'on the matching Trail Life Connect event. The app never un-marks anyone on TLC.')) {
+      !confirm(Portal.t('Enable attendance write-back?\n\nEvery kiosk sign-in will also mark the person Attended ' +
+        'on the matching Trail Life Connect event. The app never un-marks anyone on TLC.'))) {
     $('tlca-enabled').checked = false;
     return;
   }

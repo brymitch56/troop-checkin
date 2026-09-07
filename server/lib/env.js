@@ -35,6 +35,12 @@ module.exports = {
   ENV_PATH,
   get PORT() { return Number(process.env.PORT) || 3000; },
   get THEME() { return process.env.THEME || 'traillife'; },
+  // Display name of the member portal the roster/attendance features talk to
+  // ("Trail Life Connect", "AHGfamily"). Defaults follow THEME; the setup
+  // wizard writes it explicitly. Purely cosmetic — endpoints stay TLC_*.
+  get ROSTER_SOURCE_NAME() {
+    return process.env.ROSTER_SOURCE_NAME || (this.THEME === 'ahg' ? 'AHGfamily' : 'Trail Life Connect');
+  },
   // In-process schedules (cross-platform replacement for systemd timers; the
   // Pi keeps its systemd timer and leaves SCHEDULE_ROSTER_SYNC unset):
   // SCHEDULE_BACKUP: 'nightly' (default, matches historic behavior) | 'off'

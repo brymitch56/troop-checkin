@@ -1,4 +1,5 @@
 'use strict';
+const portal = require('./portal');
 // TLC attendance write-back (docs/12-attendance-writeback.md).
 //
 // Check-ins enqueue rows in tlc_attendance_push; a background sweep (or the
@@ -101,7 +102,7 @@ function enqueue(eventId, entries) {
   const settings = getSettings();
   if (!pushEnabledFor(event, settings)) return { queued: 0, reason: 'push disabled' };
   const tlcEventId = resolveTlcEventId(event);
-  if (!tlcEventId) return { queued: 0, reason: 'event has no TLC link' };
+  if (!tlcEventId) return { queued: 0, reason: portal.t('event has no TLC link') };
 
   const ins = db.prepare(
     `INSERT INTO tlc_attendance_push (event_id, person_id, tlc_event_id, use_lesson_plans)
@@ -197,16 +198,16 @@ function matchPerson(person, list) {
   if (person.tlc_user_id) {
     return list.byHash.has(person.tlc_user_id)
       ? { hash: person.tlc_user_id }
-      : { error: `"${person.last_name}, ${person.first_name}" has a TLC id set but is not on this event's roster.` };
+      : { error: portal.t(`"${person.last_name}, ${person.first_name}" has a TLC id set but is not on this event's roster.`) };
   }
   const keys = [nameKey(person.last_name, person.first_name)];
   if (person.nickname) keys.push(nameKey(person.last_name, person.nickname));
   for (const k of keys) {
     const hit = list.byName.get(k);
-    if (hit === 'AMBIGUOUS') return { error: `More than one "${person.last_name}, ${person.first_name}" on the TLC list — set the TLC id by hand.` };
+    if (hit === 'AMBIGUOUS') return { error: portal.t(`More than one "${person.last_name}, ${person.first_name}" on the TLC list — set the TLC id by hand.`) };
     if (hit) return { hash: hit, learned: true };
   }
-  return { error: `No TLC roster entry matches "${person.last_name}, ${person.first_name}".` };
+  return { error: portal.t(`No TLC roster entry matches "${person.last_name}, ${person.first_name}".`) };
 }
 
 // ---------------------------------------------------------- TLC calls ------
@@ -242,7 +243,7 @@ async function fetchUserList(s, tlcEventId) {
   });
   const html = await res.text();
   if (res.status !== 200 || /LoginForm\[password\]/.test(html)) {
-    throw new Error(`TLC user list failed for event ${tlcEventId} (status ${res.status}).`);
+    throw new Error(portal.t(`TLC user list failed for event ${tlcEventId} (status ${res.status}).`));
   }
   return parseUserList(html, tlcEventId);
 }
@@ -321,7 +322,7 @@ async function lookupCandidates({ personId, eventId = null, env = process.env })
   }
   const tlcEventId = event && resolveTlcEventId(event);
   if (!tlcEventId) {
-    const e = new Error('No TLC-linked event to read a roster from — pick one on the calendar first.');
+    const e = new Error(portal.t('No TLC-linked event to read a roster from — pick one on the calendar first.'));
     e.code = 422; throw e;
   }
 
@@ -368,7 +369,7 @@ async function runPush({ manual = false, env = process.env } = {}) {
   if (running) return { skipped: true, reason: 'A push is already running.' };
   const state = getState();
   if (!manual && state.auth_failed_at) {
-    return { skipped: true, reason: 'Paused after a failed TLC login — re-save credentials or use Push now.' };
+    return { skipped: true, reason: portal.t('Paused after a failed TLC login — re-save credentials or use Push now.') };
   }
   const pending = db.prepare(`SELECT * FROM tlc_attendance_push WHERE status = 'pending' ORDER BY id`).all();
   if (!pending.length) return { skipped: true, reason: 'Nothing pending.' };
@@ -412,7 +413,7 @@ async function runPush({ manual = false, env = process.env } = {}) {
         }
         const entry = list.byHash.get(m.hash);
         if (entry && entry.attended === 1) {
-          mark.run('sent', 'already marked on TLC', m.hash, 'sent', row.id);
+          mark.run('sent', portal.t('already marked on TLC'), m.hash, 'sent', row.id);
           summary.already++; continue;
         }
         await toggleAttendance(session, {

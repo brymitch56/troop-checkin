@@ -1,4 +1,5 @@
 'use strict';
+const portal = require('./portal');
 // Trail Life Connect member-export importer.
 // Rules validated against a real TLC member export (July 2026):
 //   - title row above headers; header row located by the cell "Member Number"
@@ -40,7 +41,7 @@ function parseWorkbook(buffer) {
 
   const hdrIdx = rows.findIndex((r) => r.some((c) => norm(c) === 'Member Number'));
   if (hdrIdx === -1) {
-    throw new Error('Could not find the header row ("Member Number" column) — is this a Trail Life Connect member export?');
+    throw new Error(portal.t('Could not find the header row ("Member Number" column) — is this a Trail Life Connect member export?'));
   }
   const col = {};
   rows[hdrIdx].forEach((name, i) => { const n = norm(name); if (n) col[n] = i; });

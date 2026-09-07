@@ -2,7 +2,7 @@
 
 Self-hosted youth sign-in/out kiosk for Trail Life, American Heritage Girls, or any similar youth program. QR-badge check-in/out, parent signature capture on leaders' phones, roster management, reports — all on your own hardware. **Fully useful on your local network alone: no cloud, no accounts, no subscriptions.** Youth PII never leaves your hardware except through authenticated access and your own backups. MIT-licensed.
 
-**New in this version: no file editing to get started.** Start the app, open it in a browser, and a first-run setup wizard configures everything — troop name, program colors (Trail Life / AHG presets, every color customizable), timezone, your admin account.
+**New in this version: no file editing to get started.** Start the app, open it in a browser, and a first-run setup wizard configures everything — troop name, program colors (Trail Life / AHG presets, every color customizable), timezone, your admin account. The wiring below is described in Trail Life Connect terms because that is the platform it was built against; an instance set up for AHG (the same platform under the AHGfamily name) shows **AHGfamily** everywhere in the app, guide and messages — `ROSTER_SOURCE_NAME` in `.env.example`.
 
 ## Pick your hardware
 

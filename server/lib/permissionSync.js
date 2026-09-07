@@ -1,4 +1,5 @@
 'use strict';
+const portal = require('./portal');
 // Per-event permission-form sync — requirement detection + per-youth signed
 // status from Trail Life Connect. All mechanics verified against the live
 // site 2026-08-30 (VERIFY-permission-forms-findings, kept outside the repo):
@@ -161,7 +162,7 @@ async function fetchGridPage(s, page) {
     `/calendar/view-events${page > 1 ? `?page=${page}` : ''}`, { method: 'GET' });
   const html = await res.text();
   if (res.status !== 200 || /LoginForm\[password\]/.test(html)) {
-    throw new Error(`TLC view-events page ${page} failed (status ${res.status}).`);
+    throw new Error(portal.t(`TLC view-events page ${page} failed (status ${res.status}).`));
   }
   return html;
 }
@@ -194,7 +195,7 @@ const isHtml = (buf) => /^\s*</.test(String(buf ? buf.slice(0, 200) : ''));
 
 function parseExport(buffer) {
   if (!buffer || !buffer.length || isHtml(buffer)) {
-    throw new Error('TLC returned a web page instead of an export (bad slug or expired session?).');
+    throw new Error(portal.t('TLC returned a web page instead of an export (bad slug or expired session?).'));
   }
   const XLSX = require('xlsx');
   const wb = isZip(buffer)
@@ -204,11 +205,11 @@ function parseExport(buffer) {
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   const norm = (v) => (v == null ? '' : String(v).trim());
   const hdrIdx = rows.findIndex((r) => r.some((c) => norm(c) === 'Member Number'));
-  if (hdrIdx === -1) throw new Error('No "Member Number" header — not a TLC participants export?');
+  if (hdrIdx === -1) throw new Error(portal.t('No "Member Number" header — not a TLC participants export?'));
   const col = {};
   rows[hdrIdx].forEach((name, i) => { const n = norm(name); if (n) col[n] = i; });
   if (!('Event Permission Form' in col)) {
-    throw new Error('Export has no "Event Permission Form" column — TLC layout changed?');
+    throw new Error(portal.t('Export has no "Event Permission Form" column — TLC layout changed?'));
   }
   const out = [];
   for (const r of rows.slice(hdrIdx + 1)) {
@@ -238,7 +239,7 @@ async function fetchExport(s, etSlug) {
     if (res.status === 200 && buf.length && !isHtml(buf)) return buf;
     await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
   }
-  throw new Error(`TLC export for the event did not become ready (slug ending …${etSlug.slice(-4)}).`);
+  throw new Error(portal.t(`TLC export for the event did not become ready (slug ending …${etSlug.slice(-4)}).`));
 }
 
 // Store the export's YOUTH rows for one event (replaces that event's rows).
@@ -271,7 +272,7 @@ async function refreshEvent(eventId, session) {
   if (!slug) {
     await sweepGrid(s); // grid supplies the slug; also refreshes requirements
     slug = db.prepare('SELECT tlc_et_slug FROM event WHERE id = ?').get(eventId).tlc_et_slug;
-    if (!slug) throw new Error('This event has no TLC export link yet — is it on the TLC calendar?');
+    if (!slug) throw new Error(portal.t('This event has no TLC export link yet — is it on the TLC calendar?'));
   }
   const stored = storeStatuses(eventId, parseExport(await fetchExport(s, slug)), 'sync');
   return { stored, fetched_at: new Date().toISOString() };

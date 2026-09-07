@@ -1,4 +1,5 @@
 'use strict';
+const portal = require('../lib/portal');
 // Admin API (Phase 2). Everything here requires an admin session; when the
 // tunnel goes live these routes get Cloudflare Access on top (see docs).
 const express = require('express');
@@ -84,13 +85,13 @@ router.patch('/people/:id', (req, res) => {
   // write-back, so validate the shape and refuse an id another person holds
   if ('tlc_user_id' in b && b.tlc_user_id) {
     if (!/^[a-z0-9]{8,16}$/i.test(String(b.tlc_user_id))) {
-      return res.status(400).json({ error: 'A TLC user id is 8–16 letters/digits (copy it from the lookup below or a TLC profile URL).' });
+      return res.status(400).json({ error: portal.t('A TLC user id is 8–16 letters/digits (copy it from the lookup below or a TLC profile URL).') });
     }
     const holder = db.prepare(
       `SELECT first_name, last_name FROM person WHERE tlc_user_id = ? AND id != ? AND status != 'merged'`
     ).get(b.tlc_user_id, p.id);
     if (holder) {
-      return res.status(409).json({ error: `That TLC id is already assigned to ${holder.first_name} ${holder.last_name} — clear it there first.` });
+      return res.status(409).json({ error: portal.t(`That TLC id is already assigned to ${holder.first_name} ${holder.last_name} — clear it there first.`) });
     }
   }
   const sets = [], vals = [];
@@ -713,7 +714,7 @@ router.get('/roster-sync', (req, res) => {
 router.post('/roster-sync/run', (req, res) => {
   if (syncRunner.status().running) return res.status(409).json({ error: 'A sync is already running.' });
   if (!rosterSync.credentialInfo().source) {
-    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them below (or set TLC_EMAIL / TLC_PASSWORD in .env).' });
+    return res.status(422).json({ error: portal.t('Trail Life Connect credentials are not configured — save them below (or set TLC_EMAIL / TLC_PASSWORD in .env).') });
   }
   const r = syncRunner.start();
   if (!r.started) return res.status(409).json({ error: r.reason });
@@ -776,7 +777,7 @@ router.put('/tlc-attendance/settings', (req, res) => {
 router.post('/tlc-attendance/push', (req, res) => {
   if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is already running.' });
   if (!rosterSync.credentialInfo().source) {
-    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them under Automatic roster sync.' });
+    return res.status(422).json({ error: portal.t('Trail Life Connect credentials are not configured — save them under Automatic roster sync.') });
   }
   attendanceSync.runPush({ manual: true })
     .catch((e) => console.error('[tlc-attendance] manual push failed:', e.message));
@@ -791,7 +792,7 @@ router.post('/tlc-attendance/retry', (req, res) => {
 // TLC event roster and returns same-surname candidates with their hashids.
 router.post('/tlc-attendance/lookup', async (req, res) => {
   if (!rosterSync.credentialInfo().source) {
-    return res.status(422).json({ error: 'Trail Life Connect credentials are not configured — save them under Automatic roster sync.' });
+    return res.status(422).json({ error: portal.t('Trail Life Connect credentials are not configured — save them under Automatic roster sync.') });
   }
   try {
     const b = req.body || {};

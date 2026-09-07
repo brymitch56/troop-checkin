@@ -45,6 +45,9 @@ app.get('/api/config', (req, res) => {
   res.json({
     troop_id: env.TROOP_ID, troop_name: env.TROOP_NAME, ical_configured: !!env.ICAL_URL,
     theme: env.THEME,
+    // member-portal display labels ("Trail Life Connect"/"TLC" or "AHGfamily")
+    // — public/portal.js relabels static wording from this
+    portal: require('./lib/portal').label(),
     // kiosk health-form badge switch (admin-set, default off; not sensitive)
     flag_health_forms: require('./lib/healthForms').getCheckinFlags().health_form,
     // permission-form tracking switch — the kiosk banner keys off this
