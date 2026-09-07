@@ -126,7 +126,7 @@ function enterApp() {
 }
 
 // ----------------------------------------------------------------- tabs ----
-const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, messages: loadMessages, reports: loadReports, import: loadImport, staff: loadStaff };
+const loaders = { dash: loadDash, people: loadPeople, events: loadEvents, txns: loadTxns, messages: loadMessages, reports: loadReports, import: loadImport, staff: loadStaff, integrations: loadIntegrations };
 $('tabs').onclick = (e) => {
   const b = e.target.closest('button[data-tab]');
   if (b) showTab(b.dataset.tab);
@@ -1538,6 +1538,123 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-retry') {
     try { const r = await jpost('/admin/tlc-attendance/retry', {}); toast(`${r.retried} row(s) queued again`); loadTlca(); }
     catch (err) { toast(err.message, true); }
+  }
+});
+
+// --------------------------------------------------------- integrations ----
+// Integration API key + outbound webhook (docs/13-integration-api.md).
+// The plaintext key exists in the page only between Generate and the next
+// reload; the server keeps a hash. The webhook secret field is write-only.
+const WH_EVENT_LABELS = {
+  'txn.created': 'Sign-ins / sign-outs (txn.created)',
+  'txn.voided': 'Voids (txn.voided)',
+  'ical.synced': 'Calendar syncs (ical.synced)',
+};
+let whTimer = null;
+async function loadIntegrations() {
+  const s = await api('/admin/integration').catch((e) => { toast(e.message, true); return null; });
+  if (!s) return;
+  // --- API key
+  if (document.activeElement !== $('ia-enabled')) $('ia-enabled').checked = !!s.api.enabled;
+  $('ia-revoke').hidden = !s.api.key_set;
+  $('ia-generate').textContent = s.api.key_set ? 'Generate new key' : 'Generate key';
+  const bits = [];
+  if (!s.api.key_set) bits.push('No key yet — generate one, paste it into the other program, then enable.');
+  else bits.push(`Key <code>${esc(s.api.key_hint)}…</code>${s.api.label ? ` (${esc(s.api.label)})` : ''} created ${fmtDT(s.api.created_at)}.`);
+  bits.push(s.api.enabled ? '✅ API enabled.' : 'API disabled — every request answers 401.');
+  if (s.api.last_ok_at) bits.push(`Last successful call ${fmtDT(s.api.last_ok_at)}.`);
+  if (s.api.failed_count) bits.push(`<b class="error">${s.api.failed_count} failed auth attempt(s)</b>, last ${fmtDT(s.api.failed_last_at)} — resets when a new key is generated.`);
+  $('ia-status').innerHTML = bits.join(' ');
+  // --- webhook
+  if (document.activeElement !== $('wh-url')) $('wh-url').value = s.webhook.url || '';
+  $('wh-secret').placeholder = s.webhook.secret_set ? 'Signing secret (set — type to replace)' : 'Signing secret (write-only)';
+  if (document.activeElement !== $('wh-enabled')) $('wh-enabled').checked = !!s.webhook.enabled;
+  $('wh-events').innerHTML = s.webhook_events.map((ev) =>
+    `<label class="check"><input type="checkbox" data-wh-event="${esc(ev)}" ${s.webhook.events.includes(ev) ? 'checked' : ''}> ${esc(WH_EVENT_LABELS[ev] || ev)}</label>`).join('');
+  const wb = [];
+  if (!s.cred_key_ready && !s.webhook.secret_set) wb.push('The secret is encrypted at rest; the first save creates the encryption key in .env.');
+  if (!s.webhook.url) wb.push('No URL set.');
+  if (s.webhook.url && !s.webhook.secret_set) wb.push('Set a signing secret before enabling.');
+  wb.push(s.webhook.enabled ? '✅ Deliveries on.' : 'Deliveries off — nothing is queued.');
+  if (s.last_delivery) wb.push(`Last delivered ${fmtDT(s.last_delivery.sent_at)} (${esc(s.last_delivery.type)}).`);
+  wb.push(`Queue: <b>${s.queue.pending}</b> pending · ${s.queue.sent} sent · ` +
+    (s.queue.failed ? `<b class="error">${s.queue.failed} failed</b> <button id="wh-retry" class="btn ghost small">Retry failed</button>` : '0 failed'));
+  $('wh-status').innerHTML = wb.join(' ');
+  $('wh-test').disabled = !s.webhook.url || !s.webhook.secret_set;
+  $('wh-log').innerHTML = s.recent.length
+    ? `<table><tr><th>When</th><th>Event</th><th>Status</th><th>Attempts</th><th>Detail</th></tr>` +
+      s.recent.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.type)}</td>
+        <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed' : '⏳ pending'}</td>
+        <td>${r.attempts}</td><td>${esc(r.last_error || (r.status === 'pending' && r.attempts ? `next try ${fmtDT(r.next_attempt_at)}` : ''))}</td></tr>`).join('') + '</table>'
+    : '<p class="hint left">No deliveries yet.</p>';
+  enhanceTable('wh-log');
+  clearTimeout(whTimer);
+  if (s.queue.pending && !$('tab-integrations').hidden) whTimer = setTimeout(loadIntegrations, 5000);
+}
+$('ia-enabled').onchange = async () => {
+  try {
+    const r = await jput('/admin/integration/api', { enabled: $('ia-enabled').checked ? 1 : 0 });
+    toast(r.api.enabled ? 'Integration API enabled' : 'Integration API disabled');
+  } catch (e) { toast(e.message, true); $('ia-enabled').checked = !$('ia-enabled').checked; }
+  loadIntegrations();
+};
+$('ia-generate').onclick = async () => {
+  if ($('ia-revoke').hidden === false &&
+      !confirm('Generate a NEW key?\n\nThe current key stops working immediately — the other program must be updated with the new one.')) return;
+  const label = prompt('Label for this key (optional — e.g. the program that will use it):', '') ;
+  if (label === null) return;
+  try {
+    const r = await jpost('/admin/integration/api/key', { label });
+    $('ia-key').value = r.key;
+    $('ia-newkey').hidden = false; $('ia-newkey-hint').hidden = false;
+    $('ia-key').focus(); $('ia-key').select();
+    toast('Key generated — copy it now');
+  } catch (e) { toast(e.message, true); }
+  loadIntegrations();
+};
+$('ia-copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('ia-key').value); toast('Copied'); }
+  catch { $('ia-key').select(); toast('Select and copy the key manually', true); }
+};
+$('ia-revoke').onclick = async () => {
+  if (!confirm('Revoke the API key?\n\nThe other program loses access immediately. The API stays enabled; generate a new key to restore access.')) return;
+  try { await jdel('/admin/integration/api/key'); $('ia-newkey').hidden = true; $('ia-newkey-hint').hidden = true; toast('Key revoked'); }
+  catch (e) { toast(e.message, true); }
+  loadIntegrations();
+};
+function whEvents() {
+  return [...document.querySelectorAll('#wh-events input[data-wh-event]')].filter((c) => c.checked).map((c) => c.dataset.whEvent);
+}
+$('wh-save').onclick = async () => {
+  const body = { url: $('wh-url').value.trim(), events: whEvents() };
+  if ($('wh-secret').value.trim()) body.secret = $('wh-secret').value.trim();
+  try {
+    await jput('/admin/integration/webhook', body);
+    $('wh-secret').value = '';
+    toast('Webhook settings saved');
+  } catch (e) { toast(e.message, true); }
+  loadIntegrations();
+};
+$('wh-enabled').onchange = async () => {
+  try {
+    const r = await jput('/admin/integration/webhook', { enabled: $('wh-enabled').checked ? 1 : 0, events: whEvents() });
+    toast(r.webhook.enabled ? 'Webhook deliveries on' : 'Webhook deliveries off');
+  } catch (e) { toast(e.message, true); $('wh-enabled').checked = !$('wh-enabled').checked; }
+  loadIntegrations();
+};
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'wh-test') {
+    e.target.disabled = true;
+    try {
+      const r = await jpost('/admin/integration/webhook/test', {});
+      if (r.ok) toast(`Test delivered (HTTP ${r.http})`); else toast(`Test failed: ${r.error}`, true);
+    } catch (err) { toast(err.message, true); }
+    loadIntegrations();
+  }
+  if (e.target.id === 'wh-retry') {
+    try { const r = await jpost('/admin/integration/webhook/retry', {}); toast(`${r.retried} delivery(ies) queued again`); }
+    catch (err) { toast(err.message, true); }
+    loadIntegrations();
   }
 });
 

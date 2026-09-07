@@ -47,6 +47,7 @@
       <button data-tab="reports">Reports</button>
       <button data-tab="import">Roster import</button>
       <button data-tab="staff">Staff</button>
+      <button data-tab="integrations">Integrations</button>
     </nav>
   </header>
 
@@ -238,6 +239,53 @@
         <button id="st-add" class="btn primary small">Add</button>
       </div>
       <div id="st-error" class="error"></div>
+    </div>
+  </div>
+
+  <!-- ---- integrations ---- -->
+  <div id="tab-integrations" class="tab" hidden>
+    <div class="panel">
+      <h3>Integration API</h3>
+      <p class="hint left">Lets <b>another program on your server</b> (a reporting dashboard, a badge or
+      advancement tracker, a second troop tool) read who was at which event. It is read-only and shares
+      the minimum: events (with their calendar ids), sign-in/out times, and each person's name, level,
+      patrol, member number and TLC id. It <b>never</b> shares guardians, phone numbers, emails, addresses,
+      birthdates, signatures, photos, or health/consent data. Off by default — nothing answers until you
+      enable it <i>and</i> generate a key. Details for the other program's developer:
+      <a href="https://github.com/brymitch56/troop-checkin/blob/main/docs/13-integration-api.md" target="_blank" rel="noopener">docs/13-integration-api.md</a>.</p>
+      <div class="row wrap">
+        <label class="check"><input id="ia-enabled" type="checkbox"> Enable the Integration API</label>
+        <button id="ia-generate" class="btn ghost small">Generate key</button>
+        <button id="ia-revoke" class="btn ghost small" hidden>Revoke key</button>
+      </div>
+      <div id="ia-newkey" class="row wrap" hidden>
+        <input id="ia-key" type="text" readonly spellcheck="false" style="flex:1;min-width:260px;font-family:monospace">
+        <button id="ia-copy" class="btn primary small">Copy</button>
+      </div>
+      <p id="ia-newkey-hint" class="hint left" hidden>⚠ Shown <b>once</b>. Copy it into the other program now — the app keeps
+      only a hash and cannot show it again (generate a new key if it's lost; the old one stops working).</p>
+      <p id="ia-status" class="hint left"></p>
+    </div>
+    <div class="panel">
+      <h3>Outbound webhook
+        <button id="wh-test" class="btn ghost small">Send test event</button>
+      </h3>
+      <p class="hint left">Optionally <b>push</b> a notification to the other program the moment a sign-in,
+      sign-out, or void is recorded (and after each calendar sync), so it doesn't have to poll. Each delivery
+      is signed with the shared secret below; the other program should verify the signature and ignore
+      anything unsigned. Deliveries retry on their own for about a day; a slow or offline receiver never
+      slows down the kiosk. Payloads carry ids only — no names.</p>
+      <div class="row wrap">
+        <input id="wh-url" type="text" inputmode="url" placeholder="https://… or http://localhost:port/path" style="flex:1;min-width:260px" autocomplete="off">
+        <input id="wh-secret" type="password" placeholder="Signing secret (write-only)" autocomplete="new-password">
+        <button id="wh-save" class="btn primary small">Save</button>
+      </div>
+      <div class="row wrap" id="wh-events"></div>
+      <div class="row wrap">
+        <label class="check"><input id="wh-enabled" type="checkbox"> Send webhook deliveries</label>
+      </div>
+      <p id="wh-status" class="hint left"></p>
+      <div id="wh-log" class="tbl"></div>
     </div>
   </div>
 

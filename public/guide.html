@@ -113,6 +113,7 @@
   <a href="#import">Roster import &amp; sync</a>
   <a href="#writeback">TLC attendance write-back</a>
   <a href="#staff">Staff accounts</a>
+  <a href="#integrations">Integrations (API &amp; webhook)</a>
   <a href="#backups">Backups</a>
   <span class="part">Reference</span>
   <a href="#quickref">Quick reference</a>
@@ -374,6 +375,17 @@
   </ul>
 </section>
 
+<section id="integrations">
+  <h3>Integrations — letting another program read attendance</h3>
+  <p>Admin → <b>Integrations</b>. Some troops run a second program next to the check-in app — a badge or advancement tracker, a reporting dashboard — that needs to know <em>who was at which event</em>. The Integration API gives it that, read-only, with the minimum: events (with their calendar ids), sign-in and sign-out times, and each person's name, level, patrol, member number and TLC id. It never shares guardians, phone numbers, emails, addresses, birthdates, signatures, photos, or health/consent data. Everything is <b>off until you turn it on</b>.</p>
+  <ul>
+    <li><b>Turn it on:</b> <b>Generate key</b> → copy the key (shown once — the app keeps only a scrambled hash) → paste it into the other program → tick <b>Enable the Integration API</b>. Until both are done, every request is refused.</li>
+    <li><b>Lost or leaked key:</b> <b>Generate new key</b> replaces it instantly (the old one stops working); <b>Revoke key</b> cuts access without disabling the feature. The status line shows when the key was made, the last successful call, and any failed attempts.</li>
+    <li><b>Webhook (optional):</b> instead of the other program asking every few minutes, the app can <em>tell</em> it the moment a sign-in, sign-out or void is recorded (and after each calendar sync). Enter the program's URL and a shared <b>signing secret</b> (write-only — you'll never see it again here), pick which events to send, save, press <b>Send test event</b> to confirm the receiver answers, then tick <b>Send webhook deliveries</b>. Deliveries retry by themselves for about a day and are listed below the controls; <b>Retry failed</b> re-queues any that gave up. A slow or offline receiver never slows the kiosk.</li>
+    <li>The technical reference for whoever builds the other program is <code>docs/13-integration-api.md</code> in the project (linked from the tab).</li>
+  </ul>
+</section>
+
 <section id="backups">
   <h3>Backups</h3>
   <p>Nightly automatic backups (database snapshot + signatures), kept 14 deep, plus an optional encrypted off-site push. <b>Back up now</b> is on the Dashboard — use it before anything risky. Restore instructions live with the server documentation.</p>
@@ -409,6 +421,7 @@
     <tr><td>Push today's attendance to Trail Life Connect now</td><td>Admin → Import → TLC attendance write-back → Push now (otherwise it runs itself every ~10 min)</td></tr>
     <tr><td>Keep a father/son name mix-up out of TLC</td><td>Admin → People → open each → set TLC user id ("Find TLC id…" helps) — the same-name banner lists who needs it</td></tr>
     <tr><td>Combine a parent's two records (registered later)</td><td>Admin → People → open the record <em>without</em> a member # → Merge into roster member…</td></tr>
+    <tr><td>Let a badge tracker or dashboard read attendance</td><td>Admin → Integrations → Generate key → paste into the other program → Enable (optional: webhook URL + secret → Send test event → Send deliveries)</td></tr>
   </table>
 </section>
 

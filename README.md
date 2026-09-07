@@ -68,6 +68,7 @@ The core — check-in/out, signatures, roster, reports, offline queueing — nee
 - **SMS pickup notifications** via Twilio (strictly opt-in per family; US A2P registration required — the genuinely bureaucratic part): "SMS setup" below
 - **Automated weekly roster sync** from your member portal: `docs/10-roster-sync.md`
 - **TLC attendance write-back** — sign-outs mark people Attended on the matching Trail Life Connect event, with per-youth advancement credit: `docs/12-attendance-writeback.md`
+- **Integration API + webhook** — a read-only, API-key-protected JSON contract (events, per-event attendance, minimal roster) plus a signed outbound webhook, so another program on the box (a dashboard, an advancement tracker) can consume attendance without touching the admin UI. Off by default; enable in Admin → Integrations: `docs/13-integration-api.md`
 - **Off-site encrypted backups** (rclone): `docs/08-pi-setup-guide.md`
 
 Design documentation (requirements, architecture, data model, build plan) lives in `docs/`.
