@@ -26,6 +26,7 @@ const PASSWORD = 'fake-password-never-real';
 const TOKEN = 'MockCsrf' + 'A'.repeat(40);
 const EV = 'evtesthashid'; // 12 chars, like the real hashids
 const UID_OK = `feed163264ab00cd-${EV}-tail1516aa17bcd`;
+const UID_AHG = `ABCDEFGHI-${EV}-20260907T190000`; // AHGfamily shape: 9 letters, hashid, YYYYMMDDTHHMMSS
 
 // ------------------------------------------------------------ fixtures -----
 function mkPerson(first, last, extra = {}) {
@@ -129,6 +130,10 @@ const pushEnv = () => ({ ...process.env, TLC_BASE: base });
 // ------------------------------------------------------------ unit: uid ----
 test('tlcEventIdFromUid: middle segment of a TLC feed UID, null otherwise', () => {
   assert.equal(A.tlcEventIdFromUid(UID_OK), EV);
+  // AHGfamily emits a 9-letter head and a timestamp tail; the hashid is still the middle
+  assert.equal(A.tlcEventIdFromUid(UID_AHG), EV);
+  assert.equal(A.tlcEventIdFromUid(`ABCDEFGH-${EV}-20260907T190000`), null);  // 8-char head stays rejected
+  assert.equal(A.tlcEventIdFromUid(`ABCDEFGHI-short9-20260907T190000`), null); // middle guard unchanged
   assert.equal(A.tlcEventIdFromUid('not-a-tlc-uid'), null);
   assert.equal(A.tlcEventIdFromUid('caldav-3f2a9@google.com'), null);
   assert.equal(A.tlcEventIdFromUid(''), null);

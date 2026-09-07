@@ -63,11 +63,17 @@ const patchState = (p) => { const s = { ...getState(), ...p }; writeMeta(STATE_K
 const clearAuthFailure = () => patchState({ auth_failed_at: null });
 
 // ------------------------------------------------------- event mapping -----
-// TLC iCal UIDs are <16 chars>-<12-char event hashid>-<15 chars>; verified
-// against /databuilder/search-events for events across 2024-2026. Be strict
-// enough to never mis-parse a non-TLC UID (manual events, other feeds).
+// Portal iCal UIDs are three dash-separated segments with the 12-char event
+// hashid in the MIDDLE. Two shapes seen on the same platform:
+//   Trail Life Connect: <16 alphanumerics>-<12 hashid>-<15 alphanumerics>
+//     (verified against /databuilder/search-events for events across 2024-2026)
+//   AHGfamily:          <9 letters>-<12 hashid>-<YYYYMMDDTHHMMSS> (15 chars)
+//     (found 2026-09-07: the 10-char floor on the head rejected every AHG UID,
+//     so no AHG event could ever link)
+// The head accepts 9–24; the middle group stays {10,14} — it is the guard
+// against mis-parsing a manual event or a foreign feed's UID.
 function tlcEventIdFromUid(uid) {
-  const m = /^([a-z0-9]{10,24})-([a-z0-9]{10,14})-([a-z0-9]{10,24})$/i.exec(String(uid || '').trim());
+  const m = /^([a-z0-9]{9,24})-([a-z0-9]{10,14})-([a-z0-9]{10,24})$/i.exec(String(uid || '').trim());
   return m ? m[2] : null;
 }
 
