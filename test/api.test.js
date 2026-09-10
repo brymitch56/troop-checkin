@@ -305,3 +305,39 @@ test('patrols endpoint lists distinct active-youth patrols', async () => {
   const r = await req('GET', '/api/patrols', { cookie: doorCookie });
   assert.deepEqual(r.json, ['Eagles', 'Hawks']);
 });
+
+test('levels endpoint mirrors patrols; /onsite filters by patrol, level, or both', async () => {
+  // the kiosk filter rows are built from these two lists
+  const lv = await req('GET', '/api/levels', { cookie: doorCookie });
+  assert.equal(lv.status, 200);
+  assert.deepEqual(lv.json, ['Adventurers', 'Navigators']);
+
+  // put exactly one known youth on site for this test (earlier tests leave
+  // the open state wherever they finished)
+  const danny = person('Danny');
+  assert.equal(danny.patrol, 'Eagles');
+  assert.equal(danny.level, 'Navigators');
+  const before = await req('GET', '/api/onsite', { cookie: doorCookie });
+  assert.deepEqual(before.json, [], 'expected a clean on-site state here');
+  const signIn = await req('POST', '/api/txn', {
+    cookie: doorCookie,
+    body: {
+      client_uuid: uuid(), direction: 'in', event_id: eventId,
+      entries: [{ person_id: danny.id }],
+      signer_person_id: person('Alice').id, signature_data: PNG_1x1,
+    },
+  });
+  assert.equal(signIn.status, 200, JSON.stringify(signIn.json));
+  const all = await req('GET', '/api/onsite', { cookie: doorCookie });
+  assert.deepEqual(all.json.map((p) => p.first_name), ['Danny']);
+  assert.equal(all.json[0].level, 'Navigators'); // level rides along for the client-side filter
+
+  const hit = (qs) => req('GET', `/api/onsite${qs}`, { cookie: doorCookie })
+    .then((r) => r.json.map((p) => p.first_name));
+  assert.deepEqual(await hit('?level=Navigators'), ['Danny']);
+  assert.deepEqual(await hit('?level=Adventurers'), []);
+  assert.deepEqual(await hit('?patrol=Eagles&level=Navigators'), ['Danny']);
+  // the two filters AND together — a mismatched pair matches nobody
+  assert.deepEqual(await hit('?patrol=Hawks&level=Navigators'), []);
+  assert.deepEqual(await hit('?level=' + encodeURIComponent('No Such Level')), []);
+});

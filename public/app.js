@@ -22,8 +22,10 @@ const state = {
   signerId: null,
   signerOther: null,
   pendingLink: null,     // {code, person}
-  patrol: null,
-  station: localStorage.getItem('station-patrol') || null, // per-device patrol scope
+  patrol: null,          // on-site view filters (default to the station scope)
+  level: null,
+  station: localStorage.getItem('station-patrol') || null,     // per-device patrol scope
+  stationLevel: localStorage.getItem('station-level') || null, // per-device level scope
 };
 
 // ---------------------------------------------------------------- utils ----
@@ -226,7 +228,7 @@ async function enterKiosk() {
   show('screen-main');
   if (!state.offline) localStorage.setItem('last-me', JSON.stringify(state.me));
   $('staff-pill').textContent = state.me.name;
-  renderStationPill();
+  renderKioskFilters();
   renderCart();
   refreshOnsiteCount();
   refreshSnapshot();
@@ -288,26 +290,72 @@ function resetIdle() {
 for (const evt of ['pointerdown', 'keydown']) window.addEventListener(evt, resetIdle, { passive: true });
 resetIdle();
 
-// ------------------------------------------------------- station mode ----
-// Per-device patrol scope (persists on this device): the roster view and
-// on-site list narrow to one patrol; scanned badges are ALWAYS accepted.
-function renderStationPill() {
-  $('station-pill').textContent = state.station ? `Station: ${state.station}` : 'All patrols';
-  $('station-pill').classList.toggle('active', !!state.station);
+// ------------------------------------------------------ roster filters ----
+// Patrol and LEVEL choices for both filter rows. Online they come from the
+// server; offline they are derived from the snapshot, so the dropdowns are
+// never empty at a campout. Cached for the session — a roster import is rare
+// and refreshSnapshot() clears it.
+let facetCache = null;
+async function rosterFacets() {
+  if (facetCache) return facetCache;
+  const [patrols, levels] = await Promise.all([
+    api('/patrols').catch(() => null),
+    api('/levels').catch(() => null),
+  ]);
+  facetCache = (patrols && levels)
+    ? { patrols, levels }
+    : await Offline.facets().catch(() => ({ patrols: [], levels: [] }));
+  return facetCache;
 }
-$('station-pill').onclick = async () => {
-  const patrols = await api('/patrols').catch(() => []);
-  const cycle = [null, ...patrols];
-  const next = cycle[(cycle.indexOf(state.station) + 1) % cycle.length];
-  state.station = next;
-  if (next) localStorage.setItem('station-patrol', next);
-  else localStorage.removeItem('station-patrol');
-  renderStationPill();
+
+// Fill one <select> with "All …" plus the values, keeping the current choice
+// selected even if it is no longer in the list (a patrol emptied mid-event
+// must not silently widen the filter).
+function fillFilterSelect(sel, values, current, allLabel) {
+  const opts = [...values];
+  if (current && !opts.includes(current)) opts.push(current);
+  sel.textContent = ''; // built as DOM nodes: roster values need no escaping
+  const add = (value, label) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = label;
+    sel.appendChild(o);
+  };
+  add('', allLabel);
+  opts.forEach((v) => add(v, v));
+  sel.value = current || '';
+  sel.classList.toggle('active', !!current);
+}
+
+// ------------------------------------------------------- station mode ----
+// Per-device scope (persists on this device): name search and the on-site
+// list narrow to a patrol and/or level; scanned badges are ALWAYS accepted,
+// which is why the note next to the dropdowns says so whenever one is set.
+async function renderKioskFilters() {
+  const { patrols, levels } = await rosterFacets();
+  fillFilterSelect($('kiosk-patrol'), patrols, state.station, 'All patrols');
+  fillFilterSelect($('kiosk-level'), levels, state.stationLevel, 'All levels');
+  $('kiosk-filter-note').hidden = !state.station && !state.stationLevel;
+}
+function setStationScope(key, storageKey, value) {
+  state[key] = value || null;
+  try {
+    if (value) localStorage.setItem(storageKey, value);
+    else localStorage.removeItem(storageKey);
+  } catch { /* private mode — the scope just won't persist */ }
+  renderKioskFilters();
   refreshOnsiteCount();
-  toast(next ? `This station now shows ${next} only (scans still accept anyone).` : 'Showing all patrols.');
-};
-const stationFilter = (rows) =>
-  state.station ? rows.filter((p) => !p.is_youth || (p.patrol || '') === state.station) : rows;
+  // re-run whatever is in the search box so the visible list re-filters
+  if ($('search-input').value.trim().length >= 2) $('search-input').dispatchEvent(new Event('input'));
+}
+$('kiosk-patrol').onchange = (e) => setStationScope('station', 'station-patrol', e.target.value);
+$('kiosk-level').onchange = (e) => setStationScope('stationLevel', 'station-level', e.target.value);
+
+// Adults and visitors carry neither patrol nor level, so they always pass —
+// a door leader must never be unable to find the parent standing in front
+// of them because the device is scoped to a patrol.
+const stationFilter = (rows) => rows.filter((p) => !p.is_youth
+  || ((!state.station || (p.patrol || '') === state.station)
+    && (!state.stationLevel || (p.level || '') === state.stationLevel)));
 
 const eventsCurrent = () =>
   api('/events/current').catch((e) => { if (e.status) throw e; return Offline.currentEvents(); });
@@ -511,7 +559,9 @@ $('search-input').addEventListener('input', () => {
     for (const p of rows) {
       const b = document.createElement('button');
       b.innerHTML = `<span>${displayName(p)}</span>
-        <span class="sub">${p.is_youth ? (p.patrol || 'Youth') : 'Adult'}${p.open ? ' · ON SITE' : ''}</span>`;
+        <span class="sub">${p.is_youth
+          ? ([p.patrol, p.level].filter(Boolean).join(' · ') || 'Youth')
+          : 'Adult'}${p.open ? ' · ON SITE' : ''}</span>`;
       b.onclick = () => { addToCart(p); $('search-input').value = ''; box.hidden = true; };
       box.appendChild(b);
     }
@@ -958,17 +1008,34 @@ $('vis-save').onclick = () => saveVisitor(false);
 $('vis-save-more').onclick = () => saveVisitor(true);
 
 // ------------------------------------------------------------- on site ----
+// Query string for /onsite from a {patrol, level} pair — empty when neither.
+const onsiteQuery = (patrol, level) => {
+  const q = new URLSearchParams();
+  if (patrol) q.set('patrol', patrol);
+  if (level) q.set('level', level);
+  return q.toString() ? '?' + q : '';
+};
+// Human wording for the active on-site filters — used wherever a broadcast
+// asks the leader to confirm who it will reach.
+const scopeLabel = () => [
+  state.patrol ? `patrol ${state.patrol}` : null,
+  state.level ? `level ${state.level}` : null,
+].filter(Boolean).join(' + ');
+const matchesScope = (p, patrol, level) =>
+  (!patrol || (p.patrol || '') === patrol) && (!level || (p.level || '') === level);
+
 async function refreshOnsiteCount() {
-  const q = state.station ? '?patrol=' + encodeURIComponent(state.station) : '';
-  const rows = await api('/onsite' + q).catch(async (e) => {
+  const rows = await api('/onsite' + onsiteQuery(state.station, state.stationLevel)).catch(async (e) => {
     if (e.status) return [];
     const local = await Offline.onsite().catch(() => []); // offline: snapshot + queued
-    return state.station ? local.filter((p) => (p.patrol || '') === state.station) : local;
+    return local.filter((p) => matchesScope(p, state.station, state.stationLevel));
   });
   $('onsite-pill').textContent = `On site: ${rows.length}`;
 }
 $('onsite-pill').onclick = async () => {
-  if (state.station && state.patrol == null) state.patrol = state.station; // station scope is the default view
+  // the station scope is this view's starting point (either dimension)
+  if (state.station && state.patrol == null) state.patrol = state.station;
+  if (state.stationLevel && state.level == null) state.level = state.stationLevel;
   show('screen-onsite');
   await renderOnsite();
 };
@@ -995,9 +1062,11 @@ function renderNotifyResults(r) {
 }
 $('onsite-notify').onclick = async () => {
   if (!confirm('Text the guardians of everyone still on site' +
-    (state.patrol ? ` in ${state.patrol}` : '') + '? Each family gets one message.')) return;
+    (scopeLabel() ? ` (${scopeLabel()})` : '') + '? Each family gets one message.')) return;
   try {
-    renderNotifyResults(await jpost('/notify-onsite', { patrol: state.patrol || undefined }));
+    renderNotifyResults(await jpost('/notify-onsite', {
+      patrol: state.patrol || undefined, level: state.level || undefined,
+    }));
   } catch (e) { toast(e.message, true); }
 };
 $('notify-close').onclick = closeModal;
@@ -1012,7 +1081,7 @@ $('onsite-message').onclick = () => {
   $('msg-scope-attended-label').textContent = state.event
     ? `Everyone who attended: ${state.event.title}`
     : 'Everyone who attended (pick an event first)';
-  $('msg-scope').textContent = state.patrol ? `Limited to patrol: ${state.patrol}.` : '';
+  $('msg-scope').textContent = scopeLabel() ? `Limited to ${scopeLabel()}.` : '';
   // adults option only where it can apply: an adult-tracked selected event
   // (off by default every time — including adults is an explicit choice)
   $('msg-adults').checked = false;
@@ -1031,6 +1100,7 @@ $('msg-send').onclick = async () => {
     renderNotifyResults(await jpost('/message-onsite', {
       message,
       patrol: state.patrol || undefined,
+      level: state.level || undefined,
       scope: attended ? 'attended' : 'onsite',
       event_id: attended && state.event ? state.event.id : undefined,
       include_adults: !$('msg-adults-wrap').hidden && $('msg-adults').checked ? 1 : undefined,
@@ -1044,10 +1114,10 @@ $('msg-send').onclick = async () => {
 async function onsiteRowsOffline() {
   const local = await Offline.onsite().catch(() => []);
   return local
-    .filter((p) => !state.patrol || (p.patrol || '') === state.patrol)
+    .filter((p) => matchesScope(p, state.patrol, state.level))
     .map((p) => ({
       id: p.id, first_name: p.first_name, last_name: p.last_name, nickname: p.nickname,
-      patrol: p.patrol, is_youth: p.is_youth ? 1 : 0,
+      patrol: p.patrol, level: p.level, is_youth: p.is_youth ? 1 : 0,
       event_id: p.open.event_id, event_title: p.open.event_title, signed_at: null,
     }));
 }
@@ -1079,6 +1149,9 @@ function onsiteComparator(key) {
   };
   return byName;
 }
+$('onsite-patrol').onchange = (e) => { state.patrol = e.target.value || null; renderOnsite(); };
+$('onsite-level').onchange = (e) => { state.level = e.target.value || null; renderOnsite(); };
+
 function renderOnsiteSortPills() {
   const box = $('onsite-sort'); box.innerHTML = '';
   const lab = document.createElement('span'); lab.className = 'sort-label'; lab.textContent = 'Sort:';
@@ -1098,28 +1171,15 @@ function renderOnsiteSortPills() {
 
 async function renderOnsite() {
   let offlineData = false;
-  const rows = await api('/onsite' + (state.patrol ? '?patrol=' + encodeURIComponent(state.patrol) : ''))
+  const rows = await api('/onsite' + onsiteQuery(state.patrol, state.level))
     .catch(async (e) => {
       if (e.status) throw e;
       offlineData = true; // network down/slow: snapshot + queued (field lesson, 2026-08)
       return onsiteRowsOffline();
     });
-  const patrols = await api('/patrols').catch(async (e) => {
-    if (e.status) return [];
-    // offline: derive the filter choices from the local snapshot
-    const all = await Offline.onsite().catch(() => []);
-    return [...new Set(all.map((p) => p.patrol).filter(Boolean))].sort();
-  });
-  const pf = $('patrol-filters'); pf.innerHTML = '';
-  const mk = (label, val) => {
-    const b = document.createElement('button');
-    b.className = 'pill ghost-pill' + (state.patrol === val ? ' active' : '');
-    b.textContent = label;
-    b.onclick = () => { state.patrol = val; renderOnsite(); };
-    pf.appendChild(b);
-  };
-  mk('All', null);
-  patrols.forEach((p) => mk(p, p));
+  const { patrols, levels } = await rosterFacets();
+  fillFilterSelect($('onsite-patrol'), patrols, state.patrol, 'All patrols');
+  fillFilterSelect($('onsite-level'), levels, state.level, 'All levels');
   renderOnsiteSortPills();
 
   const wrap = $('onsite-list'); wrap.innerHTML = '';

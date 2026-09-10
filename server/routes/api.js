@@ -556,9 +556,13 @@ router.get('/roster-snapshot', (req, res) => {
 
 // who's still here
 router.get('/onsite', (req, res) => {
+  // Both filters are optional and combine (AND). Adults and visitors carry
+  // neither, so any filter narrows the list to matching youth — the kiosk
+  // says so rather than looking like people vanished.
   const patrol = req.query.patrol ? String(req.query.patrol) : null;
+  const level = req.query.level ? String(req.query.level) : null;
   const rows = db.prepare(
-    `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol, p.is_youth,
+    `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol, p.level, p.is_youth,
             e.id AS event_id, e.title AS event_title, t.signed_at
        FROM txn_person tp
        JOIN txn t ON t.id = tp.txn_id
@@ -566,15 +570,19 @@ router.get('/onsite', (req, res) => {
        JOIN event e ON e.id = t.event_id
       WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
         AND (? IS NULL OR p.patrol = ?)
+        AND (? IS NULL OR p.level = ?)
       ORDER BY datetime(e.start_at), p.patrol, p.last_name, p.first_name`
-  ).all(patrol, patrol);
+  ).all(patrol, patrol, level, level);
   res.json(rows);
 });
 
 // Kiosk guardian texting. Strictly opt-in; ONE text per guardian even when
 // they cover several on-site youth; the response tells the leader exactly who
 // was NOT contacted and why, so they can phone those families instead.
-const onsiteYouthRows = (patrol) => db.prepare(
+// Broadcast scope MUST match what the leader is looking at on the on-site
+// screen: both filters apply, or a level-filtered view would text families
+// the leader never saw.
+const onsiteYouthRows = (patrol, level) => db.prepare(
   `SELECT p.id AS person_id, p.first_name, p.last_name, p.nickname,
           e.id AS event_id, e.title
      FROM txn_person tp
@@ -582,8 +590,9 @@ const onsiteYouthRows = (patrol) => db.prepare(
      JOIN person p ON p.id = tp.person_id
      JOIN event e ON e.id = t.event_id
     WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL AND p.is_youth = 1
-      AND (? IS NULL OR p.patrol = ?)`
-).all(patrol, patrol);
+      AND (? IS NULL OR p.patrol = ?)
+      AND (? IS NULL OR p.level = ?)`
+).all(patrol, patrol, level, level);
 
 router.post('/notify-onsite', express.json(), async (req, res) => {
   const sms = require('../lib/sms');
@@ -592,7 +601,8 @@ router.post('/notify-onsite', express.json(), async (req, res) => {
     return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
   }
   const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
-  const rows = onsiteYouthRows(patrol);
+  const level = req.body && req.body.level ? String(req.body.level) : null;
+  const rows = onsiteYouthRows(patrol, level);
   const r = await notifyLingering(rows);
   res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
 });
@@ -613,6 +623,7 @@ router.post('/message-onsite', express.json(), async (req, res) => {
   if (!message) return res.status(400).json({ error: 'Type the message first.' });
   if (message.length > 300) return res.status(400).json({ error: 'Keep the message under 300 characters.' });
   const patrol = b.patrol ? String(b.patrol) : null;
+  const level = b.level ? String(b.level) : null;
   let rows;
   if (b.scope === 'attended') {
     if (!b.event_id) return res.status(400).json({ error: 'Pick an event for an all-attendees message.' });
@@ -624,10 +635,11 @@ router.post('/message-onsite', express.json(), async (req, res) => {
          JOIN person p ON p.id = tp.person_id
          JOIN event e ON e.id = t.event_id
         WHERE t.event_id = ? AND t.direction = 'in' AND t.voided_by_txn_id IS NULL
-          AND p.is_youth = 1 AND (? IS NULL OR p.patrol = ?)`
-    ).all(b.event_id, patrol, patrol);
+          AND p.is_youth = 1 AND (? IS NULL OR p.patrol = ?)
+          AND (? IS NULL OR p.level = ?)`
+    ).all(b.event_id, patrol, patrol, level, level);
   } else {
-    rows = onsiteYouthRows(patrol);
+    rows = onsiteYouthRows(patrol, level);
   }
   // per-broadcast recipient choice (primary guardian only / all opted-in
   // guardians); omitted = the global setting
@@ -723,6 +735,17 @@ router.get('/patrols', (req, res) => {
       WHERE is_youth = 1 AND status = 'active' AND patrol IS NOT NULL AND patrol != ''
       ORDER BY patrol`
   ).all().map((r) => r.patrol));
+});
+
+// Program levels for the kiosk filters — the same shape as /patrols. Levels
+// come from the roster verbatim (Trail Life "Navigators", AHG "Explorer", …),
+// so the list is whatever this troop's export actually contains.
+router.get('/levels', (req, res) => {
+  res.json(db.prepare(
+    `SELECT DISTINCT level FROM person
+      WHERE is_youth = 1 AND status = 'active' AND level IS NOT NULL AND level != ''
+      ORDER BY level`
+  ).all().map((r) => r.level));
 });
 
 // -------------------------------------------------- roster import (admin) ----

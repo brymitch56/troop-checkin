@@ -100,7 +100,7 @@
   <a href="#signing">Signing youth in and out</a>
   <a href="#membership">Membership-expiration warnings</a>
   <a href="#onsite">The "On site" screen &amp; texting guardians</a>
-  <a href="#station">Station mode (per-patrol devices)</a>
+  <a href="#station">Station mode (per-patrol / per-level devices)</a>
   <a href="#offline">Working offline</a>
   <span class="part">Part 2 — Admin</span>
   <a href="#admin-login">Admin sign-in &amp; dashboard</a>
@@ -207,17 +207,18 @@
 
 <section id="onsite">
   <h3>The "On site" screen &amp; texting guardians</h3>
-  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, filterable by patrol and sortable with the <b>Sort</b> pills — <b>Last name</b> (default), <b>Sign-in time</b>, <b>Patrol</b>, or <b>First name</b>; the device remembers your choice. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. From this screen (once SMS is set up):</p>
+  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, narrowed by the <b>Patrol</b> and <b>Level</b> dropdowns (they start on whatever this device is scoped to, and you can change either without changing the device's scope) and sortable with the <b>Sort</b> pills — <b>Last name</b> (default), <b>Sign-in time</b>, <b>Patrol</b>, or <b>First name</b>; the device remembers your choice. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. From this screen (once SMS is set up):</p>
   <ul>
     <li><b>🔔 Text guardians</b> — one message per guardian listing all their youth still on site ("please pick up"). A guardian with three kids on site gets <em>one</em> text, not three. Which guardians: by default the <b>primary</b> guardian of each youth; an admin can switch the troop to <b>all opted-in guardians</b> (Admin → Messages), in which case every parent who signed their own consent gets it and either one's <b>Y</b> closes the pickup. The results screen lists exactly who was <em>not</em> contacted and why (no consent, no mobile, STOPped) so you can phone those families instead.</li>
     <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up). On events that track adult attendance, an <b>"Also text opted-in adults"</b> checkbox appears — off every time until you tick it — which additionally texts attending adults who signed their own consent form. The dialog also lets you choose, per message, <b>Primary guardian only</b> or <b>All opted-in guardians</b> (it starts on the troop's admin-set default).</li>
   </ul>
+  <div class="tip"><b>The filters limit who gets texted.</b> Both buttons reach exactly the families shown by the current Patrol/Level dropdowns — the confirmation names the scope, and the Message dialog says "Limited to …". Set both dropdowns back to "All" first if you mean to reach everyone on site.</div>
   <div class="rule">Texts go <b>only</b> to people with a signed SMS consent form on file and opted in by an admin — guardians for their youth, and (only when the box is ticked on an adult-tracked event) adults for themselves. Nobody else can be texted from the kiosk, ever. STOP is honored automatically for both.</div>
 </section>
 
 <section id="station">
-  <h3>Station mode (per-patrol devices)</h3>
-  <p>Tap the <b>station pill</b> (top bar) to cycle a device through patrol scopes: "All patrols" → each patrol in turn. A patrol-scoped station narrows name search and the on-site view to that patrol — handy when each patrol leader carries a sign-out phone. <b>Badge scans always work regardless of scope.</b> The setting sticks per device.</p>
+  <h3>Station mode (per-patrol / per-level devices)</h3>
+  <p>The <b>Patrol</b> and <b>Level</b> dropdowns under the search box scope this device: name search and the on-site view show only youth matching what you pick. Use either alone or both together (e.g. Level "Navigators" across all patrols, or one patrol within a level) — handy when each patrol leader carries a sign-out phone, or when a level meets in its own room. <b>Badge scans always work regardless of scope</b>, and <b>adults and visitors always stay visible</b> (they have no patrol or level), so nobody gets stuck at the door. Each dropdown sticks per device until you set it back to "All".</p>
 </section>
 
 <section id="offline">
@@ -403,7 +404,8 @@
     <tr><td>Handle "signer not on the list"</td><td>Pick "Other adult…" or confirm the staff override — it's recorded for review</td></tr>
     <tr><td>Check in a first-time visitor</td><td>+ Visitor → youth name + parent name, phone &amp; email (all required) → <b>Add visitor</b> → they're in the cart</td></tr>
     <tr><td>Check in visiting siblings</td><td>+ Visitor → first child + parent → <b>Add + another youth</b> → next child's name only (same parent) → repeat → Add visitor on the last one</td></tr>
-    <tr><td>See who's still here</td><td>Tap the On site pill (filter by patrol; sort by last name, sign-in time, patrol, or first name)</td></tr>
+    <tr><td>See who's still here</td><td>Tap the On site pill (narrow with the Patrol / Level dropdowns; sort by last name, sign-in time, patrol, or first name)</td></tr>
+    <tr><td>Show only one level (or patrol) on this phone</td><td>Kiosk → the <b>Level</b> / <b>Patrol</b> dropdowns under the search box — sticks per device; scans and adults are never hidden</td></tr>
     <tr><td>Text families at pickup time</td><td>On site screen → 🔔 Text guardians (opt-in families only)</td></tr>
     <tr><td>Announce "we're running late"</td><td>On site screen → ✉️ Message → type it → send</td></tr>
     <tr><td>Fix a wrong sign-in/out</td><td>Admin → Transactions → open it → Void</td></tr>

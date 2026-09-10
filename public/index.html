@@ -41,7 +41,6 @@
     <button id="event-pill" class="pill event-pill" title="Change event">No event</button>
     <div class="topbar-right">
       <button id="queue-pill" class="pill ghost-pill" hidden></button>
-      <button id="station-pill" class="pill ghost-pill" title="Station patrol scope">All patrols</button>
       <button id="onsite-pill" class="pill onsite-pill">On site: 0</button>
       <button id="staff-pill" class="pill ghost-pill"></button>
     </div>
@@ -50,6 +49,13 @@
   <div class="scan-row">
     <button id="btn-camera" class="btn big">📷 Scan badge</button>
     <input id="search-input" type="search" placeholder="Search name…" autocomplete="off">
+  </div>
+  <div class="filter-row" id="kiosk-filters">
+    <label class="filter"><span>Patrol</span>
+      <select id="kiosk-patrol" title="Show only this patrol on this device"></select></label>
+    <label class="filter"><span>Level</span>
+      <select id="kiosk-level" title="Show only this level on this device"></select></label>
+    <span id="kiosk-filter-note" class="filter-note" hidden>Badge scans still accept anyone.</span>
   </div>
   <div id="search-results" class="results" hidden></div>
   <div class="wedge-note">Bluetooth scanner ready — just scan.</div>
@@ -75,7 +81,10 @@
     <button id="onsite-notify" class="pill ghost-pill">🔔 Text guardians</button>
     <button id="onsite-message" class="pill ghost-pill">✉️ Message</button>
   </header>
-  <div id="patrol-filters" class="patrol-filters"></div>
+  <div class="filter-row" id="onsite-filters">
+    <label class="filter"><span>Patrol</span><select id="onsite-patrol"></select></label>
+    <label class="filter"><span>Level</span><select id="onsite-level"></select></label>
+  </div>
   <div id="onsite-sort" class="patrol-filters onsite-sort" aria-label="Sort on-site list"></div>
   <div id="onsite-list" class="onsite-list"></div>
 </section>

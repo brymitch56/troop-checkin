@@ -149,6 +149,18 @@ a.pill { text-decoration: none; display: inline-flex; align-items: center; }
 .actions .primary { flex: 1; }
 
 /* ---------- on-site list ---------- */
+/* Filter row (kiosk search scope + on-site view): labelled dropdowns, big
+   enough for a thumb on a phone at the door. Wraps rather than squeezing. */
+.filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 8px 0 12px; }
+.filter-row .filter { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.filter-row select {
+  font-family: inherit; font-size: 15px; font-weight: 700; color: var(--ink);
+  padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 999px;
+  background: var(--card); max-width: 44vw;
+}
+.filter-row select.active { border-color: var(--pine); background: var(--pine); color: #fff; }
+.filter-row .filter-note { font-size: 13px; color: var(--muted); }
+
 .patrol-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .patrol-filters .pill.active { background: var(--pine); color: #fff; }
 /* on-site sort pills: same row style, visually secondary to the patrol filter */

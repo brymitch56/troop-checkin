@@ -178,10 +178,20 @@
     return rows.filter((r) => r.event_id === eventId);
   }
 
+  // Kiosk filter choices (patrol / level) straight from the snapshot, so the
+  // dropdowns are populated offline exactly as they are online.
+  async function facets() {
+    const people = await getAll('people');
+    const of = (key) => [...new Set(people
+      .filter((p) => p.is_youth && p[key])
+      .map((p) => String(p[key])))].sort((a, b) => a.localeCompare(b));
+    return { patrols: of('patrol'), levels: of('level') };
+  }
+
   window.Offline = {
     saveSnapshot, searchPeople, findByBadge, guardiansOf, currentEvents,
     markOpen, onsite, getPerson, queueTxn, queueSize, flush,
-    conflictCount, conflictList, clearConflict, formStatus,
+    conflictCount, conflictList, clearConflict, formStatus, facets,
     takenAt: () => kvGet('taken_at'),
   };
 })();

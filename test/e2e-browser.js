@@ -180,9 +180,13 @@ async function main() {
   step('sign-out closes open stay → 2 on site');
 
   // -- station mode: scope roster view to one patrol -------------------------
-  await click('#station-pill');
-  await page.waitForFunction(() => document.getElementById('station-pill').textContent.startsWith('Station:'));
-  const station = await page.$eval('#station-pill', (el) => el.textContent);
+  await page.waitForFunction(() => document.getElementById('kiosk-patrol').options.length > 1);
+  const station = await page.evaluate(() => {
+    const sel = document.getElementById('kiosk-patrol');
+    sel.value = sel.options[1].value; // first real patrol
+    sel.dispatchEvent(new Event('change'));
+    return sel.value;
+  });
   await page.type('#search-input', 'mil', { delay: 60 }); // Frank Miller — Eagles
   await new Promise((r) => setTimeout(r, 500));
   const visible = await page.evaluate(() => {
@@ -192,8 +196,11 @@ async function main() {
   if (station.includes('Eagles')) assert.ok(visible.some((v) => v.includes('Frank')));
   else assert.equal(visible.length, 0, `station ${station} should hide Frank (Eagles): ${visible}`);
   await page.$eval('#search-input', (el) => (el.value = ''));
-  // reset to all patrols for a clean state
-  await page.evaluate(() => localStorage.removeItem('station-patrol'));
+  // reset to all patrols/levels for a clean state
+  await page.evaluate(() => {
+    localStorage.removeItem('station-patrol');
+    localStorage.removeItem('station-level');
+  });
   step(`station mode scopes search (${station.trim()})`);
 
   // -- admin UI smoke --------------------------------------------------------
