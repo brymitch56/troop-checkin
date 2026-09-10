@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v62'; // v62: portal wording follows ROSTER_SOURCE_NAME (AHGfamily instances stop saying TLC); portal.js precached
+const VERSION = 'tc-v64'; // v64: clickable guardian/youth names in the person editor (admin.js/.css)
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
