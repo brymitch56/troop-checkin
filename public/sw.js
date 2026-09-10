@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v67'; // v67: themed /icon.svg — the app mark follows the palette, so a second instance is not a lookalike tab
+const VERSION = 'tc-v68'; // v68: themed apple-touch-icon + theme-color — the phone's home screen and browser chrome follow the palette too
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
