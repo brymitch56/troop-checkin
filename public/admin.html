@@ -299,6 +299,29 @@
       here as a <b>pending import</b>. It never commits on its own — you approve or discard the diff below.
       Only one pending import exists at a time; a newer fetch replaces the old one.</p>
       <p id="sync-status" class="hint left"></p>
+
+      <!-- portal sign-in: the second factor is entered here, once per session -->
+      <div id="portal-conn" class="panel sub">
+        <h4>Trail Life Connect sign-in</h4>
+        <p id="portal-conn-status" class="hint left"></p>
+        <div id="portal-code-box" class="filters" hidden>
+          <input id="portal-code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="12" placeholder="Code from your phone">
+          <button id="portal-code-submit" class="btn primary small">Submit code</button>
+          <button id="portal-code-cancel" class="btn ghost small">Cancel</button>
+        </div>
+        <div class="row wrap">
+          <button id="portal-connect" class="btn ghost small">Connect</button>
+          <button id="portal-disconnect" class="btn ghost small" hidden>Disconnect</button>
+        </div>
+        <p class="hint left">Trail Life Connect texts a code every time a password is used, which no
+        unattended job can answer. So you sign in <b>here</b>, once: press Connect, type the code it
+        texts you, and the server keeps that session — the weekly roster fetch, attendance write-back
+        and permission-form sync all reuse it and never ask for a code. When the portal eventually
+        expires the session, this panel says so and the syncs pause instead of locking the account.
+        <b>Do it while you have your phone</b> — the code is only good for a few minutes.</p>
+      </div>
+
       <div id="sync-pending"></div>
       <details id="sync-creds">
         <summary>Trail Life Connect credentials</summary>

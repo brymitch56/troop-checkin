@@ -1383,7 +1383,9 @@ async function loadSync() {
   if (s.last_run) {
     bits.push(`Last run ${fmtDT(s.last_run)}: ` + (s.last_status === 'ok'
       ? `✅ ok (${s.last_rows} rows)`
-      : `❌ ${esc(s.last_error || 'failed')}`));
+      : s.last_status === 'code_required'
+        ? `📲 stopped for a sign-in code — ${esc(s.last_error || 'enter it below')}`
+        : `❌ ${esc(s.last_error || 'failed')}`));
   } else if (s.configured) {
     bits.push('No runs yet.');
   }
@@ -1432,11 +1434,83 @@ async function loadSync() {
   }
   $('sync-cred-pass').placeholder = c.source === 'admin' ? 'New password (blank = keep current)' : 'TLC password';
 
+  renderPortalConn(s.portal_session || {}, s.portal_pending || null, !!s.configured);
+
   // poll while a sync is running so the result appears without a manual refresh
   clearTimeout(syncTimer);
   if (s.running && !$('tab-import').hidden) syncTimer = setTimeout(loadSync, 5000);
 }
+// ---------------------------------------------- portal sign-in (2FA) ----
+// One panel with three states: no session, waiting on a code, connected.
+// The code itself is never stored anywhere — it goes straight to the portal.
+function renderPortalConn(sess, pending, configured) {
+  const box = $('portal-conn');
+  if (!box) return;
+  const line = $('portal-conn-status');
+  box.classList.toggle('needs-code', !!pending);
+  $('portal-code-box').hidden = !pending;
+  $('portal-disconnect').hidden = !sess.connected;
+  $('portal-connect').disabled = !configured;
+  $('portal-connect').textContent = sess.connected ? 'Reconnect' : 'Connect';
+
+  if (pending) {
+    line.innerHTML = `📲 <b>Waiting for the code.</b> ` +
+      (pending.prompt ? `${esc(pending.prompt)} ` : 'Trail Life Connect just sent one to your phone. ') +
+      `Enter it below by ${fmtDT(pending.expires_at)}.`;
+    if (!$('portal-code').value) $('portal-code').focus();
+  } else if (sess.connected) {
+    line.innerHTML = `🔗 <b>Connected.</b> Signed in ${fmtDT(sess.connected_at)}` +
+      (sess.last_ok_at ? `, last used ${fmtDT(sess.last_ok_at)}` : '') +
+      `. Syncs reuse this session — no code needed until Trail Life Connect expires it.`;
+  } else if (sess.readable === false && sess.saved_at) {
+    line.innerHTML = `⚠ A session was stored but can no longer be read (the server's CRED_KEY changed). Press Connect to sign in again.`;
+  } else {
+    line.innerHTML = configured
+      ? 'Not connected. Syncs will stop and ask for a code the first time they need the portal — press <b>Connect</b> now, while you have your phone.'
+      : 'Save credentials below first, then connect.';
+  }
+}
+
+async function portalRefresh(msg) {
+  if (msg) toast(msg);
+  await loadSync();
+}
+
 document.addEventListener('click', async (e) => {
+  if (e.target.id === 'portal-connect') {
+    const btn = e.target;
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    try {
+      const r = await jpost('/admin/portal-session/connect', {});
+      $('portal-code').value = '';
+      await portalRefresh(r.code_required
+        ? 'Code sent — check your phone.'
+        : 'Connected — the portal session is stored.');
+    } catch (err) { toast(err.message, true); await loadSync(); }
+    finally { btn.disabled = false; }
+  }
+  if (e.target.id === 'portal-code-submit') {
+    const code = $('portal-code').value.trim();
+    if (!code) return toast('Type the code from the text message.', true);
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      await jpost('/admin/portal-session/code', { code });
+      $('portal-code').value = '';
+      await portalRefresh('Connected — that was the last code you need for this session.');
+    } catch (err) { toast(err.message, true); await loadSync(); }
+    finally { btn.disabled = false; }
+  }
+  if (e.target.id === 'portal-code-cancel') {
+    $('portal-code').value = '';
+    try { await api('/admin/portal-session/challenge', { method: 'DELETE' }); } catch { /* nothing to clear */ }
+    await loadSync();
+  }
+  if (e.target.id === 'portal-disconnect') {
+    if (!confirm('Forget the stored Trail Life Connect session? The next sync stops and asks for a new code.')) return;
+    try { await api('/admin/portal-session', { method: 'DELETE' }); await portalRefresh('Session forgotten'); }
+    catch (err) { toast(err.message, true); }
+  }
   if (e.target.id === 'sync-now') {
     try { await jpost('/admin/roster-sync/run', {}); toast('Sync started — this can take a couple of minutes.'); loadSync(); }
     catch (err) { toast(err.message, true); }
@@ -1474,6 +1548,13 @@ document.addEventListener('click', async (e) => {
       toast('Saved credentials removed');
       loadSync();
     } catch (err) { toast(err.message, true); }
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.id === 'portal-code' && e.key === 'Enter') {
+    e.preventDefault();
+    $('portal-code-submit').click();
   }
 });
 

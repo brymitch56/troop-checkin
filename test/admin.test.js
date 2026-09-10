@@ -430,3 +430,36 @@ test('backup: VACUUM INTO snapshot restores onto a scratch DB (exit test)', asyn
   assert.equal(people, db.prepare('SELECT COUNT(*) c FROM person').get().c);
   assert.equal(txns, db.prepare('SELECT COUNT(*) c FROM txn').get().c);
 });
+
+// -------------------------------------------------- portal sign-in (2FA) ---
+// Route-level guards only; the sign-in mechanics live in portalSignin.test.js.
+test('portal sign-in: status is honest before anything is configured', async () => {
+  const r = await req('GET', '/api/admin/portal-session', { cookie: adminCookie });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.session.connected, false);
+  assert.equal(r.json.pending, null);
+  assert.equal(r.json.credentials_configured, false);
+});
+
+test('portal sign-in: Connect refuses before credentials exist (never posts a blank password)', async () => {
+  const r = await req('POST', '/api/admin/portal-session/connect', { body: {}, cookie: adminCookie });
+  assert.equal(r.status, 422);
+  assert.match(r.json.error, /credentials are not configured/i);
+});
+
+test('portal sign-in: a code with no live prompt is 410, not a mystery failure', async () => {
+  const r = await req('POST', '/api/admin/portal-session/code', { body: { code: '123456' }, cookie: adminCookie });
+  assert.equal(r.status, 410);
+  assert.match(r.json.error, /expired/i);
+});
+
+test('portal sign-in: the panel is admin-only', async () => {
+  assert.equal((await req('GET', '/api/admin/portal-session', { cookie: doorCookie })).status, 403);
+  assert.equal((await req('GET', '/api/admin/portal-session')).status, 401);
+});
+
+test('portal sign-in: Disconnect is safe when there is nothing stored', async () => {
+  const r = await req('DELETE', '/api/admin/portal-session', { cookie: adminCookie });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.session.connected, false);
+});

@@ -111,6 +111,7 @@
   <a href="#txns">Transactions, voids &amp; corrections</a>
   <a href="#reports">Reports, renewals &amp; CSV exports</a>
   <a href="#import">Roster import &amp; sync</a>
+  <a href="#portalsignin">TLC sign-in (texted code)</a>
   <a href="#writeback">TLC attendance write-back</a>
   <a href="#staff">Staff accounts</a>
   <a href="#integrations">Integrations (API &amp; webhook)</a>
@@ -358,6 +359,18 @@
   <h3>Automatic roster sync</h3>
   <p>The Import tab can also fetch the export from Trail Life Connect <em>for</em> you — on a weekly schedule (if the server admin enabled the timer) or via <b>Sync now</b>. A fetch never changes anything by itself: it stages a <b>pending import</b> showing when it was fetched, the row count, and the full add/update/deactivate diff, with <b>Approve</b> / <b>Discard</b> buttons. Approving runs exactly the same commit path as a manual upload; only one pending import exists at a time (a newer fetch replaces the old one and says so). The panel shows the last run's status, so a broken sync is visible instead of silent. The Trail Life Connect login it uses can be entered and updated right in the panel ("Trail Life Connect credentials") — the password is stored on the check-in server, used only to download the export, and never displayed again. One caution: if that account has multiple Trail Life Connect roles, TLC signs in under whichever role was used <em>last</em>, and the export only works from a role with member-list access (like Troopmaster) — if a sync fails or looks too small, check the account's active role first.</p>
 
+  <h3 id="portalsignin">Trail Life Connect sign-in (the texted code)</h3>
+  <p>Trail Life Connect now texts a security code <em>every</em> time a password is used to sign in. No unattended job can answer a text message, so the sync signs in a different way: <b>you</b> sign it in once, and the server keeps that session for everything afterwards.</p>
+  <ul>
+    <li><b>Doing it:</b> Import tab → <b>Trail Life Connect sign-in</b> → <b>Connect</b>. Within a few seconds the panel turns orange and repeats what Trail Life Connect said (usually which phone it texted). Type the code, press <b>Submit code</b>, and the panel reads <b>Connected</b>. <b>Have your phone in hand before you press Connect</b> — the code is only good for a few minutes.</li>
+    <li><b>After that, nothing asks you again.</b> The weekly roster fetch, <b>Sync now</b>, the attendance write-back and the permission-form sync all reuse that one session.</li>
+    <li><b>When it eventually expires</b> (Trail Life Connect decides when — it may be weeks), the panel says <b>Not connected</b>, the sync status line reads "stopped for a sign-in code", and the write-back pauses. Nothing retries on its own, on purpose: every attempt would text you again and repeated failures can lock the account. Press <b>Connect</b> and enter one code.</li>
+    <li><b>Mistyped the code?</b> Just retype it — the same text message stays valid, and you won't be sent a new one.</li>
+    <li><b>Disconnect</b> forgets the stored session (useful if you changed the Trail Life Connect password). The next sync will ask for a code.</li>
+    <li>The panel also shows <em>when</em> you signed in and when a sync last used the session — worth noting, because that gap is the only way to learn how often you'll have to do this.</li>
+  </ul>
+  <p><b>One warning about passkeys.</b> If Trail Life Connect offers you a passkey for the account the check-in server uses, <b>don't add one to that account</b>. A passkey replaces the password entirely, and the password is the only thing the server has. Passkeys are a fine choice for your own personal Trail Life Connect account — just not for the sync login.</p>
+
   <h3 id="writeback">TLC attendance write-back</h3>
   <p>The Import tab's other panel closes the loop in the opposite direction: when enabled, everyone who <b>signs out</b> at the kiosk (or is closed out by an admin, or confirmed picked up by SMS) is marked <b>Attended</b> on the matching Trail Life Connect event — the same tick you'd make by hand on TLC's Track Attendance page. It's <b>off by default</b> and uses the same saved TLC credentials as the roster sync.</p>
   <ul>
@@ -443,6 +456,9 @@
     <tr><td>Kiosk picked the wrong event</td><td>Overlapping events — the kiosk guesses by which rush is nearest. Tap the event pill and switch; sign-outs follow the selected event.</td></tr>
     <tr><td>❌ row in the TLC write-back log</td><td>Open it: usually a name that isn't (or is twice) on the TLC roster. Set that person's TLC user id in the editor, then Retry failed.</td></tr>
     <tr><td>Write-back panel shows a red "paused" line</td><td>The TLC login was rejected — re-save the credentials under Automatic roster sync (it never retries by itself, to protect the account).</td></tr>
+    <tr><td>Sync status says "stopped for a sign-in code"</td><td>The Trail Life Connect session expired. Import tab → Trail Life Connect sign-in → <b>Connect</b>, then type the code it texts you. Have your phone ready first.</td></tr>
+    <tr><td>Sign-in panel says "Waiting for the code" and the text never came</td><td>Check the phone number on the Trail Life Connect account. Press <b>Cancel</b>, then <b>Connect</b> again to send a fresh one — don't press Connect repeatedly, each press sends another text.</td></tr>
+    <tr><td>Sign-in panel says a session was stored but can't be read</td><td>The server's credential key changed. Press <b>Connect</b> and sign in again; if it keeps happening, tell the app administrator.</td></tr>
     <tr><td>App looks stale after an update</td><td>Reload twice (the app shell is cached for offline use; the second reload activates the new version). Still stale? Do one <b>hard refresh</b>: Ctrl+Shift+R on a computer; on Android, Chrome Settings → Privacy → Clear browsing data → "Cached images and files"; on iPad, Settings → Safari → Clear History and Website Data. Then reload normally.</td></tr>
     <tr><td>Something looks wrong server-side</td><td>Contact the troop's app administrator — the server keeps full logs, and nightly backups mean nothing is lost.</td></tr>
   </table>

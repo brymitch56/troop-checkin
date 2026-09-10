@@ -57,10 +57,13 @@ function saveSettings(patch) {
 
 const getState = () => readMeta(STATE_KEY, {
   last_run: null, last_status: null, last_error: null, auth_failed_at: null,
+  // set when the portal wanted a sign-in code: the sweep waits for a human
+  // rather than re-posting the password (every attempt texts another code)
+  code_required_at: null,
 });
 const patchState = (p) => { const s = { ...getState(), ...p }; writeMeta(STATE_KEY, s); return s; };
 // re-saving credentials clears the auth latch (called from the admin route)
-const clearAuthFailure = () => patchState({ auth_failed_at: null });
+const clearAuthFailure = () => patchState({ auth_failed_at: null, code_required_at: null });
 
 // ------------------------------------------------------- event mapping -----
 // Portal iCal UIDs are three dash-separated segments with the 12-char event
@@ -220,13 +223,12 @@ function matchPerson(person, list) {
 // A logged-in TLC session built on fetch-roster's proven primitives.
 async function tlcSession(env = process.env) {
   const F = fetcher();
-  const cfg = F.makeConfig(env);
-  try {
-    const saved = rosterSync().getTlcCredentials();
-    if (saved) { cfg.email = saved.email; cfg.password = saved.password; }
-  } catch { /* env credentials apply */ }
+  const cfg = F.configWithSavedCredentials(env);
   const jar = new F.CookieJar();
-  const token = await F.login(cfg, jar); // throws FetchError(2) on rejection
+  // Reuses the stored portal session when there is one, so a portal that
+  // demands a texted code at every password sign-in does not stop the sweep.
+  // Throws FetchError(2) when rejected, FetchError(6) when a code is needed.
+  const token = await F.login(cfg, jar);
   return { cfg, jar, token };
 }
 
@@ -377,6 +379,9 @@ async function runPush({ manual = false, env = process.env } = {}) {
   if (!manual && state.auth_failed_at) {
     return { skipped: true, reason: portal.t('Paused after a failed TLC login — re-save credentials or use Push now.') };
   }
+  if (state.code_required_at) {
+    return { skipped: true, reason: portal.t('Paused until the TLC sign-in code is entered — Admin → Roster import → Connect.') };
+  }
   const pending = db.prepare(`SELECT * FROM tlc_attendance_push WHERE status = 'pending' ORDER BY id`).all();
   if (!pending.length) return { skipped: true, reason: 'Nothing pending.' };
 
@@ -392,16 +397,20 @@ async function runPush({ manual = false, env = process.env } = {}) {
     let session;
     try {
       session = await tlcSession(env);
-      if (state.auth_failed_at) patchState({ auth_failed_at: null }); // login works again
+      // signed in again: drop both latches
+      if (state.auth_failed_at || state.code_required_at) patchState({ auth_failed_at: null, code_required_at: null });
     } catch (e) {
       // Auth latch: NEVER retry a rejected login on a timer. code 2 = login
       // rejected (fetch-roster semantics); anything else is transient network.
       const auth = e && e.code === 2;
+      const needsCode = e && e.code === 6;
       patchState({
-        last_run: new Date().toISOString(), last_status: 'failed',
-        last_error: e.message, ...(auth ? { auth_failed_at: new Date().toISOString() } : {}),
+        last_run: new Date().toISOString(), last_status: needsCode ? 'code_required' : 'failed',
+        last_error: e.message,
+        ...(auth ? { auth_failed_at: new Date().toISOString() } : {}),
+        ...(needsCode ? { code_required_at: new Date().toISOString() } : {}),
       });
-      return { failed_login: true, auth_latched: !!auth, error: e.message };
+      return { failed_login: true, auth_latched: !!auth, code_required: !!needsCode, error: e.message };
     }
 
     const lists = new Map(); // tlcEventId → parsed user list (one fetch each)

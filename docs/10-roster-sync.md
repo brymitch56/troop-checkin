@@ -29,7 +29,7 @@ Additional details:
 - `export=csv` and `export=xlsx` use the identical mechanism, including the same polling endpoint. Only the parameter value differs.
 - **The server mislabels the CSV response** as `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Never trust the content type — sniff the bytes. A real xlsx begins `50 4b 03 04` (`PK`, a zip signature); the CSV begins with plain text.
 - **Use the xlsx export.** It matches the format the import parser was built and validated against (FR-10), so nothing downstream changes.
-- No MFA or CAPTCHA on the login form as of this writing. If TLC adds MFA, unattended login breaks and this feature must fall back to manual upload — design for that failure, don't fight it.
+- ~~No MFA or CAPTCHA on the login form as of this writing.~~ **MFA arrived, 2026-09-10** — see "Second factor" below. Unattended *password* login is over; unattended *syncing* is not.
 - **Multi-role accounts (found in live use, 2026-07-26):** TLC signs a session in under the account's **last-used role**, and the export requires a role with member-list access (e.g. Troopmaster). There is no verified way to detect or switch the active role over HTTP, so the fetcher can't check it — instead, every sanity-check failure message names the wrong-role possibility, and the admin credentials panel carries a standing warning. Mitigations: switch the account to the permitted role in a browser before relying on the sync, or use a dedicated single-role account. If the role marker / role-switch request is ever captured from DevTools (like the findings above), automated detection can be added.
 - The `new=0` parameter's meaning is unconfirmed. Verify it does not mean "changes since last export."
 
@@ -57,6 +57,8 @@ A working starting implementation exists and should be reviewed, corrected, and 
 | `TLC_BASE` | defaults to `https://www.traillifeconnect.com` |
 | `TLC_EXPORT_PATH` | defaults to `/user/index?export=xlsx&new=0` (TLC). Sibling portals on the same platform need their own: AHGfamily is `/user/exportexcel?format=xlsx` (the TLC path returns HTML there). The importer maps that portal's `Squad` → patrol and `Health Form On File` → health-form date (Yes/No cells are ignored) |
 | `TLC_ENABLED` | kill switch; `false` makes the job a no-op |
+| `TLC_LOGIN_PATH` | login form path, also used to probe whether a stored session is still signed in (`TLC_PROBE_PATH` overrides the probe alone) |
+| `TLC_MFA_FIELD` / `TLC_MFA_PATH` | escape hatches for the second-factor form: pin the code input's name / where to post it. Empty by default — the form is normally found by shape |
 | `HEALTHCHECK_URL` | optional success ping (healthchecks.io) |
 
 Credentials live in `.env` (`chmod 600`, owned by the service user, gitignored) **or** — since the 2026-07-26 addition — can be entered/updated by an admin in Admin → Import → "Trail Life Connect credentials": stored in the app database (`meta` table), write-only toward the browser (never returned by any API), and taking precedence over `.env` when present. Either way they must never appear in logs, error messages, commit history, or test fixtures.
@@ -65,10 +67,67 @@ Credentials live in `.env` (`chmod 600`, owned by the service user, gitignored) 
 
 **Env loading (fixed 2026-07-26):** `fetch-roster.js` self-loads `.env` via `require('../lib/env')` — the same parser the app uses — so the standalone CLI and the systemd timer see credentials without any preload. The systemd unit also sets `EnvironmentFile=-.env` as defense-in-depth; note systemd's parser is not a shell parser and its values win over env.js's (env.js never overrides existing process.env), so keep `.env` values simple or prefer the admin-saved credentials.
 
+### Second factor (added 2026-09-10, tc-v66)
+
+The portal now enforces MFA at account level. On the `/user/mfa-setup` page the
+two offered factors read:
+
+- **Passkey** — *"Replaces your password entirely"*, and *"can only be added
+  from a mobile device"*. **Do not enable this on the sync account**: it takes
+  the password out of the flow, and the password is what a headless client has.
+- **Text message code** — *"You'll enter your password and a code sent to your
+  phone number at every sign-in."* This is the one to use. There is no
+  trusted-device or "remember this browser" option; the page says *every*
+  sign-in and means it.
+
+So a password POST no longer returns a session — it returns a code form. That
+breaks *every* portal consumer at once, because they all sign in through
+`fetch-roster.js login()`: the weekly roster fetch, the attendance write-back
+sweep (docs/12), and the permission-form sync.
+
+**The design is connect once, machine continues** (`server/lib/portalSession.js`):
+
+| | |
+|---|---|
+| 1 | A human presses **Connect** in Admin → Import (or a job runs, finds no usable session, and parks a prompt for the next human). |
+| 2 | The server posts the password. The portal answers with a code form; that form and the half-authenticated cookie jar are parked, encrypted, for 15 minutes. |
+| 3 | The human types the code off their phone. The server posts it and keeps the resulting cookie jar. |
+| 4 | Every later sign-in restores that jar and probes `GET $TLC_LOGIN_PATH` — a live session is redirected away from the form, a dead one gets the form back. Live → no password, no code. Dead → back to step 1. |
+
+Notes that matter:
+
+- **The code form is found by shape, not by name.** `parseChallenge()` looks for
+  a `<form>` with no password input and one short free-text input whose name
+  looks like a code field, and carries every hidden input (Yii's `_csrf`
+  included) back verbatim. The two sibling portals name things differently and
+  either can change; `TLC_MFA_FIELD` / `TLC_MFA_PATH` pin the field name and
+  post target if a redesign ever outruns the detector.
+- **Nothing retries.** Each password POST costs the admin a text message, so a
+  parked prompt latches the attendance sweep (`code_required_at`) exactly the
+  way a rejected password latches it, and only a human clears it. A *rejected
+  code* re-parks the refreshed form instead, so retyping a digit never costs a
+  new message.
+- **Session cookies and the parked prompt are encrypted at rest** with the same
+  `CRED_KEY` that protects the password — backups and DB snapshots hold only
+  ciphertext. A missing or rotated key degrades to "not connected", never to a
+  crash: worst case is one more sign-in.
+- **No automatic code retrieval was built, on purpose.** A mail/SMS relay that
+  reads the code and types it back would put both factors in the same machine —
+  single-factor auth, on an account that reaches youth records, dressed as two.
+  A human typing six digits once per session lifetime *is* the second factor.
+  (If the portal ever offers API tokens or a trusted-device option, that is the
+  right thing to adopt instead — the request drafted for TLC support asks for
+  exactly that, on the precedent that `ICAL_URL` is already a tokenized,
+  unauthenticated feed.)
+- **Unknown, to be measured in use:** how long a portal session survives. That
+  number is the whole cost of the scheme — it is how often somebody has to be
+  standing there with a phone. The admin panel shows "signed in <when>, last
+  used <when>", which is the measurement.
+
 ### Safety rules (non-negotiable)
 
 1. **The job never commits.** It downloads, validates, and hands the file to `/api/roster/import?mode=preview`. A pending import appears in the admin UI for one-tap approval.
-2. **A failed login exits immediately.** No retry loop — repeated failures risk locking the TLC account.
+2. **A failed login exits immediately.** No retry loop — repeated failures risk locking the TLC account. The same rule covers the second factor: a code prompt exits with code 6 and waits for a human, because every attempt texts the admin another message.
 3. **Validate before importing.** Reject: files under 512 bytes; anything beginning with `<!doctype`/`<html>` (an expired session returns a login page); a file with no "Member Number" header row; fewer than 5 data rows.
 4. **Row-count guard.** Compare against the previous successful fetch, stored in `data/roster-fetch-state.json`. Abort if the count drops more than 20% (tighten if the filter question above resolves badly). Rationale: the realistic failure mode isn't a crash — it's a partial export parsing cleanly and deactivating the roster the night before a campout.
 5. **Downloaded files are PII.** Write to `data/roster-exports/` with mode `600`. That directory must be gitignored. Retain a reasonable window (e.g. 8 weeks) and prune older files.

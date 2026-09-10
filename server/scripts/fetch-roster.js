@@ -8,6 +8,11 @@
  * Flow (docs/10-roster-sync.md — observed TLC behaviour, July 2026):
  *   1. GET  /login                            → _csrf cookie + token
  *   2. POST /login                            → session cookie (302 on success)
+ *      …or, when the portal requires a second factor, a CODE FORM instead:
+ *      the half-authenticated jar and that form are parked in lib/
+ *      portalSession for a human to finish in Admin → Import, and a
+ *      successful sign-in stores the cookie jar so later runs skip the
+ *      password (and the code) entirely — see lib/portalSession.js
  *   3. GET  $TLC_EXPORT_PATH                  → 503, kicks off async export job
  *   4. POST /databuilder/get-download-status  → {"status":"pending"|"finished"}
  *      (headers: X-CSRF-Token, X-Requested-With: XMLHttpRequest)
@@ -31,6 +36,8 @@
  *
  * Exit codes: 0 ok/disabled · 1 config · 2 auth · 3 export · 4 sanity check
  *             · 5 staging (file saved but pending-import creation failed)
+ *             · 6 sign-in code required (a human must enter it in the admin)
+ *             · 7 sign-in code rejected
  */
 
 const fs = require('fs');
@@ -62,6 +69,15 @@ function makeConfig(env = process.env) {
     // confirmed the same /databuilder/get-download-status poll endpoint):
     loginPath: env.TLC_LOGIN_PATH || '/login',
     statusPath: env.TLC_STATUS_PATH || '/databuilder/get-download-status',
+    // Second-factor escape hatches. The code form is normally found by
+    // shape (see parseChallenge), so these stay empty unless a portal
+    // renders something the detector cannot see: TLC_MFA_FIELD pins the
+    // code input's name, TLC_MFA_PATH pins where to post it.
+    mfaField: env.TLC_MFA_FIELD || '',
+    mfaPath: env.TLC_MFA_PATH || '',
+    // Cheap page used to test whether a STORED session is still signed in;
+    // the login path is ideal because a live session redirects away from it.
+    probePath: env.TLC_PROBE_PATH || '',
     dataDir,
     outDir: path.join(dataDir, 'roster-exports'),
     stateFile: path.join(dataDir, 'roster-fetch-state.json'),
@@ -111,6 +127,9 @@ class CookieJar {
     this.absorbLines(lines);
   }
   header() { return [...this.map].map(([k, v]) => `${k}=${v}`).join('; '); }
+  // "name=value" lines — what portalSession stores and absorbLines() takes.
+  lines() { return [...this.map].map(([k, v]) => `${k}=${v}`); }
+  clear() { this.map.clear(); }
   get size() { return this.map.size; }
 }
 
@@ -160,8 +179,158 @@ function csrfFrom(html) {
   return hidden ? decodeHtml(hidden[1]) : null;
 }
 
+// ------------------------------------------------------- second factor ---
+// The portal now answers a correct password with a "enter the code we texted
+// you" form instead of a session. We have to recognise that form and repost
+// it later with a code a human typed, WITHOUT hard-coding field names we
+// have not seen: the two sibling portals differ, and either can change.
+//
+// So the form is found by SHAPE, in this order of evidence:
+//   - it is a <form> with no password input (that would be the login form
+//     re-rendered after a bad password — a different failure entirely), and
+//   - it has a short free-text input whose name looks like a code field
+//     (TLC_MFA_FIELD pins the name if a portal ever names it something
+//     unrecognisable), and
+//   - its hidden inputs (Yii's _csrf among them) are carried along verbatim,
+//     because reposting the form is exactly what a browser would do.
+// Everything else on the page is ignored.
+
+// Minimal tag scanners — the file already parses HTML with regexes rather
+// than pulling in a DOM dependency, and these follow the same rule.
+function attrOf(tagAttrs, name) {
+  const m = new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tagAttrs);
+  if (!m) return null;
+  const v = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : m[4]);
+  return decodeHtml(v || '');
+}
+function formsIn(html) {
+  const out = [];
+  const re = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+  let m;
+  while ((m = re.exec(html))) out.push({ attrs: m[1], body: m[2] });
+  return out;
+}
+function inputsIn(body) {
+  const out = [];
+  const re = /<input\b([^>]*)>/gi;
+  let m;
+  while ((m = re.exec(body))) {
+    const name = attrOf(m[1], 'name');
+    if (!name) continue;
+    out.push({ name, type: (attrOf(m[1], 'type') || 'text').toLowerCase(), value: attrOf(m[1], 'value') || '' });
+  }
+  return out;
+}
+
+// Names seen or plausible for a one-time-code input across this platform and
+// its siblings. Anchored to a word boundary so "passcode_hint" style names do
+// not sneak past on a substring.
+const CODE_FIELD_RE = /(^|[[\]_.\-])(code|otp|pin|token|mfa|2fa|twofactor|two_factor|authcode|verification|verifycode)/i;
+const CODE_INPUT_TYPES = new Set(['text', 'tel', 'number', 'password', '']);
+
+// The sentence the portal shows above the box ("We sent a code to •••-1234").
+// Display-only, straight back to the admin who is holding the phone.
+function challengePrompt(html) {
+  // Tags become line breaks, so a heading never runs into the paragraph
+  // under it and the first line that mentions a code is the real sentence.
+  const lines = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, '\n');
+  for (const raw of decodeHtml(lines).split('\n')) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (line.length > 4 && line.length <= 200 && /\bcodes?\b/i.test(line)) return line;
+  }
+  return null;
+}
+
+// Returns {action, method, field, hidden, csrf, prompt} when `html` is a code
+// prompt, otherwise null. `atPath` is where the page came from — the form's
+// own action wins, and this is the fallback for action="".
+function parseChallenge(html, atPath, cfg = {}) {
+  const page = String(html || '');
+  if (!page) return null;
+  if (/LoginForm\[password\]/.test(page)) return null; // the login form, not a code prompt
+  for (const f of formsIn(page)) {
+    const ins = inputsIn(f.body);
+    if (ins.some((i) => i.type === 'password' && /pass(word|wd)/i.test(i.name))) continue;
+    const field = cfg.mfaField
+      ? ins.find((i) => i.name === cfg.mfaField)
+      : ins.find((i) => i.type !== 'hidden' && CODE_INPUT_TYPES.has(i.type) && CODE_FIELD_RE.test(i.name));
+    if (!field) continue;
+    const hidden = {};
+    for (const i of ins) if (i.type === 'hidden') hidden[i.name] = i.value;
+    const action = cfg.mfaPath || attrOf(f.attrs, 'action') || atPath || '';
+    return {
+      action,
+      method: (attrOf(f.attrs, 'method') || 'POST').toUpperCase(),
+      field: field.name,
+      hidden,
+      csrf: hidden._csrf || csrfFrom(page) || null,
+      prompt: challengePrompt(page),
+    };
+  }
+  return null;
+}
+
+// ------------------------------------------------------- session storage ---
+// lib/portalSession keeps the signed-in cookie jar (and any parked code
+// prompt) in the database, encrypted. It needs a database, and this script
+// also runs in contexts that may not have one, so every call is guarded:
+// a store that is missing or unhappy degrades to "no stored session", which
+// costs one extra sign-in and never fails a fetch.
+function sessionStore() {
+  try { return require('../lib/portalSession'); } catch { return null; }
+}
+function tryStore(fn, fallback = null) {
+  const store = sessionStore();
+  if (!store) return fallback;
+  try { return fn(store); } catch { return fallback; }
+}
+
+// makeConfig plus the credentials an admin saved in the UI (DB wins over
+// .env, exactly as runFetch has always resolved them). Guarded so a context
+// without a database still gets a usable config from .env alone.
+function configWithSavedCredentials(env = process.env) {
+  const cfg = makeConfig(env);
+  try {
+    const saved = require('../lib/rosterSync').getTlcCredentials();
+    if (saved) { cfg.email = saved.email; cfg.password = saved.password; }
+  } catch { /* no DB here — env credentials apply */ }
+  return cfg;
+}
+
+// Is a restored jar still signed in? The login path is the perfect probe:
+// a live session is redirected away from it, a dead one gets the form back.
+// Returns the page's CSRF token (needed by later XHR calls) or null.
+async function probeSession(cfg, jar) {
+  const at = cfg.probePath || cfg.loginPath;
+  const res = await request(cfg, jar, at);
+  if (res.status >= 400) { await res.text().catch(() => {}); return null; }
+  const html = await res.text();
+  if (/LoginForm\[password\]/.test(html)) return null;    // bounced to the form
+  if (parseChallenge(html, at, cfg)) return null;          // half-authenticated
+  return csrfFrom(html);
+}
+
 // ----------------------------------------------------------------- login ---
-async function login(cfg, jar) {
+// opts.useStored=false forces a password sign-in (the admin's "Reconnect").
+// opts.park=false skips writing the code prompt to the database (tests).
+async function login(cfg, jar, opts = {}) {
+  // Fast path: reuse the session a human established. This is the whole
+  // reason the weekly fetch and the attendance sweep still run unattended
+  // on an account that demands a texted code at every password sign-in.
+  if (opts.useStored !== false) {
+    const lines = tryStore((s) => s.loadCookies(cfg.base));
+    if (lines && lines.length) {
+      jar.absorbLines(lines);
+      let token = null;
+      try { token = await probeSession(cfg, jar); } catch { /* network blip — sign in below */ }
+      if (token) { tryStore((s) => s.touch()); return token; }
+      jar.clear(); // expired: never carry its cookies into a fresh sign-in
+    }
+  }
+
   if (!cfg.email || !cfg.password) fail(1, 'TLC_EMAIL / TLC_PASSWORD not set.');
 
   const page = await request(cfg, jar, cfg.loginPath);
@@ -185,13 +354,78 @@ async function login(cfg, jar) {
     body: body.toString(),
   });
   const after = await res.text();
+
+  // Second factor. The password was accepted; the portal wants the code it
+  // just texted. Park the half-authenticated jar and the form, then STOP —
+  // this is never retried on a timer, because every attempt sends the human
+  // another text message. A human finishes it in Admin → Roster import.
+  const challenge = parseChallenge(after, cfg.loginPath, cfg);
+  if (challenge) {
+    const parked = opts.park === false ? null : tryStore((s) => s.putChallenge({
+      base: cfg.base, cookies: jar.lines(), challenge, prompt: challenge.prompt,
+    }));
+    const e = new FetchError(6,
+      'The portal asked for a sign-in code' + (challenge.prompt ? ` — ${challenge.prompt}` : '') +
+      '. Open Admin → Roster import and enter it there; automated syncs resume once the session is connected.');
+    e.challenge = challenge;
+    e.parked = parked;
+    throw e;
+  }
+
   // Success = Yii issues a 302 away from /login (we followed it). Failure =
   // the form re-renders in place with the password field present.
   if (/LoginForm\[password\]/.test(after)) {
     fail(2, 'Login rejected. Check credentials — do NOT retry in a loop, TLC may lock the account.');
   }
+  // A password-only sign-in still produces a session worth keeping: the next
+  // run skips the round trip, and on a portal WITH a second factor this is
+  // the line that makes "enter the code once" mean once.
+  tryStore((s) => s.saveCookies(jar, cfg.base));
   // fresh token from the signed-in page for the XHR polling step
   return csrfFrom(after) || token;
+}
+
+// Finish a parked sign-in with the code a human typed. Returns the CSRF
+// token of the signed-in page; the cookie jar is stored on the way out.
+// Throws FetchError(7) with a refreshed .challenge when the code is refused,
+// so the admin can retype without starting a new text message.
+async function submitChallenge(cfg, jar, challenge, code) {
+  const value = String(code || '').trim();
+  if (!value) fail(7, 'Enter the code the portal sent.');
+
+  const fields = { ...(challenge.hidden || {}) };
+  if (challenge.csrf && !fields._csrf) fields._csrf = challenge.csrf;
+  fields[challenge.field] = value;
+
+  const action = challenge.action || cfg.loginPath;
+  const res = await request(cfg, jar, action, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Origin: cfg.base,
+      Referer: action.startsWith('http') ? action : cfg.base + action,
+      ...(fields._csrf ? { 'X-CSRF-Token': fields._csrf } : {}),
+    },
+    body: new URLSearchParams(fields).toString(),
+  });
+  const html = await res.text();
+  if (res.status >= 400) {
+    fail(7, `The portal refused the code form (status ${res.status}) — start the sign-in again to get a fresh code.`);
+  }
+
+  const again = parseChallenge(html, action, cfg);
+  if (again) {
+    const e = new FetchError(7, 'That code was not accepted — check the digits and try again. ' +
+      'If it has expired, start a new sign-in to get a fresh code.');
+    e.challenge = again;
+    throw e;
+  }
+  if (/LoginForm\[password\]/.test(html)) {
+    fail(2, 'The portal sent us back to the sign-in form — start the sign-in again.');
+  }
+  tryStore((s) => s.saveCookies(jar, cfg.base));
+  tryStore((s) => s.clearChallenge());
+  return csrfFrom(html);
 }
 
 // ---------------------------------------------------------------- export ---
@@ -321,18 +555,12 @@ function pruneOldExports(cfg) {
 // Returns a result object; throws FetchError on failure. Never logs or
 // includes credentials anywhere.
 async function runFetch(env = process.env) {
-  const cfg = makeConfig(env);
+  // Admin-saved credentials (DB, entered in Admin → Import) take precedence
+  // over .env; .env stays the fallback.
+  const cfg = configWithSavedCredentials(env);
   if (!cfg.enabled) return { skipped: true, reason: 'TLC_ENABLED=false' };
 
   fs.mkdirSync(cfg.outDir, { recursive: true });
-
-  // Admin-saved credentials (DB, entered in Admin → Import) take precedence
-  // over .env; .env stays the fallback. Guarded: if the DB is unreachable in
-  // this context, fall back to env values rather than failing differently.
-  try {
-    const saved = require('../lib/rosterSync').getTlcCredentials();
-    if (saved) { cfg.email = saved.email; cfg.password = saved.password; }
-  } catch { /* no DB here — env credentials apply */ }
 
   const jar = new CookieJar();
   const token = await login(cfg, jar);
@@ -369,6 +597,8 @@ async function runFetch(env = process.env) {
 // ------------------------------------------------------------------- CLI ---
 module.exports = {
   FetchError, makeConfig, CookieJar, request, csrfFrom, decodeHtml,
+  attrOf, formsIn, inputsIn, parseChallenge, challengePrompt, configWithSavedCredentials,
+  probeSession, submitChallenge,
   login, pollUntilReady, fetchExport, detectFormat, sanityCheck,
   readState, writeState, pruneOldExports, localStamp, runFetch,
 };
@@ -386,7 +616,10 @@ if (require.main === module) {
       const cfg = makeConfig();
       if (!(e instanceof FetchError && e.code === 5)) { // 5 already recorded
         writeState(cfg, {
-          last_run: new Date().toISOString(), last_status: 'failed',
+          last_run: new Date().toISOString(),
+          // A code prompt is not a broken job — it is a job waiting on a
+          // human, and the admin page says so instead of crying "failed".
+          last_status: e instanceof FetchError && e.code === 6 ? 'code_required' : 'failed',
           last_error: e instanceof FetchError ? e.message : `Unexpected: ${e.message}`,
         });
       }

@@ -56,6 +56,12 @@
   padding: 14px 16px; margin: 12px 0;
 }
 .panel h3 { margin: 2px 0 10px; }
+/* nested panel (a sub-section inside a panel) — quieter than the parent */
+.panel .panel.sub { background: var(--bg, transparent); margin: 12px 0; padding: 12px 14px; }
+.panel .panel.sub h4 { margin: 0 0 8px; }
+.panel .panel.sub.needs-code { border-color: var(--blaze); }
+#portal-code { font-size: 18px; letter-spacing: 2px; padding: 10px 12px; max-width: 220px;
+  border: 1.5px solid var(--line); border-radius: var(--radius); background: var(--card); }
 .hint.left { text-align: left; }
 .row.wrap { flex-wrap: wrap; gap: 8px; display: flex; }
 

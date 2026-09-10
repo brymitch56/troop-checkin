@@ -708,6 +708,9 @@ router.get('/roster-sync', (req, res) => {
     last_error: state.last_error || null,
     last_rows: state.last_rows || null,
     pending: rosterSync.getPending(),
+    // portal sign-in (second factor) — one panel, one poll
+    portal_session: portalSession.sessionInfo(),
+    portal_pending: portalSession.challengeInfo(),
   });
 });
 
@@ -750,6 +753,85 @@ router.put('/roster-sync/credentials', (req, res) => {
 
 router.delete('/roster-sync/credentials', (req, res) => {
   res.json({ ok: true, ...rosterSync.clearTlcCredentials() });
+});
+
+// ------------------------------------------------ portal sign-in (2FA) -----
+// The portal texts a code at every password sign-in, so the password alone
+// no longer gets a session. These three routes are the human half of the
+// flow described in lib/portalSession.js: Connect posts the password and
+// comes back asking for the code; the code finishes the sign-in; the
+// resulting session is stored and every automated job rides it afterwards.
+//
+// Nothing here retries on its own — each password post costs the admin a
+// text message — and the code is never stored, only spent.
+const portalSession = require('../lib/portalSession');
+
+function portalStatus() {
+  return { session: portalSession.sessionInfo(), pending: portalSession.challengeInfo() };
+}
+
+// A fresh session un-pauses the write-back sweep's latches.
+function portalConnected() {
+  try { require('../lib/attendanceSync').clearAuthFailure(); } catch { /* pre-migration */ }
+  return { ok: true, connected: true, ...portalStatus() };
+}
+
+router.get('/portal-session', (req, res) => {
+  res.json({ ...portalStatus(), credentials_configured: !!rosterSync.credentialInfo().source });
+});
+
+router.post('/portal-session/connect', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) {
+    return res.status(422).json({ error: portal.t('Trail Life Connect credentials are not configured — save them first.') });
+  }
+  const F = require('../scripts/fetch-roster');
+  const cfg = F.configWithSavedCredentials();
+  const jar = new F.CookieJar();
+  try {
+    await F.login(cfg, jar, { useStored: false }); // always a real sign-in
+    res.json(portalConnected());
+  } catch (e) {
+    if (e && e.code === 6) return res.json({ ok: true, code_required: true, ...portalStatus() });
+    res.status(e && e.code === 1 ? 422 : 502).json({ error: e.message });
+  }
+});
+
+router.post('/portal-session/code', async (req, res) => {
+  const b = req.body || {};
+  const parked = portalSession.getChallenge(b.id || undefined);
+  if (!parked) {
+    return res.status(410).json({ error: 'That code prompt has expired — press Connect to start a new sign-in.' });
+  }
+  const F = require('../scripts/fetch-roster');
+  const cfg = F.configWithSavedCredentials();
+  const jar = new F.CookieJar();
+  jar.absorbLines(parked.cookies);
+  try {
+    await F.submitChallenge(cfg, jar, parked.challenge, b.code);
+    res.json(portalConnected());
+  } catch (e) {
+    // A refused code re-renders the same form with a new CSRF: re-park it so
+    // the admin can retype the SAME text message instead of asking for a new one.
+    if (e && e.code === 7 && e.challenge) {
+      const again = portalSession.putChallenge({
+        base: cfg.base, cookies: jar.lines(), challenge: e.challenge,
+        prompt: e.challenge.prompt || parked.prompt,
+      });
+      return res.status(400).json({ error: e.message, pending: again });
+    }
+    res.status(e && e.code === 2 ? 409 : 400).json({ error: e.message });
+  }
+});
+
+// Cancel just the prompt (a mistyped attempt, or the code went stale) —
+// deliberately NOT the stored session, which may still be good.
+router.delete('/portal-session/challenge', (req, res) => {
+  res.json({ ok: true, ...portalSession.clearChallenge(), ...portalStatus() });
+});
+
+router.delete('/portal-session', (req, res) => {
+  portalSession.clearChallenge();
+  res.json({ ok: true, ...portalSession.clearSession(), ...portalStatus() });
 });
 
 // ------------------------------------------- TLC attendance write-back -----
