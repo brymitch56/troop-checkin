@@ -16,7 +16,7 @@ const VERSION = 'tc-v67'; // v67: themed /icon.svg — the app mark follows the 
 const SHELL = [
   '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js', '/portal.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
-  '/icon.svg', '/icon-192.png', '/icon-512.png', '/favicon.ico',
+  '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/favicon.ico',
   '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/guide.html',
 ];
 

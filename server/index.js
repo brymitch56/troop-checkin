@@ -1,5 +1,6 @@
 'use strict';
 const env = require('./lib/env'); // load .env before anything reads process.env
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { db, SIG_DIR } = require('./db');
@@ -25,7 +26,7 @@ app.set('trust proxy', 'loopback');
 // home, and nothing else changes.
 const setupState = require('./lib/setupState');
 const SETUP_ALLOWED = new Set(['/setup', '/setup.html', '/healthz', '/styles.css', '/theme.css',
-  '/icon-192.png', '/icon-512.png', '/favicon.ico', '/icon.svg']);
+  '/icon-192.png', '/icon-512.png', '/favicon.ico', '/icon.svg', '/apple-touch-icon.png']);
 app.use((req, res, next) => {
   if (setupState.isConfigured()) {
     if (req.path === '/setup' || req.path === '/setup.html') return res.redirect('/');
@@ -69,6 +70,22 @@ app.get('/theme.css', (req, res) => {
 app.get('/icon.svg', (req, res) => {
   res.type('image/svg+xml').set('Cache-Control', 'no-cache').send(theme.iconSvg());
 });
+// The same mark as PNG, for the places that cannot take an SVG: iOS home
+// screens (apple-touch-icon is PNG-only) and any launcher that skips the
+// manifest's SVG entry. These shadow the committed public/*.png of the same
+// name — that file is the fallback if rasterizing ever throws, and stays the
+// provenance of the geometry.
+const iconPng = require('./lib/iconPng');
+const PNG_SIZES = { '/apple-touch-icon.png': 180, '/icon-192.png': 192, '/icon-512.png': 512 };
+app.get(Object.keys(PNG_SIZES), (req, res, next) => {
+  const p = theme.palette();
+  try {
+    res.type('image/png').set('Cache-Control', 'no-cache')
+      .send(iconPng.iconPng(PNG_SIZES[req.path], p.pine, p.paper));
+  } catch (e) {
+    next(); // fall through to the static file rather than serve a broken icon
+  }
+});
 app.get('/manifest.webmanifest', (req, res) => {
   const brand = theme.palette()['pine'];
   res.json({
@@ -84,6 +101,28 @@ app.get('/manifest.webmanifest', (req, res) => {
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
   });
+});
+
+// theme-color paints the browser's OWN chrome on a phone — the address-bar
+// and nav-bar tint, and the status bar of an installed app. It is a <meta>
+// tag with no CSS equivalent, so it cannot ride along in /theme.css: the two
+// pages that carry one are served with the palette's brand color patched in.
+// Without this a themed instance shows the default preset's green above its
+// own blue UI, which is the lookalike problem again in a different place.
+const THEMED_PAGES = { '/': 'index.html', '/index.html': 'index.html', '/admin.html': 'admin.html' };
+const pageSource = new Map();
+app.get(Object.keys(THEMED_PAGES), (req, res, next) => {
+  const file = THEMED_PAGES[req.path];
+  try {
+    if (!pageSource.has(file)) {
+      pageSource.set(file, fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8'));
+    }
+    const html = pageSource.get(file)
+      .replace(/(<meta name="theme-color" content=")#[0-9A-Fa-f]{6}(">)/, `$1${theme.palette().pine}$2`);
+    res.type('html').set('Cache-Control', 'no-cache').send(html);
+  } catch (e) {
+    next(); // unreadable for any reason — let express.static answer as before
+  }
 });
 
 app.use('/api/sms', require('./routes/sms')); // Twilio webhook — signature-authed, no session
