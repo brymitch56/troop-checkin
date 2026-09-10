@@ -247,6 +247,7 @@
   <ul>
     <li>Edit names, nickname, patrol/level (youth) or role (adults), phones, birthdate, <b>membership expires</b>, email, status, notes.</li>
     <li><b>Photos</b> (youth): add a photo for visual confirmation at pickup — it appears in the kiosk sign modal.</li>
+    <li><b>Jump between family members</b>: names are clickable. In a youth's editor, click a guardian's name to open that adult; in an adult's editor, click a youth under <b>Authorized for</b> to open that child. A <b>← Back to …</b> button at the top retraces your steps, so you can walk a whole family — child → parent → their other child — without going back to search. If you have unsaved edits, the app asks before leaving.</li>
     <li><b>TLC user id</b>: pins the person to one Trail Life Connect profile for the attendance write-back. <b>It usually fills itself</b> — the badge QR code carries the member's TLC id, so linking or scanning a badge sets it automatically (and the server backfills everyone with a linked badge at startup). For people without badges, <b>Find TLC id from an event roster…</b> reads a linked event's TLC list and offers the same-surname entries to click; ids already assigned to someone else are flagged. Automatic fills never overwrite a hand-set value, and once set the id is final: if that profile isn't on an event's roster the push fails visibly rather than guessing a namesake.</li>
     <li><b>Merge into another record…</b>: any record <em>without a member number</em> can be merged into another record of the same type — a visitor youth who joins the roster, an adult who existed as "just a parent" before completing leader registration, or <b>two visitor-created copies of the same parent</b> (the picker offers unregistered records too, and says which candidates are roster members). Keep the record with the better phone/email/links and merge the other into it. Attendance history, guardian links, badge, and the TLC id all move to the survivor. Youth merge into youth, adults into adults, and it can't be undone.</li>
   </ul>
@@ -267,7 +268,7 @@
 
 <section id="guardians">
   <h3>Guardians, pickup authorization &amp; consent forms</h3>
-  <p>Each youth's editor lists their guardians/authorized adults with: relationship, <b>Authorized</b> (may sign this youth in/out), <b>Primary</b> (first choice for texts), <b>SMS consent</b> state, and source (import vs manual).</p>
+  <p>Each youth's editor lists their guardians/authorized adults with: relationship, <b>Authorized</b> (may sign this youth in/out), <b>Primary</b> (first choice for texts), <b>SMS consent</b> state, and source (import vs manual). <b>Click a guardian's name</b> to open that adult's own record — handy for fixing a phone number or checking which other youth they're authorized for, then <b>← Back</b> to the youth.</p>
   <ul>
     <li>Roster imports suggest guardian links automatically (family email, then same last name or address). <b>Your manual edits are permanent</b> — imports never change or duplicate them.</li>
     <li>Import-created links can't be deleted (they'd come back next import) — mark them <b>Not authorized</b> instead.</li>
@@ -407,6 +408,7 @@
     <tr><td>Announce "we're running late"</td><td>On site screen → ✉️ Message → type it → send</td></tr>
     <tr><td>Fix a wrong sign-in/out</td><td>Admin → Transactions → open it → Void</td></tr>
     <tr><td>Close a stale open sign-in</td><td>Admin → Dashboard → Still on site → Admin close</td></tr>
+    <tr><td>See a parent's phone / their other kids while looking at a youth</td><td>Admin → People → the youth → click the guardian's <b>name</b> → ← Back when done</td></tr>
     <tr><td>Add grandma as a pickup person</td><td>Admin → People → youth → ＋ Add guardian / consent</td></tr>
     <tr><td>Enable texts for a family</td><td>Upload their signed consent form and opt in the pair(s) — same dialog</td></tr>
     <tr><td>Enable texts for an adult (no youth)</td><td>Admin → People → the adult → SMS messaging → Upload scan &amp; opt in</td></tr>

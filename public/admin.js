@@ -266,7 +266,32 @@ async function loadPeople() {
     ? 'server limit 500 — narrow with the search box above' : '');
 }
 
-async function openPerson(id) {
+// Person editor navigation: guardian/ward names are clickable, so the modal
+// walks a youth -> parent -> their other youth chain in place. `personNav` is
+// the back stack ({id, name}); it is cleared whenever the modal is opened
+// fresh from a list, and left alone by the many openPerson(id) calls that
+// merely re-render after a save (so Back survives an edit).
+let personNav = [];
+// Unsaved-edit guard: the field values as last rendered. Navigating away
+// silently would lose whatever the operator typed.
+let personSnapshot = '';
+const personFieldState = () =>
+  [...$('pp-detail').querySelectorAll('[data-f]')].map((el) => el.value).join('\u0000');
+function personLeaveOk() {
+  if (personFieldState() === personSnapshot) return true;
+  return confirm('This record has unsaved edits. Leave without saving them?');
+}
+// Jumping to another person keeps the dialog's scroll offset, which would
+// drop you into the middle of the new record (the name you clicked is often
+// near the bottom). Re-renders after a save deliberately do NOT scroll.
+const scrollPersonTop = () => {
+  const box = $('person-modal').querySelector('.adm-modal');
+  if (box) box.scrollTop = 0;
+};
+
+async function openPerson(id, pushFrom) {
+  if ($('person-modal').hidden) personNav = []; // fresh open from a list, not in-modal navigation
+  if (pushFrom) personNav.push(pushFrom);
   const p = await api(`/admin/people/${id}`);
   // consent forms feed youth pair opt-ins AND adult self-consent
   const forms = await api('/admin/consent-forms').catch(() => []);
@@ -276,7 +301,9 @@ async function openPerson(id) {
   try { locked = JSON.parse(p.manual_fields || '[]'); } catch { /* ignore */ }
   const lockTag = (field) => locked.includes(field) ? ' <span class="tag off" title="Hand-edited — roster imports will not change this field">🔒</span>' : '';
   const f = (label, field, val) => `<div><label>${label}${lockTag(field)}</label><input data-f="${field}" value="${esc(val || '')}"></div>`;
+  const back = personNav[personNav.length - 1];
   d.innerHTML = `
+    ${back ? `<button type="button" class="btn ghost small" id="pp-back">← Back to ${esc(back.name)}</button>` : ''}
     <h3>${esc(p.first_name)} ${esc(p.last_name)}
       <span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span>
       ${p.member_id ? `<span class="tag off">#${esc(p.member_id)}</span>` : '<span class="tag warn">no member #</span>'}
@@ -419,6 +446,17 @@ async function openPerson(id) {
   }
 
   d.querySelectorAll('[data-gact]').forEach((b) => (b.onclick = () => guardianAction(p, b)));
+  // clickable guardian/ward names — jump to that person's record, with a way back
+  const here = { id: p.id, name: `${p.first_name} ${p.last_name}` };
+  d.querySelectorAll('[data-person]').forEach((b) => (b.onclick = () => {
+    if (personLeaveOk()) openPerson(Number(b.dataset.person), here).then(scrollPersonTop);
+  }));
+  if ($('pp-back')) $('pp-back').onclick = () => {
+    if (!personLeaveOk()) return;
+    const prev = personNav.pop();
+    if (prev) openPerson(prev.id).then(scrollPersonTop);
+  };
+  personSnapshot = personFieldState();
   d.querySelectorAll('[data-aact]').forEach((b) => (b.onclick = async () => {
     try {
       if (b.dataset.aact === 'on') {
@@ -483,7 +521,9 @@ function guardianBlock(p, forms) {
   (one uploaded form can cover several pairs and several youth).</p>
   <div class="tbl"><table><tr><th>Name</th><th>Relationship</th><th>Phone</th><th>Authorized</th><th>Primary</th><th>SMS consent</th><th>Source</th><th></th></tr>
   ${p.guardians.map((g) => `<tr>
-    <td>${esc(g.first_name)} ${esc(g.last_name)}</td><td>${esc(g.relationship || '')}</td>
+    <td><button type="button" class="namelink" data-person="${g.id}"
+      title="Open this adult's record">${esc(g.first_name)} ${esc(g.last_name)}</button></td>
+    <td>${esc(g.relationship || '')}</td>
     <td>${esc(g.phone_mobile || '')}</td>
     <td><button class="btn ghost small" data-gact="auth" data-gid="${g.id}" data-val="${g.authorized ? 0 : 1}">
       ${g.authorized ? '✓ yes — revoke' : '✗ no — authorize'}</button></td>
@@ -751,7 +791,10 @@ function adultSmsBlock(p, forms) {
 function wardBlock(p) {
   if (!p.wards.length) return '';
   return `<h3>Authorized for</h3><div class="tbl"><table><tr><th>Youth</th><th>Patrol</th><th>Authorized</th></tr>
-    ${p.wards.map((w) => `<tr><td>${esc(w.first_name)} ${esc(w.last_name)}</td><td>${esc(w.patrol || '')}</td>
+    ${p.wards.map((w) => `<tr>
+      <td><button type="button" class="namelink" data-person="${w.id}"
+        title="Open this youth's record">${esc(w.first_name)} ${esc(w.last_name)}</button></td>
+      <td>${esc(w.patrol || '')}</td>
       <td>${w.authorized ? '✓' : '✗'}${w.is_primary ? ' · primary' : ''}</td></tr>`).join('')}</table></div>`;
 }
 async function guardianAction(p, btn) {

@@ -68,6 +68,29 @@ test('people list, filters, and edit', async () => {
   await req('PATCH', `/api/admin/people/${person('Danny').id}`, { cookie: adminCookie, body: { patrol: 'Eagles' } });
 });
 
+test('person detail carries the ids both directions — the admin UI links guardian and youth names', async () => {
+  const danny = person('Danny'), alice = person('Alice');
+  // youth -> guardians: each row must carry the ADULT's person id (not the link row's)
+  const y = await req('GET', `/api/admin/people/${danny.id}`, { cookie: adminCookie });
+  assert.equal(y.status, 200);
+  const g = y.json.guardians.find((x) => x.id === alice.id);
+  assert.ok(g, 'guardian row is keyed by the adult person id');
+  assert.equal(g.first_name, 'Alice');
+  assert.deepEqual(y.json.wards, []); // youth have no wards
+
+  // adult -> wards: each row must carry the YOUTH's person id, so the name can link back
+  const a = await req('GET', `/api/admin/people/${alice.id}`, { cookie: adminCookie });
+  assert.equal(a.status, 200);
+  const w = a.json.wards.find((x) => x.id === danny.id);
+  assert.ok(w, 'ward row is keyed by the youth person id');
+  assert.equal(w.first_name, 'Danny');
+  assert.deepEqual(a.json.guardians, []); // adults have no guardians
+  // ids round-trip: opening either name lands on a real, non-merged record
+  for (const id of [g.id, w.id]) {
+    assert.equal((await req('GET', `/api/admin/people/${id}`, { cookie: adminCookie })).status, 200);
+  }
+});
+
 test('guardian edits are authoritative: unauthorize survives, import links undeletable', async () => {
   const danny = person('Danny'), alice = person('Alice'), carol = person('Carol');
   // import link (Alice→Danny) cannot be deleted, only unauthorized
