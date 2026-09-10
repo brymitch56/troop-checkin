@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>User Guide · Troop Check-In</title>
+<link rel="icon" type="image/svg+xml" sizes="any" href="/icon.svg">
 <link rel="icon" href="/favicon.ico" sizes="32x32">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <style>
@@ -404,6 +405,11 @@
 <section id="backups">
   <h3>Backups</h3>
   <p>Nightly automatic backups (database snapshot + signatures), kept 14 deep, plus an optional encrypted off-site push. <b>Back up now</b> is on the Dashboard — use it before anything risky. Restore instructions live with the server documentation.</p>
+
+  <h3 id="twoinstances">Running two programs side by side</h3>
+  <p>One server can host a second, completely separate instance — its own database, roster, staff, badges and backups. Nothing crosses between them.</p>
+  <p>Each instance is themed, and <b>the browser-tab icon is themed too</b>: the check mark takes that program's brand colour, so two tabs open at once are told apart at a glance instead of showing the same icon twice. The same coloured mark is what you get if you install the app to a phone or tablet home screen.</p>
+  <p class="tip">If both tabs still look identical after an update, reload each one twice — the icon is part of the cached app shell.</p>
 </section>
 
 <!-- ================= REFERENCE ================= -->
@@ -439,6 +445,7 @@
     <tr><td>Keep a father/son name mix-up out of TLC</td><td>Admin → People → open each → set TLC user id ("Find TLC id…" helps) — the same-name banner lists who needs it</td></tr>
     <tr><td>Combine a parent's two records (registered later)</td><td>Admin → People → open the record <em>without</em> a member # → Merge into roster member…</td></tr>
     <tr><td>Let a badge tracker or dashboard read attendance</td><td>Admin → Integrations → Generate key → paste into the other program → Enable (optional: webhook URL + secret → Send test event → Send deliveries)</td></tr>
+    <tr><td>Tell two side-by-side programs apart in the browser</td><td>Go by the tab icon — the check mark is in each program's own colour (reload twice after an update)</td></tr>
   </table>
 </section>
 

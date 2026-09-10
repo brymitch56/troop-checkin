@@ -16,7 +16,7 @@ const VERSION = 'tc-v66'; // v66: portal sign-in panel — enter the second-fact
 const SHELL = [
   '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js', '/portal.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
-  '/icon-192.png', '/icon-512.png', '/favicon.ico',
+  '/icon.svg', '/icon-192.png', '/icon-512.png', '/favicon.ico',
   '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/guide.html',
 ];
 

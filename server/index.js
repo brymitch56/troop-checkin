@@ -25,7 +25,7 @@ app.set('trust proxy', 'loopback');
 // home, and nothing else changes.
 const setupState = require('./lib/setupState');
 const SETUP_ALLOWED = new Set(['/setup', '/setup.html', '/healthz', '/styles.css', '/theme.css',
-  '/icon-192.png', '/icon-512.png', '/favicon.ico']);
+  '/icon-192.png', '/icon-512.png', '/favicon.ico', '/icon.svg']);
 app.use((req, res, next) => {
   if (setupState.isConfigured()) {
     if (req.path === '/setup' || req.path === '/setup.html') return res.redirect('/');
@@ -63,6 +63,12 @@ const theme = require('./lib/theme');
 app.get('/theme.css', (req, res) => {
   res.type('text/css').set('Cache-Control', 'no-cache').send(theme.themeCss());
 });
+// The app mark, themed from the same palette — served dynamically for the
+// same reason /theme.css is: one build, many instances. /favicon.ico stays
+// as the fallback for browsers that cannot use an SVG favicon.
+app.get('/icon.svg', (req, res) => {
+  res.type('image/svg+xml').set('Cache-Control', 'no-cache').send(theme.iconSvg());
+});
 app.get('/manifest.webmanifest', (req, res) => {
   const brand = theme.palette()['pine'];
   res.json({
@@ -73,6 +79,7 @@ app.get('/manifest.webmanifest', (req, res) => {
     background_color: brand,
     theme_color: brand,
     icons: [
+      { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' },
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],

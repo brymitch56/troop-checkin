@@ -1,9 +1,9 @@
 'use strict';
 // Env-driven theming. THEME picks a preset palette; individual THEME_<VAR>
 // env values override single colors on top of it (the /setup wizard writes
-// these when the installer customizes a preset). The palette is served two
-// ways: /theme.css (CSS-variable overrides loaded after styles.css) and the
-// dynamic PWA manifest colors.
+// these when the installer customizes a preset). The palette is served three
+// ways: /theme.css (CSS-variable overrides loaded after styles.css), the
+// dynamic PWA manifest colors, and /icon.svg (the app mark, below).
 //
 // The 'traillife' preset is byte-identical to the :root defaults in
 // public/styles.css, so the default render on every pre-theming install is
@@ -64,4 +64,22 @@ function themeCss() {
   return ':root {\n' + VARS.map((v) => `  --${v}: ${p[v]};`).join('\n') + '\n}\n';
 }
 
-module.exports = { PRESETS, VARS, palette, themeCss, envName };
+// The app mark: a rounded box with a check, drawn in the palette's own
+// colors. Two instances on one Pi otherwise show an identical icon in the
+// browser tab strip, and picking the wrong tab means running a door on the
+// wrong troop's roster — so the mark follows the theme the same way the UI
+// does. Geometry is traced from public/icon-512.png (still shipped for iOS
+// home screens and as the pre-SVG fallback), and that PNG's two colors ARE
+// the traillife --pine and --paper, so the default instance renders the
+// same mark it always had.
+function iconSvg() {
+  const p = palette();
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Check-in">'
+    + `<rect width="512" height="512" fill="${p.pine}"/>`
+    + `<rect x="70" y="70" width="372" height="372" rx="30" fill="none" stroke="${p.paper}" stroke-width="12"/>`
+    + `<path d="M156 273 L230 342 L366 183" fill="none" stroke="${p.paper}"`
+    + ' stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>'
+    + '</svg>\n';
+}
+
+module.exports = { PRESETS, VARS, palette, themeCss, iconSvg, envName };
