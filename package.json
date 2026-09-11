@@ -19,7 +19,10 @@
     "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
     "multer": "^2.0.1",
-    "node-ical": "^0.20.1",
-    "xlsx": "^0.18.5"
+    "node-ical": "^0.25.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }
