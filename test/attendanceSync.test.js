@@ -164,6 +164,43 @@ test('parseUserList: hashids, names, and attended state from the fragment', () =
   assert.equal(list.byName.get(A.nameKey('Smith', 'John')), 'AMBIGUOUS');
 });
 
+// The sibling portal on the same platform (AHGfamily) renders the list as a
+// CSS grid: the name is plain text in the cell before the checkbox cell and
+// there are no profile anchors at all.
+function gridListHtml(users, eventHash = EV) {
+  return '<div id="grid-Youth" style="display: grid; grid-template-columns: repeat(3, minmax(auto, 20em))">' +
+    users.map((u) => `
+    <div style="grid-column: 1">${u.avatar ? `<img src="https://cdn.example.com/x/-/resize/100x100/" class="img-circle" alt="${u.name}">` : ''}&nbsp;&nbsp;${u.name}&nbsp;</div>
+    <div style="width: 25px; grid-column: 2">
+      <input type="text" id="${u.hash}-${eventHash}-attended" class="check-all-item-1 cbx-loading" name="attended-1"${u.attended === undefined ? '' : ` value="${u.attended}"`} data-krajee-checkboxX="checkboxX_1">
+    </div>`).join('\n') + '</div>';
+}
+
+test('parseUserList: grid layout without profile anchors (AHGfamily) still yields names', () => {
+  const html = gridListHtml([
+    { hash: 'aaaabbbbcccc', name: 'Andrews, Ben' },                    // no value attribute at all
+    { hash: 'ddddeeeeffff', name: 'Baxter, Bram', attended: '1' },
+    { hash: 'gggghhhhiiii', name: 'O&#039;Neil, Ann', attended: '0' }, // encoded apostrophe
+    { hash: 'jjjjkkkkllll', name: 'Smith, John', attended: '0' },
+    { hash: 'mmmmnnnnoooo', name: 'Smith, John', attended: '' },       // ambiguous name
+    { hash: 'ppppqqqqrrrr', name: 'Danvers, Carol', attended: '0', avatar: true }, // adult: avatar in the cell
+  ]);
+  const list = A.parseUserList(html, EV);
+  assert.equal(list.byHash.size, 6);
+  assert.equal(list.byHash.get('ppppqqqqrrrr').name, 'Danvers, Carol');
+  assert.equal(list.byName.get(A.nameKey('Danvers', 'Carol')), 'ppppqqqqrrrr');
+  assert.equal(list.byHash.get('aaaabbbbcccc').name, 'Andrews, Ben');
+  assert.equal(list.byHash.get('aaaabbbbcccc').attended, 0);
+  assert.equal(list.byHash.get('ddddeeeeffff').attended, 1);
+  assert.equal(list.byHash.get('gggghhhhiiii').name, "O'Neil, Ann");
+  assert.equal(list.byName.get(A.nameKey('Andrews', 'Ben')), 'aaaabbbbcccc');
+  assert.equal(list.byName.get(A.nameKey("O'Neil", 'Ann')), 'gggghhhhiiii');
+  assert.equal(list.byName.get(A.nameKey('Smith', 'John')), 'AMBIGUOUS');
+  // and matching works end to end on that layout
+  assert.equal(A.matchPerson({ first_name: 'Ben', last_name: 'Andrews' }, list).hash, 'aaaabbbbcccc');
+  assert.match(A.matchPerson({ first_name: 'John', last_name: 'Smith' }, list).error, /More than one/);
+});
+
 test('matchPerson: cached id, exact name, nickname fallback, explicit failures', () => {
   const list = A.parseUserList(userListHtml([
     { hash: 'aaaabbbbcccc', name: 'Andrews, Ben', attended: '' },

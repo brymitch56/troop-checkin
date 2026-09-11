@@ -83,6 +83,12 @@ body: patrol=&eventId=<eventHashid>&sortBy=<level|patrol|alphabetical>&rsvpOnly=
   `/profile/<userHashid>?tab=advancement`, followed by a Krajee checkbox-x
   widget whose hidden input is
   `id="<userHashid>-<eventHashid>-attended"` with `value` `1`/`0`/empty.
+- **AHGfamily** (same platform, different template) renders the fragment as
+  a CSS grid with **no profile links**: the name is plain text in a
+  `<div style="grid-column: 1">` cell (`&nbsp;`-padded) immediately before
+  the cell holding the same `…-attended` input (`value` may be absent).
+  `parseUserList` reads both layouts — verified live against a stored
+  session on 2026-09-11; before that every name there parsed as unknown.
 - This is the **name → userHashid mapping source** (the roster xlsx export
   does not contain hashids) and the read-back of current attendance state.
   Parse the fragment for `(<userHashid>, <eventHashid>, attended)` triples.

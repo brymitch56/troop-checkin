@@ -163,6 +163,13 @@ const normName = (s) => String(s || '')
   .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]/g, '');
 const nameKey = (last, first) => `${normName(last)},${normName(first)}`;
 
+// The few entities the portal's HTML encoder emits inside a name, plus the
+// &nbsp; padding the grid layout wraps around it.
+const decodeText = (s) => String(s || '')
+  .replace(/&nbsp;| /g, ' ').replace(/&amp;/g, '&').replace(/&#0?39;/g, "'")
+  .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/\s+/g, ' ').trim();
+
 // Parse the attendance-user-list HTML fragment into
 //   { byHash: Map<userHash, {name, attended}>, byName: Map<nameKey, userHash|'AMBIGUOUS'> }
 // Two independent sources are cross-checked: the profile anchors
@@ -175,6 +182,22 @@ function parseUserList(html, tlcEventId) {
     const name = m[2].trim();
     if (!name || !name.includes(',')) continue; // nav links etc.
     byHash.set(m[1], { name, attended: null });
+  }
+  // The sibling portal on the same platform (AHGfamily) renders the same
+  // fragment as a CSS grid with NO profile anchors: the name is plain text in
+  // the cell right before the checkbox cell (adults get an <img> avatar in
+  // that cell first) —
+  //   <div style="grid-column: 1">[<img …>] &nbsp;&nbsp;Last, First&nbsp;</div>
+  //   <div …><input … id="<userHash>-<eventHash>-attended" …></div>
+  // Without this pass every name there is unknown and nobody can be matched.
+  const gridRe = new RegExp(
+    `<div\\b[^>]*grid-column:\\s*1\\b[^>]*>((?:[^<]|<(?!\\/div>)[^>]*>)*)<\\/div>\\s*<div\\b[^>]*>\\s*` +
+    `<input\\b[^>]*\\bid="([a-z0-9]+)-${tlcEventId}-attended"`, 'gi');
+  for (let m; (m = gridRe.exec(html));) {
+    const name = decodeText(m[1].replace(/<[^>]*>/g, ' '));
+    if (!name || !name.includes(',')) continue;
+    const e = byHash.get(m[2]);
+    if (e) { if (!e.name) e.name = name; } else byHash.set(m[2], { name, attended: null });
   }
   const inputRe = new RegExp(
     `<input\\b[^>]*\\bid="([a-z0-9]+)-${tlcEventId}-attended"[^>]*>`, 'gi');

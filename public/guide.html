@@ -381,6 +381,7 @@
     <li><b>When it happens</b>: sign-outs queue locally and a background job pushes them within about 10 minutes; <b>Push now</b> does it immediately. The log lists every person, event, and result — ✅ sent, ⏳ pending, or ❌ failed with the reason and a <b>Retry failed</b> button.</li>
     <li><b>It only ever marks.</b> The app never un-marks attendance on TLC (that would also erase advancement checkmarks) — undoing anything stays a deliberate action on the TLC site.</li>
     <li><b>Who's skipped</b>: visitors (they don't exist on TLC), manual events (no TLC link), and anyone whose name can't be matched confidently — two identical names on a TLC roster fail explicitly instead of guessing. Fix those by setting the person's <b>TLC user id</b> in the person editor (see People).</li>
+    <li><b>Other portals on the same platform</b> (AHGfamily) lay their attendance list out differently; the app reads both layouts, so name matching and "Find TLC id from an event roster…" work there too.</li>
     <li><b>If the TLC login is rejected</b>, pushing pauses and the panel says so in red — no retry loops that could lock the account. Re-save the credentials (or press Push now once fixed) to resume.</li>
   </ul>
 </section>
