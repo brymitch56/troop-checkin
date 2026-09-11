@@ -129,6 +129,10 @@ app.use('/api/sms', require('./routes/sms')); // Twilio webhook — signature-au
 // Integration API — Bearer API key, no session (docs/13-integration-api.md);
 // 401 on everything until enabled + a key exists (Admin → Integrations)
 app.use('/api/integration', require('./routes/integration'));
+// Portal session lease — loopback-only, own key, 404 unless PORTAL_LEASE_KEY
+// is set. Lets another program on this Pi reuse the signed-in portal session
+// instead of signing in itself and texting a human a code (routes/portalLease).
+app.use('/api/portal-lease', require('./routes/portalLease'));
 app.use('/api/admin', admin);
 app.use('/api', api);
 

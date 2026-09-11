@@ -124,6 +124,41 @@ Notes that matter:
   standing there with a phone. The admin panel shows "signed in <when>, last
   used <when>", which is the measurement.
 
+### Lending the session (added 2026-09-11, tc-v69)
+
+**One owner.** Every password sign-in texts a human a code, so a second
+program on the same machine that signs in for itself wakes somebody at
+whatever hour its cron fires — and burns another text on an account that
+reaches youth records. Worse, a naive client reads the code form as success
+(it contains no password field) and carries on half-authenticated, which is
+the misleading *"Got HTML, not a roster"* failure wearing a different hat.
+
+So this app holds the credentials and the session, and every other local tool
+**borrows** what it already has:
+
+    GET  /api/portal-lease        -> { connected, base, cookies[], connected_at, last_ok_at }
+    POST /api/portal-lease/used   -> marks the session used, for the lifetime measurement
+
+Three gates, all required, in `server/routes/portalLease.js`:
+
+1. `PORTAL_LEASE_KEY` set in `.env` (>= 24 chars). Unset, the route 404s and
+   does not exist — every existing install is unchanged and off.
+2. The peer is on loopback, read from the raw socket, **and** the request
+   carries no forwarding header (`X-Forwarded-For`, `X-Real-IP`,
+   `CF-Connecting-IP`, `Forwarded`). A tunnelled request can never reach it.
+3. A Bearer token matching that key, compared constant-time.
+
+Deliberately **not** part of the Integration API: that contract is a minimum
+of read-only roster data and its key goes to dashboards and badge trackers,
+whereas a session cookie is the right to *act as* the troop's portal account.
+Different privilege, separate key, separate route. A test asserts an
+integration key cannot open the lease.
+
+The lease **never signs in**. When nobody is connected it answers `409` and
+the borrower is expected to give up quietly and exit; a borrower that
+"helpfully" retried with a password would text the human again, which is the
+entire problem. A test asserts the route cannot even reach the sign-in code.
+
 ### Safety rules (non-negotiable)
 
 1. **The job never commits.** It downloads, validates, and hands the file to `/api/roster/import?mode=preview`. A pending import appears in the admin UI for one-tap approval.

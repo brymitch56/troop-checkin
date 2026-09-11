@@ -369,7 +369,9 @@
     <li><b>Mistyped the code?</b> Just retype it — the same text message stays valid, and you won't be sent a new one.</li>
     <li><b>Disconnect</b> forgets the stored session (useful if you changed the Trail Life Connect password). The next sync will ask for a code.</li>
     <li>The panel also shows <em>when</em> you signed in and when a sync last used the session — worth noting, because that gap is the only way to learn how often you'll have to do this.</li>
+    <li><b>Other programs on the same server share this one sign-in.</b> If another tool on this machine also needs Trail Life Connect, it borrows this session rather than signing in for itself — so you still only ever connect once, and only this app ever holds the password. Anything borrowing it shows up in the "last used" line. Your server documentation covers how to set that up.</li>
   </ul>
+  <p class="tip">If a code ever arrives at an odd hour when nobody pressed Connect, something else on the server is signing in on its own — that is the thing to fix, not this panel.</p>
   <p><b>One warning about passkeys.</b> If Trail Life Connect offers you a passkey for the account the check-in server uses, <b>don't add one to that account</b>. A passkey replaces the password entirely, and the password is the only thing the server has. Passkeys are a fine choice for your own personal Trail Life Connect account — just not for the sync login.</p>
 
   <h3 id="writeback">TLC attendance write-back</h3>
