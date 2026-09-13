@@ -1008,6 +1008,7 @@ async function loadStaff() {
         ${s.has_pin ? `<button class="btn ghost small" data-sact="clearpin" data-sid="${s.id}">Clear PIN</button>` : ''}
         ${s.role === 'admin' || s.has_password ? `<button class="btn ghost small" data-sact="password" data-sid="${s.id}">Set password</button>` : ''}
         <button class="btn ghost small" data-sact="rename" data-sid="${s.id}">Rename</button>
+        <button class="btn ghost small" data-sact="role" data-sid="${s.id}" data-val="${s.role === 'admin' ? 'door' : 'admin'}">${s.role === 'admin' ? 'Make door staff' : 'Make admin'}</button>
         <button class="btn ghost small" data-sact="active" data-sid="${s.id}" data-val="${s.active ? 0 : 1}">${s.active ? 'Deactivate' : 'Reactivate'}</button>
       </td></tr>`).join('') + '</table>';
   $('st-list').querySelectorAll('button[data-sact]').forEach((b) => (b.onclick = () => staffAction(b, rows)));
@@ -1035,6 +1036,26 @@ async function staffAction(btn, rows) {
       const name = prompt('New name:', s.name);
       if (!name || name === s.name) return;
       await jpatch(`/admin/staff/${id}`, { name });
+    }
+    if (btn.dataset.sact === 'role') {
+      const role = btn.dataset.val;
+      const body = { role };
+      if (role === 'admin') {
+        if (!confirm(`Make ${s.name} an admin? They get full access to this page.${s.has_pin ? '\n\nThey keep signing in with their PIN.' : ''}`)) return;
+        if (!s.has_pin && !s.has_password) {
+          const password = prompt(`${s.name} has no credential yet. Set an admin password:`);
+          if (!password) return;
+          body.password = password;
+        }
+      } else {
+        if (!confirm(`Make ${s.name} door staff? They lose access to this admin page on their next request.`)) return;
+        if (!s.has_pin) {
+          const pin = prompt(`Door staff sign in with a PIN. Set a PIN for ${s.name} (4–8 digits):`);
+          if (!pin) return;
+          body.pin = pin;
+        }
+      }
+      await jpatch(`/admin/staff/${id}`, body);
     }
     if (btn.dataset.sact === 'active') {
       const activating = btn.dataset.val === '1';

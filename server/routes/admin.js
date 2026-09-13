@@ -1369,8 +1369,18 @@ router.patch('/staff/:id', (req, res) => {
   }
   if ('role' in b) {
     if (!['door', 'admin'].includes(b.role)) return res.status(400).json({ error: 'Bad role.' });
-    if (s.role === 'admin' && b.role === 'door' && lastAdminGuard()) {
-      return res.status(409).json({ error: 'Cannot demote the last active admin.' });
+    if (b.role !== s.role) {
+      // Roles are read live from the staff row on every request, so a change
+      // takes effect on the person's next request — including this admin's
+      // own, which is why nobody may change their own role.
+      if (s.id === req.staff.staff_id) return res.status(409).json({ error: 'You cannot change your own role — ask another admin.' });
+      if (s.role === 'admin' && b.role === 'door' && lastAdminGuard()) {
+        return res.status(409).json({ error: 'Cannot demote the last active admin.' });
+      }
+      // Door staff sign in with a PIN; an admin without one needs a PIN set in the same change.
+      if (b.role === 'door' && !s.pin_hash && !b.pin) {
+        return res.status(400).json({ error: 'Door staff sign in with a PIN — set one for them in the same change.' });
+      }
     }
     sets.push('role = ?'); vals.push(b.role);
   }

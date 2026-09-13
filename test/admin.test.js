@@ -370,6 +370,30 @@ test('staff management: create, PIN-overrides-password, guards', async () => {
   assert.ok(!(await req('GET', '/api/staff-list')).json.some((s) => s.name === 'Second Admin'));
 });
 
+test('staff role change: promote keeps the PIN, demote needs a PIN, never yourself, never the last admin', async () => {
+  const mk = await req('POST', '/api/admin/staff', { cookie: adminCookie, body: { name: 'Door Dee', role: 'door', pin: '4321' } });
+  const id = mk.json.id;
+  // promote: a door PIN keeps working, and the person now passes admin auth
+  let r = await req('PATCH', `/api/admin/staff/${id}`, { cookie: adminCookie, body: { role: 'admin' } });
+  assert.equal(r.status, 200); assert.equal(r.json.role, 'admin'); assert.equal(r.json.has_pin, 1);
+  const login = await req('POST', '/api/login', { body: { staff_id: id, pin: '4321' } });
+  assert.equal(login.status, 200);
+  const deeCookie = login.headers.get('set-cookie').split(';')[0];
+  assert.equal((await req('GET', '/api/admin/staff', { cookie: deeCookie })).status, 200, 'promoted door staff can use admin routes');
+  // nobody changes their own role
+  assert.equal((await req('PATCH', `/api/admin/staff/${id}`, { cookie: deeCookie, body: { role: 'door' } })).status, 409);
+  // demote back: PIN present → fine, and admin routes stop working on the next request
+  r = await req('PATCH', `/api/admin/staff/${id}`, { cookie: adminCookie, body: { role: 'door' } });
+  assert.equal(r.status, 200); assert.equal(r.json.role, 'door');
+  assert.equal((await req('GET', '/api/admin/staff', { cookie: deeCookie })).status, 403, 'role is read live — demotion applies immediately');
+  // an admin with only a password cannot become door staff without a PIN in the same change
+  const pw = await req('POST', '/api/admin/staff', { cookie: adminCookie, body: { name: 'Pw Admin', role: 'admin', password: 'pw3' } });
+  assert.equal((await req('PATCH', `/api/admin/staff/${pw.json.id}`, { cookie: adminCookie, body: { role: 'door' } })).status, 400);
+  r = await req('PATCH', `/api/admin/staff/${pw.json.id}`, { cookie: adminCookie, body: { role: 'door', pin: '5555' } });
+  assert.equal(r.status, 200); assert.equal(r.json.has_pin, 1);
+  assert.equal((await req('POST', '/api/login', { body: { staff_id: pw.json.id, pin: '5555' } })).status, 200);
+});
+
 test('guardian-bulk: one adult + consent applied to several youth at once', async () => {
   const danny = person('Danny'), emma = person('Emma');
   const cf = db.prepare(`INSERT INTO consent_form (file_path, signed_by) VALUES ('fam.pdf', 'Nora Neighbor')`).run();
