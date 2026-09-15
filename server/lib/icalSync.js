@@ -24,10 +24,14 @@ function applyFeed(vevents) {
       const ex = db.prepare('SELECT * FROM event WHERE ical_uid = ? AND start_at = ?').get(e.uid, startAt);
       const title = e.summary || '(untitled)';
       if (!ex) {
+        // new feed events start on the global adult-tracking default; the
+        // feed never touches track_adults again (app-owned, like the forms)
         db.prepare(
-          `INSERT INTO event (source, ical_uid, title, location, description, start_at, end_at, all_day)
-           VALUES ('ical', ?, ?, ?, ?, ?, ?, ?)`
-        ).run(e.uid, title, e.location || null, e.description || null, startAt, endAt, allDay);
+          `INSERT INTO event (source, ical_uid, title, location, description, start_at, end_at, all_day,
+                              track_adults, track_adults_source)
+           VALUES ('ical', ?, ?, ?, ?, ?, ?, ?, ?, 'auto')`
+        ).run(e.uid, title, e.location || null, e.description || null, startAt, endAt, allDay,
+              require('./adultTracking').getSettings().default);
         added++;
       } else {
         const changed = ex.title !== title || ex.location !== (e.location || null) ||

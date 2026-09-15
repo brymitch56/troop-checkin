@@ -88,6 +88,11 @@
     <div class="row wrap">
       <button id="ev-new" class="btn ghost small">+ New event</button>
       <label class="check"><input id="ev-past" type="checkbox"> Show past events</label>
+      <label class="check" title="Applies to new events and to every current/future event that follows the default. Events hand-set in the editor keep their own choice.">Adult attendance default
+        <select id="ev-adults-default">
+          <option value="0">Not tracked (youth only)</option>
+          <option value="1">Tracked at every event</option>
+        </select></label>
     </div>
     <div id="ev-list" class="tbl"></div>
   </div>

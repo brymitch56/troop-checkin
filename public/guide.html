@@ -169,7 +169,7 @@
   <ul>
     <li>Each youth signing IN shows an <b>emergency phone</b> field, pre-filled from last time (or the primary guardian's mobile). Confirm or update it — it's snapshotted onto the record.</li>
     <li>Each youth signing OUT shows <b>"Completed all planned requirements for this event"</b>, already checked. Uncheck it only when a youth didn't finish what the event set out to do — their attendance still counts, but no advancement is credited on Trail Life Connect (see the write-back section in Part 2).</li>
-    <li>Adults are only tracked at events marked "Track adult attendance"; at youth-only meetings the kiosk politely refuses to add them.</li>
+    <li>Adults are only tracked at events marked "Track adult attendance"; at youth-only meetings the kiosk politely refuses to add them. An admin sets whether events track adults <b>by default</b> (Admin → Events), and the kiosk's "Create an event" checkbox starts on that default.</li>
     <li>Someone already on site can still be signed <b>IN to a second, overlapping event</b> (a meeting inside a campout) — the kiosk asks you to confirm, and they're then on site in both until each is signed out.</li>
     <li>Tap ✕ on a row to remove it; <b>Clear</b> empties the cart.</li>
   </ul>
@@ -209,7 +209,7 @@
 
 <section id="onsite">
   <h3>The "On site" screen &amp; texting guardians</h3>
-  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, narrowed by the <b>Patrol</b> and <b>Level</b> dropdowns (they start on whatever this device is scoped to, and you can change either without changing the device's scope) and sortable with the <b>Sort</b> pills — <b>Last name</b> (default), <b>Sign-in time</b>, <b>Patrol</b>, or <b>First name</b>; the device remembers your choice. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. From this screen (once SMS is set up):</p>
+  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, narrowed by the <b>Patrol</b> and <b>Level</b> dropdowns (they start on whatever this device is scoped to, and you can change either without changing the device's scope) and sortable with the <b>Sort</b> pills — <b>Last name</b> (default), <b>Sign-in time</b>, <b>Patrol</b>, or <b>First name</b>; the device remembers your choice. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. The card's <b>Add to checkout</b> button puts that person in the cart for sign-out and takes you straight back to the cart; add anyone else the usual way (scan, search, or back to On site), then sign. From this screen (once SMS is set up):</p>
   <ul>
     <li><b>🔔 Text guardians</b> — one message per guardian listing all their youth still on site ("please pick up"). A guardian with three kids on site gets <em>one</em> text, not three. Which guardians: by default the <b>primary</b> guardian of each youth; an admin can switch the troop to <b>all opted-in guardians</b> (Admin → Messages), in which case every parent who signed their own consent gets it and either one's <b>Y</b> closes the pickup. The results screen lists exactly who was <em>not</em> contacted and why (no consent, no mobile, STOPped) so you can phone those families instead.</li>
     <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up). On events that track adult attendance, an <b>"Also text opted-in adults"</b> checkbox appears — off every time until you tick it — which additionally texts attending adults who signed their own consent form. The dialog also lets you choose, per message, <b>Primary guardian only</b> or <b>All opted-in guardians</b> (it starts on the troop's admin-set default).</li>
@@ -302,7 +302,7 @@
   <h3>Events &amp; calendar sync</h3>
   <ul>
     <li>Events sync nightly from the troop calendar feed (or on demand: Dashboard → Sync iCal now). Calendar times re-assert on each sync; other edits stick.</li>
-    <li>Edit title/location/times, <b>Track adult attendance</b> (off = youth-only, adults refused at the kiosk), and the <b>SMS reminder delay</b>.</li>
+    <li>Edit title/location/times, <b>Adult attendance</b> (not tracked = youth-only, adults refused at the kiosk), and the <b>SMS reminder delay</b>. Adult attendance normally <b>follows the global default</b> — the <b>Adult attendance default</b> dropdown at the top of the Events tab. Changing that default updates every current and future event that follows it (past events are never changed). Choosing Tracked or Not tracked in an event's editor pins that event (tagged <b>manual</b>) so the default leaves it alone; pick "Follow global default" to hand it back.</li>
     <li><b>TLC attendance push</b>: calendar-synced events show <b>linked ✓</b> (they map automatically to their Trail Life Connect event) and a per-event override — follow the global setting, never push, or always push. "Always" is handy for testing one event before enabling the write-back troop-wide; manual events aren't linked and are skipped.</li>
     <li>An event that disappears from the calendar feed is deleted if unused, or kept and flagged "gone from feed" if it has attendance records.</li>
     <li>Events with transactions can't be deleted — history is permanent.</li>
@@ -462,7 +462,7 @@
     <tr><td>Badge scan says "not recognized"</td><td>Badge isn't linked and its member number isn't on the roster — use name search, or import the newest roster.</td></tr>
     <tr><td>⏳ pill with a number</td><td>Records saved offline, waiting to sync. They'll go automatically when the connection returns.</td></tr>
     <tr><td>⚠ pill</td><td>An offline record was rejected on sync (usually a race with another station). Tap it, read, clear.</td></tr>
-    <tr><td>Adult can't be added to the cart</td><td>This event doesn't track adults. That's per-event: Admin → Events → Track adult attendance.</td></tr>
+    <tr><td>Adult can't be added to the cart</td><td>This event doesn't track adults. Change it for one event in Admin → Events → the event's Adult attendance, or for every event with the Adult attendance default at the top of the Events tab.</td></tr>
     <tr><td>Guardian didn't get the pickup text</td><td>Check the kiosk's "not contacted" list or Admin → Messages: no consent/opt-in, no mobile number, or they texted STOP.</td></tr>
     <tr><td>Orange membership tag on a youth</td><td>Renewal due within 30 days (or lapsed). Check-in is unaffected; mention it to the family.</td></tr>
     <tr><td>Kiosk picked the wrong event</td><td>Overlapping events — the kiosk guesses by which rush is nearest. Tap the event pill and switch; sign-outs follow the selected event.</td></tr>

@@ -395,8 +395,18 @@ router.patch('/events/:id', (req, res) => {
   for (const f of ['title', 'location', 'description', 'start_at', 'end_at']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
   }
-  for (const f of ['track_adults', 'all_day', 'requires_high_adventure_form']) {
+  for (const f of ['all_day', 'requires_high_adventure_form']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
+  }
+  // adult tracking: a hand-set value goes 'manual' (the global bulk-apply
+  // spares it); track_adults_source:'auto' returns the event to "follow
+  // global" and snaps it to the current global default immediately
+  if ('track_adults' in b) {
+    sets.push('track_adults = ?', `track_adults_source = 'manual'`);
+    vals.push(b.track_adults ? 1 : 0);
+  } else if (b.track_adults_source === 'auto') {
+    sets.push(`track_adults_source = 'auto'`, 'track_adults = ?');
+    vals.push(require('../lib/adultTracking').getSettings().default);
   }
   // Warn/Block: a hand-set value goes 'manual' (bulk-apply and sweep spare
   // it); permission_block_source:'auto' returns the event to "follow
@@ -426,6 +436,23 @@ router.patch('/events/:id', (req, res) => {
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
   db.prepare(`UPDATE event SET ${sets.join(', ')} WHERE id = ?`).run(...vals, ev.id);
   res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(ev.id));
+});
+
+// ------------------------------------------ adult tracking (global default) ----
+const adultTracking = require('../lib/adultTracking');
+
+router.get('/adult-tracking', (req, res) => {
+  res.json(adultTracking.getSettings());
+});
+router.put('/adult-tracking', (req, res) => {
+  const b = req.body || {};
+  if (!('default' in b)) return res.status(400).json({ error: 'Nothing to update.' });
+  const before = adultTracking.getSettings();
+  const saved = adultTracking.saveSettings(b);
+  // changing the default bulk-applies to current + future events that still
+  // follow it; hand-set events and past events are never touched
+  const applied = saved.default !== before.default ? adultTracking.applyDefault(saved.default) : 0;
+  res.json({ ...saved, applied });
 });
 
 // ------------------------------------------- permission forms (per event) ----

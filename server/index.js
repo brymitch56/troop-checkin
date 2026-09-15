@@ -53,6 +53,8 @@ app.get('/api/config', (req, res) => {
     flag_health_forms: require('./lib/healthForms').getCheckinFlags().health_form,
     // permission-form tracking switch — the kiosk banner keys off this
     permission_forms_enabled: require('./lib/permissionSync').getSettings().enabled,
+    // global adult-tracking default — the kiosk's create-event checkbox starts on it
+    track_adults_default: require('./lib/adultTracking').getSettings().default,
     // who gets texted per youth: 'primary' (one guardian) or 'all' opted-in —
     // the kiosk broadcast dialog defaults its choice to this
     sms_recipients: require('./lib/notifySweep').getRecipientMode(),

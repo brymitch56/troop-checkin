@@ -827,13 +827,16 @@ async function guardianAction(p, btn) {
 
 // --------------------------------------------------------------- events ----
 async function loadEvents() {
+  api('/admin/adult-tracking').then((s) => {
+    if (document.activeElement !== $('ev-adults-default')) $('ev-adults-default').value = s.default ? '1' : '0';
+  }).catch(() => {});
   const rows = await api('/admin/events' + ($('ev-past').checked ? '?include_past=1' : ''));
   $('ev-list').innerHTML = `<table><tr><th>Title</th><th>Starts</th><th>Ends</th><th>Source</th><th>Adults</th><th>Txns</th><th data-nofilter></th></tr>` +
     rows.map((e) => `<tr data-id="${e.id}">
       <td>${esc(e.title)}${e.removed_from_feed ? ' <span class="tag warn">gone from feed</span>' : ''}</td>
       ${dtCell(e.start_at)}${dtCell(e.end_at)}
       <td>${e.source}${e.is_past ? ' <span class="tag off">past</span>' : ''}</td>
-      <td>${e.track_adults ? '✓ tracked' : '—'}</td><td>${e.txn_count}</td>
+      <td>${e.track_adults ? '✓ tracked' : '—'}${e.track_adults_source === 'manual' ? ' <span class="tag off" title="Hand-set — the global default will not change this">manual</span>' : ''}</td><td>${e.txn_count}</td>
       <td>${e.txn_count === 0 ? `<button class="btn ghost small" data-del="${e.id}">delete</button>` : ''}</td></tr>`).join('') + '</table>';
   enhanceTable('ev-list');
   $('ev-list').onclick = async (ev) => {
@@ -863,9 +866,12 @@ function openEvent(e) {
       <div><label>Location</label><input id="evf-loc" value="${esc(e?.location || '')}"></div>
       <div><label>Starts</label><input id="evf-start" type="datetime-local" value="${toLocal(e?.start_at)}"></div>
       <div><label>Ends</label><input id="evf-end" type="datetime-local" value="${toLocal(e?.end_at)}"></div>
-      <div><label>Adult attendance</label><select id="evf-adults">
-        <option value="0" ${!e?.track_adults ? 'selected' : ''}>Not tracked</option>
-        <option value="1" ${e?.track_adults ? 'selected' : ''}>Tracked (headcount)</option></select></div>
+      <div><label>Adult attendance
+          ${e?.track_adults_source === 'manual' ? '<span class="tag off" title="Hand-set — the global default will not change this">manual</span>' : ''}</label>
+        <select id="evf-adults">
+        <option value="auto" ${e?.track_adults_source !== 'manual' ? 'selected' : ''}>Follow global default (currently: ${(e ? e.track_adults : $('ev-adults-default').value === '1') ? 'tracked' : 'not tracked'})</option>
+        <option value="0" ${e?.track_adults_source === 'manual' && !e?.track_adults ? 'selected' : ''}>Not tracked (manual)</option>
+        <option value="1" ${e?.track_adults_source === 'manual' && e?.track_adults ? 'selected' : ''}>Tracked — headcount (manual)</option></select></div>
       <div><label>High Adventure medical form ${e && e.source === 'ical' ? '<span class="tag off" title="App-owned — the iCal sync never changes this">app-owned</span>' : ''}</label>
         <select id="evf-haform">
         <option value="0" ${!e?.requires_high_adventure_form ? 'selected' : ''}>Not required</option>
@@ -904,7 +910,6 @@ function openEvent(e) {
       title: $('evf-title').value.trim(), location: $('evf-loc').value.trim(),
       start_at: new Date($('evf-start').value).toISOString(),
       end_at: new Date($('evf-end').value).toISOString(),
-      track_adults: $('evf-adults').value === '1',
       requires_high_adventure_form: $('evf-haform').value === '1',
       notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
@@ -915,6 +920,14 @@ function openEvent(e) {
       if (e && e.permission_form_source === 'manual') body.permission_form_source = 'auto';
     } else {
       body.requires_permission_form = perm === '1';
+    }
+    // adult tracking: a manual choice pins the event; picking Follow global
+    // hands it back (a new event with Follow global just omits the field)
+    const adults = $('evf-adults').value;
+    if (adults === 'auto') {
+      if (e && e.track_adults_source === 'manual') body.track_adults_source = 'auto';
+    } else {
+      body.track_adults = adults === '1';
     }
     // Warn/Block: same manual-wins dance against the global default
     const pblock = $('evf-permblock').value;
@@ -1662,6 +1675,20 @@ $('pf-enabled').onchange = async () => {
         : 'Permission-form tracking ON.')
       : 'Permission-form tracking off.');
   } catch (e) { toast(e.message, true); $('pf-enabled').checked = !$('pf-enabled').checked; }
+};
+$('ev-adults-default').onchange = async () => {
+  const val = $('ev-adults-default').value === '1';
+  if (!confirm(val
+    ? 'Track adult attendance at EVERY event by default?\n\nApplies to new events and to every current or future event that follows the default. Events you set by hand in the editor keep their own setting. Past events are never changed.'
+    : 'Stop tracking adults by default?\n\nCurrent and future events that follow the default become youth-only (adults already on site can still be signed out). Events you set by hand keep their own setting. Past events are never changed.')) {
+    $('ev-adults-default').value = val ? '0' : '1';
+    return;
+  }
+  try {
+    const s = await jput('/admin/adult-tracking', { default: val ? 1 : 0 });
+    toast(`Adult attendance default: ${s.default ? 'tracked' : 'not tracked'} — applied to ${s.applied} event(s); hand-set events untouched.`);
+    loadEvents();
+  } catch (e) { toast(e.message, true); $('ev-adults-default').value = val ? '0' : '1'; }
 };
 $('pf-block-default').onchange = async () => {
   const val = $('pf-block-default').value === '1';

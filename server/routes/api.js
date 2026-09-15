@@ -290,12 +290,15 @@ router.post('/events', express.json(), (req, res) => {
   if (!title || !start_at || !end_at) {
     return res.status(400).json({ error: 'Title, start, and end are required.' });
   }
+  // adult tracking: no choice (or the default's own value) follows the global
+  // default; a differing choice is hand-set (lib/adultTracking.js)
+  const adultTrack = require('../lib/adultTracking').forNewEvent(track_adults);
   const r = db.prepare(
-    `INSERT INTO event (source, title, location, start_at, end_at, track_adults,
+    `INSERT INTO event (source, title, location, start_at, end_at, track_adults, track_adults_source,
                         requires_high_adventure_form, requires_permission_form,
                         permission_form_source, permission_block, permission_block_source)
-     VALUES ('manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(title.trim(), location || null, start_at, end_at, track_adults ? 1 : 0,
+     VALUES ('manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(title.trim(), location || null, start_at, end_at, adultTrack.track_adults, adultTrack.source,
         requires_high_adventure_form ? 1 : 0,
         requires_permission_form ? 1 : 0,
         // a manual event's requirement is inherently hand-set; TLC can't see it

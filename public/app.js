@@ -94,16 +94,19 @@ async function boot() {
     // health-form badge switch (admin-set, default off); cached for offline boots
     state.flagHealthForms = !!cfg.flag_health_forms;
     state.permForms = !!cfg.permission_forms_enabled;
+    state.trackAdultsDefault = !!cfg.track_adults_default;
     state.smsRecipients = cfg.sms_recipients === 'all' ? 'all' : 'primary';
     try {
       localStorage.setItem('flag-health-forms', state.flagHealthForms ? '1' : '0');
       localStorage.setItem('flag-perm-forms', state.permForms ? '1' : '0');
+      localStorage.setItem('track-adults-default', state.trackAdultsDefault ? '1' : '0');
       localStorage.setItem('sms-recipients', state.smsRecipients);
     } catch { /* ignore */ }
   }).catch(() => {
     try {
       state.flagHealthForms = localStorage.getItem('flag-health-forms') === '1';
       state.permForms = localStorage.getItem('flag-perm-forms') === '1';
+      state.trackAdultsDefault = localStorage.getItem('track-adults-default') === '1';
       state.smsRecipients = localStorage.getItem('sms-recipients') === 'all' ? 'all' : 'primary';
     } catch { /* ignore */ }
   });
@@ -378,6 +381,8 @@ $('event-pill').onclick = openEventPicker;
 async function openEventPicker() {
   // sorted now → furthest away; past events hidden behind a toggle
   const { matching, upcoming, past } = await eventsCurrent();
+  // create-event checkbox starts on the admin's global adult-tracking default
+  $('ev-adults').checked = !!state.trackAdultsDefault;
   const wrap = $('event-list'); wrap.innerHTML = '';
   const add = (parent, ev, tag) => {
     const b = document.createElement('button');
@@ -662,6 +667,7 @@ async function addToCart(person) {
   });
   if (navigator.vibrate) navigator.vibrate(30);
   renderCart();
+  return true; // callers (on-site "Add to checkout") only navigate on success
 }
 
 function renderCart() {
@@ -1211,7 +1217,7 @@ async function renderOnsite() {
       el.innerHTML = `<span>${r.nickname || r.first_name} ${r.last_name}
           ${r.is_youth ? '' : '<span class="adult-tag">adult</span>'}</span>
         <span class="since">${r.patrol || ''}${since}</span>`;
-      el.onclick = () => showEmergencyInfo(r.id); // tap → emergency contacts
+      el.onclick = () => showEmergencyInfo(r.id, r); // tap → emergency contacts + Add to checkout
       div.appendChild(el);
     }
   }
@@ -1222,7 +1228,7 @@ async function renderOnsite() {
 // Reads the OFFLINE SNAPSHOT first (it must work with no signal — that's
 // when you need it most); the snapshot refreshes on every kiosk entry and
 // after every synced transaction.
-async function showEmergencyInfo(personId) {
+async function showEmergencyInfo(personId, onsiteRow) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const tel = (label, num) => num
     ? `<div class="contact-row"><span>${esc(label)}</span><a href="tel:${esc(String(num).replace(/[^+\d]/g, ''))}">${esc(num)}</a></div>`
@@ -1243,6 +1249,29 @@ async function showEmergencyInfo(personId) {
           `${g.is_primary ? ' ★' : ''}${g.relationship ? ` <span class="since">(${esc(g.relationship)})</span>` : ''}` +
           tel('Mobile', g.phone_mobile) + tel('Home', g.phone_home) + `</div>`).join('')
       : (p.is_youth ? '<p class="hint">No linked guardians in the saved roster.</p>' : ''));
+  // "Add to checkout" (door-staff feedback 2026-09-14): puts this person in
+  // the cart as a sign-OUT and returns to the cart, so a leader at pickup
+  // doesn't have to search or scan someone they're already looking at. More
+  // people are added the usual way — scan, search, or back to On site. The
+  // on-site row is authoritative for WHICH open sign-in this is (the saved
+  // snapshot's open flag can lag another station); addToCart enforces the
+  // one-direction cart rule and toasts if the cart is mid sign-in.
+  const addBtn = $('emergency-add');
+  addBtn.hidden = !onsiteRow;
+  addBtn.disabled = false;
+  addBtn.onclick = async () => {
+    addBtn.disabled = true;
+    const person = {
+      ...p,
+      open: { ...(p.open || {}), event_id: onsiteRow.event_id, event_title: onsiteRow.event_title },
+    };
+    const added = await addToCart(person).catch((e) => { toast(e.message, true); return false; });
+    if (!added) { addBtn.disabled = false; return; }
+    closeModal();
+    show('screen-main');
+    refreshOnsiteCount();
+    toast(`${displayName(person)} added to checkout — scan, search, or open On site to add more.`);
+  };
   openModal('modal-emergency');
 }
 $('emergency-close').onclick = closeModal;
