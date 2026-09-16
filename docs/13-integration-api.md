@@ -126,6 +126,8 @@ Derivation rules (all enforced by tests):
   that closed it, if any. `open = 1` means still signed in (no sign-out
   yet); the consumer decides whether "present" requires a sign-out.
 - **Adults appear only when the event tracks adults** (`track_adults = 1`).
+  That flag now follows a troop-wide default (Admin → Events) unless the
+  event was hand-set; the payload is unchanged either way.
 - **Visitors are included** with `status: "visitor"` (and typically a null
   `member_id`) so the consumer can hold or ignore them. A person who was
   later deactivated keeps their history and shows `status: "inactive"`.

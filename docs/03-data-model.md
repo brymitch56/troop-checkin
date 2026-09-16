@@ -55,6 +55,7 @@ Unchanged from v0.1 (source `ical`/`manual`, ical_uid, title, location, start/en
 | column | type | notes |
 |---|---|---|
 | track_adults | INTEGER | per-event toggle: adult attendance on (FR-12) |
+| track_adults_source | TEXT | `manual` = hand-set in the editor, spared by the global default; `auto`/NULL = follows it (migration 015) |
 | removed_from_feed | INTEGER | set when an iCal event with existing transactions disappears from the feed — kept locally, never deleted |
 
 ### txn
