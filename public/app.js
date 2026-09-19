@@ -1283,6 +1283,62 @@ window.addEventListener('unhandledrejection', (e) =>
   toast(`App error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`, true));
 
 // ---------------------------------------------------------------- PWA -----
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+// Registering is not enough on its own: a browser only looks for a new sw.js
+// on a NAVIGATION, and a door tablet or an installed app resumed from a
+// launcher may go days without one. That is how a Chromebook ended up serving
+// a stale build with no way out but Ctrl+Shift+R (ChromeOS has no
+// pull-to-refresh, so there was not even a gesture to try). So we ask for the
+// check ourselves — at boot, on a timer, and whenever the app comes back to
+// the foreground — and reload once the new worker has taken over.
+//
+// WHEN we reload matters more here than in a back-office tool. This is a
+// door: reloading in the middle of a check-in would drop a signature or a
+// half-scanned badge. So the reload waits for the app to be genuinely idle —
+// parked on the login screen, no dialog open, nothing still queued — and
+// simply tries again later if it is not. A kiosk between families is never
+// more than a minute or two away from that state.
+if ('serviceWorker' in navigator) {
+  const UPDATE_EVERY_MS = 30 * 60_000;
+  let updateReady = false;
+  let reloading = false;
+
+  const idleEnoughToReload = () => $('modal-root').hidden        // no dialog open
+    && !$('screen-login').hidden                                  // nobody mid-session
+    && !document.querySelector('.modal-page:not([hidden]) input[value]:not([value=""])');
+
+  async function reloadWhenIdle() {
+    if (!updateReady || reloading || !idleEnoughToReload()) return;
+    // Queued transactions survive a reload (they live in IndexedDB), but there
+    // is no reason to interrupt a flush that is already under way.
+    if (await Offline.queueSize().catch(() => 1)) return;
+    reloading = true;
+    location.reload();
+  }
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    updateReady = true;
+    reloadWhenIdle();
+  });
+
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    const check = () => reg.update().catch(() => {});
+    check();
+    setInterval(check, UPDATE_EVERY_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') check();
+    });
+    // A worker that installed while the app was open should take over rather
+    // than wait for every window to close — on a kiosk, that may be never.
+    reg.addEventListener('updatefound', () => {
+      const sw = reg.installing;
+      if (!sw) return;
+      sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) updateReady = true;
+      });
+    });
+  }).catch(() => { /* no worker: the kiosk still runs, just without offline */ });
+
+  setInterval(reloadWhenIdle, 15_000);
+}
 
 boot();
