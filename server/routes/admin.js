@@ -40,8 +40,13 @@ router.get('/people', (req, res) => {
   const status = req.query.status; // active | inactive | visitor
   const like = `%${q}%`;
   const rows = db.prepare(
+    // created_at/updated_at travel with the row so the merge picker can say
+    // WHICH of two look-alike records the roster import is still feeding.
+    // Merging the wrong way round cannot be undone, and for an unregistered
+    // adult the two copies are otherwise near-identical on screen.
     `SELECT id, is_youth, member_id, first_name, last_name, nickname, patrol, level,
-            role, status, phone_mobile, badge_code IS NOT NULL AS has_badge
+            role, status, phone_mobile, badge_code IS NOT NULL AS has_badge,
+            created_at, updated_at
        FROM person
       WHERE status != 'merged'
         AND (? = '' OR first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ? OR member_id LIKE ?)

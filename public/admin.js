@@ -18,6 +18,20 @@ const fmtDT = (s) => {
 // A date cell: shows the friendly local string, sorts chronologically
 // (tabletools reads data-sort when present).
 const dtCell = (s) => `<td data-sort="${esc(s || '')}">${fmtDT(s)}</td>`;
+// Milliseconds for a stored timestamp, by the same naive-UTC rule as fmtDT.
+// 0 when absent, so "unknown" compares as oldest.
+const tsOf = (s) => {
+  if (!s) return 0;
+  const naive = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s);
+  return Date.parse(naive ? s.replace(' ', 'T') + 'Z' : s) || 0;
+};
+// How old a record is and whether anything has touched it since — the two
+// facts that tell apart two look-alike copies of the same person.
+const stamp = (r) => {
+  const added = fmtDT(r.created_at) || 'unknown';
+  const changed = r.updated_at && r.updated_at !== r.created_at ? fmtDT(r.updated_at) : null;
+  return changed ? `added ${added} · last updated ${changed}` : `added ${added} · not updated since`;
+};
 // Enhance a just-rendered table with sort + multi-select filtering.
 // `cap` (optional) explains a server-side row limit in the count line.
 function enhanceTable(id, cap) {
@@ -385,7 +399,13 @@ async function openPerson(id, pushFrom) {
     // targets: any OTHER same-type record — roster member OR another
     // unregistered record (duplicate visitor-created parents, open-house
     // finding 2026-08-30; the server always allowed it, the picker didn't)
-    const q = prompt(`Merge this record into which other ${kind}? Type part of their name:\n\n(Use this when the same individual has two records — a parent record plus a registered-leader record, or two visitor-created copies of the same parent. Keep the record with the better phone/email/links; merge the other INTO it.)`);
+    const q = prompt(`Merge this record into which other ${kind}? Type part of their name:\n\n`
+      + 'THIS record is the one that gets retired; you pick the one to KEEP.\n\n'
+      + '(Use this when the same individual has two records — a parent record plus a '
+      + 'registered-leader record, or two visitor-created copies of the same parent. '
+      + 'Keep the record the roster import is still updating: for someone with no member '
+      + 'number the import matches on the exact name, so the copy whose spelling matches '
+      + 'the export is the one that keeps receiving updates.)');
     if (!q) return;
     const hits = (await api(`/admin/people?type=${kind}&q=` + encodeURIComponent(q)))
       .filter((x) => x.id !== id && x.status !== 'merged');
@@ -394,8 +414,24 @@ async function openPerson(id, pushFrom) {
       const who = pick.member_id
         ? `${pick.first_name} ${pick.last_name} (roster #${pick.member_id})`
         : `${pick.first_name} ${pick.last_name} (unregistered record${pick.phone_mobile ? `, ${pick.phone_mobile}` : ''})`;
-      if (confirm(Portal.t(`Merge into ${who}? Attendance history, guardian links, badge, and TLC mapping transfer to it; this record is retired. Cannot be undone.` +
-        (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : '')))) {
+      // Which record has the roster import touched most recently? Merging the
+      // fresher record INTO the staler one is the mistake this is here to
+      // catch: it is irreversible, and the next import simply recreates the
+      // copy that was just retired.
+      const seen = (r) => Math.max(tsOf(r.updated_at), tsOf(r.created_at));
+      const backwards = seen(p) > seen(pick);
+      if (confirm(Portal.t(`Merge into ${who}?`
+        + `\n\n  RETIRE  ${p.first_name} ${p.last_name} — ${stamp(p)}`
+        + `\n  KEEP    ${pick.first_name} ${pick.last_name} — ${stamp(pick)}`
+        + (backwards
+          ? '\n\n⚠ This looks backwards. The record you are retiring was updated MORE '
+            + 'recently than the one you are keeping, which usually means it is the one '
+            + 'the roster import is feeding. Merging this way round, the next import will '
+            + 'just recreate it.'
+          : '')
+        + '\n\nAttendance history, guardian links, badge, and TLC mapping transfer to the '
+        + 'kept record; this one is retired. Cannot be undone.'
+        + (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : '')))) {
         try { await jpost('/admin/merge', { from_id: id, into_id: pick.id }); toast('Merged'); closePersonModal(); loadDupes(true); loadPeople(); }
         catch (e) { toast(e.message, true); }
         return;
