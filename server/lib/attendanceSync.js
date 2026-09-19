@@ -23,6 +23,7 @@ const portal = require('./portal');
 // exact code that has been logging into TLC weekly since July 2026.
 
 const { db } = require('../db');
+const tlcPlans = require('./tlcPlans');
 
 // Lazy-required so tests can stub pieces; fetch-roster only runs its CLI
 // when it is the main module.
@@ -46,11 +47,29 @@ function writeMeta(key, obj) {
     .run(key, JSON.stringify(obj));
 }
 
-const getSettings = () => readMeta(SETTINGS_KEY, { enabled: 0, use_lesson_plans: 1 });
+// plan_check — the activity-plan guard (lib/tlcPlans.js):
+//   off   exactly the pre-guard behaviour; the plan endpoint is never read
+//   warn  read the plan and record what would/would not be credited, push anyway
+//   hold  park a push whose advancement would not land, so the one-and-only
+//         chance to record it survives until the plan is fixed on TLC
+// hold_release_hours — after this long a held row pushes anyway, so the
+// ATTENDANCE record is never lost; the forgone advancement is written to
+// tlc_advancement_skipped and stays there until a human verifies the fix.
+const PLAN_CHECK_MODES = ['off', 'warn', 'hold'];
+const getSettings = () => readMeta(SETTINGS_KEY, {
+  enabled: 0, use_lesson_plans: 1, plan_check: 'off', hold_release_hours: 72,
+});
 function saveSettings(patch) {
   const s = getSettings();
   if ('enabled' in patch) s.enabled = patch.enabled ? 1 : 0;
   if ('use_lesson_plans' in patch) s.use_lesson_plans = patch.use_lesson_plans ? 1 : 0;
+  if ('plan_check' in patch) {
+    s.plan_check = PLAN_CHECK_MODES.includes(patch.plan_check) ? patch.plan_check : 'off';
+  }
+  if ('hold_release_hours' in patch) {
+    const n = Number(patch.hold_release_hours);
+    s.hold_release_hours = Number.isFinite(n) && n >= 1 && n <= 24 * 30 ? Math.round(n) : 72;
+  }
   writeMeta(SETTINGS_KEY, s);
   return s;
 }
@@ -60,6 +79,11 @@ const getState = () => readMeta(STATE_KEY, {
   // set when the portal wanted a sign-in code: the sweep waits for a human
   // rather than re-posting the password (every attempt texts another code)
   code_required_at: null,
+  // last time a run existed only to re-check held rows — throttles that
+  // polling to HOLD_POLL_MS instead of every sweep
+  last_hold_poll: null,
+  // plan problems found on the last run, keyed by event title
+  plan_warnings: [],
 });
 const patchState = (p) => { const s = { ...getState(), ...p }; writeMeta(STATE_KEY, s); return s; };
 // re-saving credentials clears the auth latch (called from the admin route)
@@ -134,13 +158,23 @@ function enqueue(eventId, entries) {
 
 function queueSummary() {
   const g = (st) => db.prepare('SELECT COUNT(*) c FROM tlc_attendance_push WHERE status = ?').get(st).c;
-  return { pending: g('pending'), sent: g('sent'), failed: g('failed') };
+  // pre-migration installs have neither the columns nor the table
+  const count = (sql) => { try { return db.prepare(sql).get().c; } catch { return 0; } };
+  const held = count(
+    `SELECT COUNT(*) c FROM tlc_attendance_push WHERE status = 'pending' AND hold_reason IS NOT NULL`);
+  return {
+    // held rows stay 'pending' so the sweep re-evaluates them for free —
+    // report them separately so the UI never calls them merely queued
+    pending: g('pending') - held, held, sent: g('sent'), failed: g('failed'),
+    skipped_open: count(
+      'SELECT COUNT(*) c FROM tlc_advancement_skipped WHERE acknowledged_at IS NULL'),
+  };
 }
 
 function recentRows(limit = 30, from = null, to = null) {
   return db.prepare(
     `SELECT q.id, q.status, q.detail, q.attempts, q.created_at, q.sent_at,
-            q.tlc_event_id, q.tlc_user_id,
+            q.tlc_event_id, q.tlc_user_id, q.hold_reason, q.hold_since,
             p.first_name || ' ' || p.last_name AS person_name,
             e.title AS event_title, e.start_at AS event_start
        FROM tlc_attendance_push q
@@ -215,7 +249,10 @@ function parseUserList(html, tlcEventId) {
     const key = nameKey(e.name.slice(0, ci), e.name.slice(ci + 1));
     byName.set(key, byName.has(key) ? 'AMBIGUOUS' : hash);
   }
-  return { byHash, byName };
+  // `$.users` rides along in the same fragment: youth only, each with the
+  // level and patrol an activity plan is matched against. Free input for the
+  // plan guard — no extra request.
+  return { byHash, byName, users: tlcPlans.parseUsers(html) };
 }
 
 // Find the TLC hashid for an app person: cached id first, then exact
@@ -389,6 +426,54 @@ async function lookupCandidates({ personId, eventId = null, env = process.env })
   };
 }
 
+// ------------------------------------------------------- the plan guard ----
+// A held row keeps status 'pending' so every sweep re-evaluates it and sends
+// it the instant the plan is corrected on TLC — no new status value, no
+// rebuild of the CHECK constraint, no separate retry path.
+const HOLD_POLL_MS = 30 * 60 * 1000; // held-only runs poll this often, not every sweep
+
+// Prepared lazily, never at module load: server/index.js is required by the
+// first-run setup flow against a database that has had no migrations applied,
+// and a top-level db.prepare() of these columns would throw there.
+const holdRow = (reason, id) => db.prepare(
+  `UPDATE tlc_attendance_push
+      SET hold_reason = ?, hold_since = COALESCE(hold_since, datetime('now'))
+    WHERE id = ?`).run(reason, id);
+const unholdRow = (id) => db.prepare(
+  'UPDATE tlc_attendance_push SET hold_reason = NULL, hold_since = NULL WHERE id = ?').run(id);
+const insSkipped = (...args) => db.prepare(
+  `INSERT INTO tlc_advancement_skipped
+     (push_id, event_id, person_id, tlc_event_id, tlc_user_id, reason, plan_snapshot, held_since)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(event_id, person_id) DO UPDATE SET
+     reason = excluded.reason, plan_snapshot = excluded.plan_snapshot,
+     released_at = datetime('now'),
+     verified_at = NULL, verify_result = NULL, verify_detail = NULL,
+     acknowledged_at = NULL, acknowledged_by = NULL, acknowledge_note = NULL`).run(...args);
+
+// SQLite datetime('now') is 'YYYY-MM-DD HH:MM:SS' in UTC.
+const sqliteMs = (s) => (s ? Date.parse(String(s).replace(' ', 'T') + 'Z') : NaN);
+function holdExpired(row, hours) {
+  const since = sqliteMs(row.hold_since);
+  return Number.isFinite(since) && Date.now() - since >= hours * 3600 * 1000;
+}
+
+// One plan read per event per run, cached. A read that FAILS must never make
+// the write-back worse than it was before the guard existed, so the failure
+// is recorded and the push proceeds exactly as it always did.
+async function plansFor(session, tlcEventId, cache) {
+  if (cache.has(tlcEventId)) return cache.get(tlcEventId);
+  let v;
+  try {
+    const plans = await tlcPlans.fetchPlans(fetcher(), session, tlcEventId);
+    v = { plans, warnings: tlcPlans.planWarnings(plans), error: null };
+  } catch (e) {
+    v = { plans: null, warnings: [], error: e.message };
+  }
+  cache.set(tlcEventId, v);
+  return v;
+}
+
 // ----------------------------------------------------------- the push ------
 let running = false;
 const isRunning = () => running;
@@ -407,9 +492,19 @@ async function runPush({ manual = false, env = process.env } = {}) {
   }
   const pending = db.prepare(`SELECT * FROM tlc_attendance_push WHERE status = 'pending' ORDER BY id`).all();
   if (!pending.length) return { skipped: true, reason: 'Nothing pending.' };
+  // Nothing here but parked rows: re-check them on their own slower clock so
+  // a plan nobody is fixing does not log in to TLC every ten minutes forever.
+  if (!manual && pending.every((r) => r.hold_reason)) {
+    const last = sqliteMs(state.last_hold_poll) || Date.parse(state.last_hold_poll || '');
+    if (Number.isFinite(last) && Date.now() - last < HOLD_POLL_MS) {
+      return { skipped: true, reason: 'Only held rows pending — next re-check later.' };
+    }
+    patchState({ last_hold_poll: new Date().toISOString() });
+  }
 
   running = true;
-  const summary = { sent: 0, already: 0, failed: 0 };
+  const settings = getSettings();
+  const summary = { sent: 0, already: 0, failed: 0, held: 0, warned: 0, released: 0 };
   const mark = db.prepare(
     `UPDATE tlc_attendance_push
         SET status = ?, detail = ?, attempts = attempts + 1,
@@ -436,7 +531,9 @@ async function runPush({ manual = false, env = process.env } = {}) {
       return { failed_login: true, auth_latched: !!auth, code_required: !!needsCode, error: e.message };
     }
 
-    const lists = new Map(); // tlcEventId → parsed user list (one fetch each)
+    const lists = new Map();      // tlcEventId → parsed user list (one fetch each)
+    const planCache = new Map();  // tlcEventId → {plans, warnings, error}
+    const planWarnings = new Map(); // tlcEventId → warnings, for the admin panel
     for (const row of pending) {
       try {
         if (!lists.has(row.tlc_event_id)) {
@@ -451,28 +548,166 @@ async function runPush({ manual = false, env = process.env } = {}) {
         }
         const entry = list.byHash.get(m.hash);
         if (entry && entry.attended === 1) {
+          unholdRow(row.id);
           mark.run('sent', portal.t('already marked on TLC'), m.hash, 'sent', row.id);
           summary.already++; continue;
         }
+
+        // ---- activity-plan guard ------------------------------------------
+        // Only rows that expect advancement have anything to lose: an
+        // attendance-only push (use_lesson_plans=0) and every adult go
+        // straight through, exactly as before the guard existed.
+        let note = null;
+        if (settings.plan_check !== 'off' && row.use_lesson_plans) {
+          const pf = await plansFor(session, row.tlc_event_id, planCache);
+          if (pf.warnings.length) planWarnings.set(row.tlc_event_id, pf.warnings);
+          if (pf.plans) {
+            const cov = tlcPlans.coverageFor(pf.plans, m.hash, list.users.get(m.hash));
+            if (cov.applicable && !cov.covered) {
+              if (settings.plan_check === 'hold' && !holdExpired(row, settings.hold_release_hours)) {
+                // Park it. TLC has not seen this person yet, so the one
+                // chance to record their advancement is still intact.
+                holdRow(cov.reason, row.id);
+                summary.held++; continue;
+              }
+              if (settings.plan_check === 'hold') {
+                // Window is up: the attendance record matters more than a
+                // perfect hold, so push — but write down exactly what was
+                // given up, where a human has to come and clear it.
+                insSkipped(row.id, row.event_id, row.person_id, row.tlc_event_id, m.hash,
+                  cov.reason,
+                  JSON.stringify({ plans: pf.plans.plans, warnings: pf.warnings }),
+                  row.hold_since);
+                note = portal.t('released after hold — advancement was NOT recorded');
+                summary.released++;
+              } else {
+                note = portal.t('advancement did not apply: ') + cov.reason;
+                summary.warned++;
+              }
+            } else if (row.hold_reason) {
+              unholdRow(row.id); // the plan was fixed — send it for real
+            }
+          } else if (pf.error) {
+            note = portal.t('activity plan could not be read: ') + pf.error;
+          }
+        }
+
         await toggleAttendance(session, {
           userId: m.hash, eventId: row.tlc_event_id, useLessonPlans: row.use_lesson_plans,
         });
-        mark.run('sent', null, m.hash, 'sent', row.id);
+        unholdRow(row.id); // sent is sent — a parked row is parked no longer
+        mark.run('sent', note, m.hash, 'sent', row.id);
         summary.sent++;
       } catch (e) {
         mark.run('failed', e.message, null, 'failed', row.id);
         summary.failed++;
       }
     }
+    // Plan problems are a property of the EVENT, not of one row — surface
+    // them against the event title so the panel can name what to go and fix.
+    const warnings = [];
+    for (const [tlcEventId, list] of planWarnings) {
+      const ev = db.prepare(
+        'SELECT title FROM event WHERE tlc_event_id = ? ORDER BY start_at DESC LIMIT 1').get(tlcEventId);
+      for (const w of list) warnings.push({ event: ev ? ev.title : tlcEventId, warning: w });
+    }
     patchState({
       last_run: new Date().toISOString(),
       last_status: summary.failed ? 'partial' : 'ok',
       last_error: summary.failed ? `${summary.failed} row(s) failed — see the log.` : null,
+      plan_warnings: warnings,
     });
     return summary;
   } finally {
     running = false;
   }
+}
+
+// ------------------------------------------- skipped-advancement log -------
+// Everything the auto-release gave up, kept until a human says otherwise.
+// Dismissal is two-step ON PURPOSE: step one re-reads TLC and checks the
+// youth actually holds the items now, step two records the acknowledgement.
+// Clearing a row you have not verified is possible but requires an explicit
+// force plus a note, so "I'll sort it later" cannot look like "sorted".
+function skippedRows({ includeAcknowledged = false, limit = 200 } = {}) {
+  return db.prepare(
+    `SELECT s.*, p.first_name || ' ' || p.last_name AS person_name,
+            e.title AS event_title, e.start_at AS event_start,
+            st.name AS acknowledged_by_name
+       FROM tlc_advancement_skipped s
+       JOIN person p ON p.id = s.person_id
+       JOIN event  e ON e.id = s.event_id
+  LEFT JOIN staff  st ON st.id = s.acknowledged_by
+      WHERE (? = 1 OR s.acknowledged_at IS NULL)
+      ORDER BY s.acknowledged_at IS NULL DESC, s.released_at DESC, s.id DESC
+      LIMIT ?`).all(includeAcknowledged ? 1 : 0, limit);
+}
+
+const snapshotItems = (row) => {
+  try {
+    const snap = JSON.parse(row.plan_snapshot || '{}');
+    const ids = new Set();
+    for (const p of snap.plans || []) for (const it of p.items || []) ids.add(it);
+    return [...ids];
+  } catch { return []; }
+};
+
+// Step one: ask TLC whether the advancement is there now.
+async function verifySkipped(id, env = process.env) {
+  const row = db.prepare('SELECT * FROM tlc_advancement_skipped WHERE id = ?').get(id);
+  if (!row) { const e = new Error('No such skipped row.'); e.code = 404; throw e; }
+  if (!row.tlc_user_id) { const e = new Error(portal.t('That row has no TLC user id to check.')); e.code = 422; throw e; }
+
+  const set = db.prepare(
+    `UPDATE tlc_advancement_skipped
+        SET verified_at = datetime('now'), verify_result = ?, verify_detail = ?
+      WHERE id = ?`);
+  let plans;
+  try {
+    plans = await tlcPlans.fetchPlans(fetcher(), await tlcSession(env), row.tlc_event_id);
+  } catch (e) {
+    set.run('error', e.message, id);
+    return { ...row, verify_result: 'error', verify_detail: e.message };
+  }
+  // What the plan offered when the push was released; fall back to whatever
+  // it offers now if the snapshot is missing.
+  let expected = snapshotItems(row);
+  if (!expected.length) {
+    expected = [...new Set(plans.plans.flatMap((p) => p.items))];
+  }
+  const held = plans.held.get(row.tlc_user_id) || new Set();
+  const missing = expected.filter((it) => !held.has(it));
+  const label = (it) => plans.itemTitles.get(it) || it;
+  const result = !expected.length ? 'not_found' : (missing.length ? 'not_found' : 'confirmed');
+  const detail = !expected.length
+    ? portal.t('The event has no activity plan items to check against.')
+    : (missing.length
+      ? portal.t('Still missing on TLC: ') + missing.map(label).join(', ')
+      : portal.t('Recorded on TLC: ') + expected.map(label).join(', '));
+  set.run(result, detail, id);
+  return { ...row, verified_at: new Date().toISOString(), verify_result: result, verify_detail: detail };
+}
+
+// Step two: clear it.
+function acknowledgeSkipped(id, { staffId = null, note = null, force = false } = {}) {
+  const row = db.prepare('SELECT * FROM tlc_advancement_skipped WHERE id = ?').get(id);
+  if (!row) { const e = new Error('No such skipped row.'); e.code = 404; throw e; }
+  if (row.acknowledged_at) { const e = new Error(portal.t('That row was already cleared.')); e.code = 409; throw e; }
+  if (row.verify_result !== 'confirmed') {
+    if (!force) {
+      const e = new Error(portal.t('Check Trail Life Connect first — press Verify on TLC. If it really is fixed and the check still disagrees, clear it with a note.'));
+      e.code = 409; throw e;
+    }
+    if (!String(note || '').trim()) {
+      const e = new Error(portal.t('Clearing an unverified row needs a note saying what was done.'));
+      e.code = 422; throw e;
+    }
+  }
+  db.prepare(
+    `UPDATE tlc_advancement_skipped
+        SET acknowledged_at = datetime('now'), acknowledged_by = ?, acknowledge_note = ?
+      WHERE id = ?`).run(staffId, String(note || '').trim() || null, id);
+  return { ok: true, id };
 }
 
 // ------------------------------------------------------------- sweep -------
@@ -491,6 +726,8 @@ module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
   enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
+  PLAN_CHECK_MODES, plansFor, holdExpired,
+  skippedRows, verifySkipped, acknowledgeSkipped,
   tlcIdFromBadge, adoptBadgeTlcId, backfillFromBadges,
   normName, nameKey, parseUserList, matchPerson,
   tlcSession, fetchUserList, toggleAttendance,

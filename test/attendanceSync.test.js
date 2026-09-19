@@ -60,12 +60,43 @@ function userListHtml(users, eventHash = EV) {
       <a href="/profile/${u.hash}?tab=advancement" target="_blank" data-pjax="0">${u.name}</a>
     </div>
     <div style="x"><div class="cbx-container"><div class="cbx cbx-md" tabindex="1000"><span class="cbx-icon"></span></div>
-      <input type="text" id="${u.hash}-${eventHash}-attended" class="cbx-hide" name="attended-1" value="${u.attended}" data-krajee-checkboxx="1"></div></div>`).join('\n');
+      <input type="text" id="${u.hash}-${eventHash}-attended" class="cbx-hide" name="attended-1" value="${u.attended}" data-krajee-checkboxx="1"></div></div>`).join('\n') +
+    // `$.users` rides along in the real fragment (youth only) and carries the
+    // level/patrol the activity-plan guard matches against.
+    `\n<script>\n$.users = ${JSON.stringify(Object.fromEntries(users
+      .filter((u) => u.level_id !== undefined)
+      .map((u) => [u.hash, { id: u.hash, level_id: u.level_id, patrol_id: u.patrol_id ?? null }])))};\n</script>`;
 }
+
+// The plans fragment: an Alpine empty-state in the markup (which must NOT be
+// believed) plus the real data in a script block, exactly as captured.
+const LVL = { wt: 'Woodlands Trail', lvlfox000001: 'Fox|fox.svg', lvlhawk00001: 'Hawk|hawk.svg' };
+const PATROLS = { patfox100001: 'Fox 1', patfox200002: 'Fox 2', pathawk10001: 'Hawk 1', pathawk20002: 'Hawk 2' };
+const ITEMS = { bdgvalues001: { itemhtty1001: 'Hit the Trail! Activity - Year 1', itemhtty2002: 'Hit the Trail! Activity - Year 2' } };
+function lessonPlansHtml(lessons, advancements = {}) {
+  return `<div id="lesson-plans"><p>No activity plans have been added to event.</p></div>
+<script>
+$.levels = ${JSON.stringify(LVL)};
+$.patrols = ${JSON.stringify(PATROLS)};
+$.items = ${JSON.stringify(ITEMS)};
+$.lessons = ${JSON.stringify(lessons)};
+$.flatBadges = Object.assign({}, ...Object.values($.badges));
+$.advancementsByUser = ${JSON.stringify(advancements)};
+$.wtIds = ["lvlfox000001","lvlhawk00001"];
+</script>`;
+}
+const mkLesson = (extra = {}) => ({
+  id: 'lesplan00001', title: 'Activity Plan #1', level_id: [], patrol_id: [],
+  badge_id: ['bdgvalues001'], items_id: ['itemhtty1001'], type: 'level', ...extra,
+});
 
 // ------------------------------------------------------- mock TLC server ---
 function makeMockTlc(opts = {}) {
-  const state = { loginPosts: 0, listPosts: 0, toggles: [], users: opts.users || [], rejectLogin: !!opts.rejectLogin };
+  const state = {
+    loginPosts: 0, listPosts: 0, planGets: 0, toggles: [],
+    users: opts.users || [], rejectLogin: !!opts.rejectLogin,
+    lessons: opts.lessons || [], advancements: opts.advancements || {},
+  };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -99,6 +130,12 @@ function makeMockTlc(opts = {}) {
         if (!authed || !csrfOk) { res.writeHead(403); return res.end(); }
         res.writeHead(200, { 'Content-Type': 'text/html' });
         return res.end(userListHtml(state.users, new URLSearchParams(body).get('eventId')));
+      }
+      if (req.method === 'GET' && url.pathname === '/calendar/attendance-lesson-plans') {
+        state.planGets++;
+        if (!authed) { res.writeHead(403); return res.end(); }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end(lessonPlansHtml(state.lessons, state.advancements));
       }
       if (req.method === 'POST' && url.pathname === '/calendar/toggle-attendance') {
         if (!authed || !csrfOk) { res.writeHead(403); return res.end(); }
@@ -316,7 +353,8 @@ test('runPush: marks attendees, learns hashids, skips already-attended, records 
   assert.equal(A.enqueue(ev, [ben, bray, ghost]).queued, 3);
 
   const r = await A.runPush({ env: pushEnv() });
-  assert.deepEqual(r, { sent: 1, already: 1, failed: 1 });
+  assert.deepEqual(r, { sent: 1, already: 1, failed: 1, held: 0, warned: 0, released: 0 });
+  assert.equal(mock.state.planGets, 0); // plan_check defaults off: no extra call
 
   // exactly ONE toggle hit the wire, with the captured parameter set
   assert.deepEqual(mock.state.toggles, [
@@ -372,6 +410,142 @@ test('runPush: rejected login latches the sweep off; manual push bypasses; re-sa
 });
 
 // ------------------------------------------------- HTTP: routes + hook -----
+// ------------------------------------------------------- activity plans ----
+const P = require('../server/lib/tlcPlans');
+
+test('tlcPlans: reads the script block, not the "no activity plans" empty state', () => {
+  const html = lessonPlansHtml([mkLesson({ level_id: ['lvlfox000001'] })], { aaaabbbbcccc: ['itemhtty1001'] });
+  assert.match(html, /No activity plans have been added to event/); // the trap
+  const plans = P.parsePlans(html);
+  assert.equal(plans.plans.length, 1);
+  assert.deepEqual(plans.plans[0].levels, ['lvlfox000001']);
+  assert.equal(plans.itemTitles.get('itemhtty1001'), 'Hit the Trail! Activity - Year 1');
+  assert.ok(plans.held.get('aaaabbbbcccc').has('itemhtty1001'));
+
+  const users = P.parseUsers(userListHtml(
+    [{ hash: 'aaaabbbbcccc', name: 'Andrews, Ben', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' }]));
+  assert.deepEqual(users.get('aaaabbbbcccc'), { level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' });
+});
+
+test('tlcPlans: coverage by level and patrol; the umbrella covers nobody', () => {
+  const hawk = { level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' };
+  const byLevel = P.parsePlans(lessonPlansHtml([mkLesson({ level_id: ['lvlhawk00001'] })]));
+  assert.equal(P.coverageFor(byLevel, 'h1', hawk).covered, true);
+  assert.deepEqual(P.coverageFor(byLevel, 'h1', hawk).gain, ['itemhtty1001']);
+
+  const byPatrol = P.parsePlans(lessonPlansHtml([mkLesson({ patrol_id: ['pathawk10001'] })]));
+  assert.equal(P.coverageFor(byPatrol, 'h1', hawk).how[0], 'patrol');
+
+  // the "Woodlands Trail" umbrella is expanded by the PAGE for display only —
+  // stored as the literal string it matched nobody (observed live 2026-09-19)
+  const umbrella = P.parsePlans(lessonPlansHtml([mkLesson({ level_id: ['wt'] })]));
+  const cov = P.coverageFor(umbrella, 'h1', hawk);
+  assert.equal(cov.covered, false);
+  assert.match(cov.reason, /does not cover patrol Hawk 1/);
+
+  // …except for the member with no patrol, whom a blank patrol entry credits
+  const blank = P.parsePlans(lessonPlansHtml([mkLesson({ level_id: ['wt'], patrol_id: [''] })]));
+  assert.equal(P.coverageFor(blank, 'h1', hawk).covered, false);
+  assert.equal(P.coverageFor(blank, 'f1', { level_id: 'lvlfox000001', patrol_id: null }).how[0], 'blank-patrol');
+
+  // nothing left to gain is still covered — that is a no-op, not a miss
+  const done = P.parsePlans(lessonPlansHtml([mkLesson({ level_id: ['lvlhawk00001'] })], { h1: ['itemhtty1001'] }));
+  assert.deepEqual(P.coverageFor(done, 'h1', hawk), { applicable: true, covered: true, gain: [], how: ['level'], reason: null });
+
+  // no plans at all: nothing to judge, so never hold
+  assert.equal(P.coverageFor(P.parsePlans(lessonPlansHtml([])), 'h1', hawk).applicable, false);
+  // not in $.users (an adult): likewise
+  assert.equal(P.coverageFor(byLevel, 'nope', undefined).applicable, false);
+});
+
+test('planWarnings: umbrella level, blank patrol entry, and a year/patrol mismatch', () => {
+  const w = (lessons) => P.planWarnings(P.parsePlans(lessonPlansHtml(lessons)));
+  assert.match(w([mkLesson({ level_id: ['wt'] })])[0], /Woodlands Trail.*matches nobody/s);
+  assert.match(w([mkLesson({ patrol_id: [''] })])[0], /blank entry in its patrol list/);
+  // a Year 1 item handed to the year-2 patrols
+  assert.match(w([mkLesson({ patrol_id: ['pathawk20002'], items_id: ['itemhtty1001'] })])[0],
+    /year-2 patrols but carries “Hit the Trail! Activity - Year 1”/);
+  // matching year: silent
+  assert.deepEqual(w([mkLesson({ patrol_id: ['pathawk20002'], items_id: ['itemhtty2002'] })]), []);
+});
+
+test('plan guard: holds a push whose advancement would not land, sends it once the plan is fixed', async () => {
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  const dana = mkPerson('Dana', 'Dover');
+  const ev = mkEvent();
+  mock.state.users = [{ hash: 'hawk11111111', name: 'Dover, Dana', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' }];
+  mock.state.advancements = {};
+  mock.state.toggles = [];
+  mock.state.lessons = [mkLesson({ level_id: ['wt'], patrol_id: [''] })]; // the broken shape
+  A.saveSettings({ enabled: 1, use_lesson_plans: 1, plan_check: 'hold', hold_release_hours: 72 });
+  A.enqueue(ev, [dana]);
+
+  const held = await A.runPush({ manual: true, env: pushEnv() });
+  assert.equal(held.held, 1);
+  assert.equal(held.sent, 0);
+  assert.equal(mock.state.toggles.length, 0); // TLC never saw them — credit still recoverable
+  assert.match(rowFor(ev, dana).hold_reason, /does not cover patrol Hawk 1/);
+  assert.equal(rowFor(ev, dana).status, 'pending');
+  assert.equal(A.queueSummary().held, 1);
+
+  // the panel names what to go and fix
+  assert.match(JSON.stringify(A.getState().plan_warnings), /Woodlands Trail/);
+
+  // plan corrected on TLC → the very next sweep sends it, with advancement
+  mock.state.lessons = [mkLesson({ patrol_id: ['pathawk10001'] })];
+  const sent = await A.runPush({ manual: true, env: pushEnv() });
+  assert.equal(sent.sent, 1);
+  assert.equal(rowFor(ev, dana).hold_reason, null);
+  assert.deepEqual(mock.state.toggles.at(-1), { userId: 'hawk11111111', eventId: EV, value: '1', use_lesson_plans: '1' });
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+});
+
+test('plan guard: the release window pushes anyway and records the skipped advancement; clearing it takes two steps', async () => {
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  db.prepare('DELETE FROM tlc_advancement_skipped').run();
+  const evan = mkPerson('Evan', 'Ellery');
+  const ev = mkEvent();
+  mock.state.users = [{ hash: 'hawk22222222', name: 'Ellery, Evan', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' }];
+  mock.state.advancements = {};
+  mock.state.lessons = [mkLesson({ level_id: ['lvlfox000001'] })]; // Hawks not covered
+  A.saveSettings({ enabled: 1, use_lesson_plans: 1, plan_check: 'hold', hold_release_hours: 72 });
+  A.enqueue(ev, [evan]);
+
+  assert.equal((await A.runPush({ manual: true, env: pushEnv() })).held, 1);
+  // pretend the window ran out
+  db.prepare(`UPDATE tlc_attendance_push SET hold_since = datetime('now','-100 hours')`).run();
+
+  const out = await A.runPush({ manual: true, env: pushEnv() });
+  assert.equal(out.released, 1);
+  assert.equal(out.sent, 1);                       // attendance is never lost
+  assert.match(rowFor(ev, evan).detail, /advancement was NOT recorded/);
+
+  const [skip] = A.skippedRows();
+  assert.equal(skip.person_name, 'Evan Ellery');
+  assert.equal(skip.acknowledged_at, null);
+  assert.equal(A.queueSummary().skipped_open, 1);
+
+  // step one says no, so step two refuses
+  const notYet = await A.verifySkipped(skip.id, pushEnv());
+  assert.equal(notYet.verify_result, 'not_found');
+  assert.match(notYet.verify_detail, /Still missing on TLC: Hit the Trail! Activity - Year 1/);
+  assert.throws(() => A.acknowledgeSkipped(skip.id, { staffId: null }), /Check Trail Life Connect first/);
+  // …unless forced, and a force without a note is refused too
+  assert.throws(() => A.acknowledgeSkipped(skip.id, { force: true, note: '  ' }), /needs a note/);
+
+  // fixed by hand on TLC → verify confirms → clearing is allowed
+  mock.state.advancements = { hawk22222222: ['itemhtty1001'] };
+  assert.equal((await A.verifySkipped(skip.id, pushEnv())).verify_result, 'confirmed');
+  assert.deepEqual(A.acknowledgeSkipped(skip.id, { staffId: null, note: 're-toggled on TLC' }), { ok: true, id: skip.id });
+  assert.equal(A.skippedRows()[0], undefined);                    // gone from the open list
+  assert.equal(A.skippedRows({ includeAcknowledged: true }).length, 1);
+  assert.throws(() => A.acknowledgeSkipped(skip.id, {}), /already cleared/);
+
+  A.saveSettings({ plan_check: 'off' });
+  mock.state.lessons = []; mock.state.advancements = {};
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+});
+
 const auth = require('../server/auth');
 let server, base2, adminCookie, doorCookie;
 
@@ -400,7 +574,8 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   A.saveSettings({ enabled: 0, use_lesson_plans: 1 });
   const put = await req('PUT', '/api/admin/tlc-attendance/settings',
     { body: { enabled: true, use_lesson_plans: false }, cookie: adminCookie });
-  assert.deepEqual(put.json.settings, { enabled: 1, use_lesson_plans: 0 });
+  assert.deepEqual(put.json.settings,
+    { enabled: 1, use_lesson_plans: 0, plan_check: 'off', hold_release_hours: 72 });
   const got = await req('GET', '/api/admin/tlc-attendance', { cookie: adminCookie });
   assert.equal(got.json.settings.enabled, 1);
   assert.equal(got.json.credentials_configured, true);

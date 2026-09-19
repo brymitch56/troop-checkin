@@ -1599,6 +1599,8 @@ async function loadTlca() {
   if (!s) return;
   if (document.activeElement !== $('tlca-enabled')) $('tlca-enabled').checked = !!s.settings.enabled;
   if (document.activeElement !== $('tlca-lessons')) $('tlca-lessons').checked = !!s.settings.use_lesson_plans;
+  if (document.activeElement !== $('tlca-plan-check')) $('tlca-plan-check').value = s.settings.plan_check || 'off';
+  if (document.activeElement !== $('tlca-hold-hours')) $('tlca-hold-hours').value = s.settings.hold_release_hours ?? 72;
 
   const bits = [];
   if (!s.credentials_configured) bits.push('Needs the Trail Life Connect credentials saved above.');
@@ -1612,22 +1614,69 @@ async function loadTlca() {
       ? '✅ ok' : `⚠ ${esc(s.state.last_error || s.state.last_status || '')}`));
   }
   bits.push(`Queue: <b>${s.queue.pending}</b> pending · ${s.queue.sent} sent · ` +
+    (s.queue.held ? `<b>${s.queue.held} held</b> · ` : '') +
     (s.queue.failed ? `<b class="error">${s.queue.failed} failed</b> <button id="tlca-retry" class="btn ghost small">Retry failed</button>` : '0 failed'));
   $('tlca-status').innerHTML = bits.join('<br>');
   $('tlca-push').disabled = !!s.running || !s.credentials_configured || !s.queue.pending;
 
+  renderPlanWarnings(s.state.plan_warnings || []);
+  renderSkipped(s.skipped || []);
   renderPushLog(s.recent);
 
   clearTimeout(tlcaTimer);
   if ((s.running || s.queue.pending) && !$('tab-import').hidden) tlcaTimer = setTimeout(loadTlca, 5000);
+}
+
+// Problems with the event's activity plan itself — the thing to go and fix
+// on TLC. Shown whenever the last push found any, in warn or hold mode.
+function renderPlanWarnings(rows) {
+  $('tlca-plan-warnings').innerHTML = rows.length
+    ? `<div class="callout warn"><b>Activity plans needing attention</b><ul>` +
+      rows.map((r) => `<li><b>${esc(r.event)}</b>: ${esc(r.warning)}</li>`).join('') + '</ul></div>'
+    : '';
+}
+
+// Advancement the auto-release gave up. Deliberately loud and deliberately
+// awkward to clear: verify against TLC first, or force it with a note.
+function renderSkipped(rows) {
+  const open = rows.filter((r) => !r.acknowledged_at);
+  if (!rows.length) { $('tlca-skipped').innerHTML = ''; return; }
+  const verdict = (r) => {
+    if (!r.verify_result) return '<span class="hint">not checked yet</span>';
+    if (r.verify_result === 'confirmed') return '✅ confirmed on TLC';
+    if (r.verify_result === 'not_found') return `<b class="error">still missing</b>`;
+    return '⚠ check failed';
+  };
+  $('tlca-skipped').innerHTML =
+    `<div class="callout ${open.length ? 'bad' : ''}">
+      <b>Advancement skipped${open.length ? ` — ${open.length} outstanding` : ''}</b>
+      <p class="hint left">These sign-outs were pushed for attendance after the hold window ran out, but
+      the event's activity plan would not have credited them, so <b>no advancement was recorded</b>. Fix it
+      by hand on Trail Life Connect (add the plan, then un-check and re-check that person on Track
+      Attendance), then press <b>Verify on TLC</b> — the app re-reads their record and only then lets the
+      row be cleared.</p>
+      <table><tr><th>Person</th><th>Event</th><th>Why</th><th>Checked</th><th></th></tr>` +
+    rows.map((r) => `<tr${r.acknowledged_at ? ' class="muted-row"' : ''}>
+        <td>${esc(r.person_name)}</td>
+        <td>${esc(r.event_title)}</td>
+        <td>${esc(r.reason)}${r.verify_detail ? `<br><span class="hint">${esc(r.verify_detail)}</span>` : ''}</td>
+        <td>${r.acknowledged_at
+          ? `cleared ${fmtDT(r.acknowledged_at)}${r.acknowledged_by_name ? ' by ' + esc(r.acknowledged_by_name) : ''}` +
+            (r.acknowledge_note ? `<br><span class="hint">${esc(r.acknowledge_note)}</span>` : '')
+          : verdict(r)}</td>
+        <td>${r.acknowledged_at ? '' :
+          `<button class="btn ghost small" data-skip-verify="${r.id}">Verify on TLC</button>
+           <button class="btn ghost small" data-skip-ack="${r.id}">Clear</button>`}</td>
+      </tr>`).join('') + '</table></div>';
 }
 function renderPushLog(rows) {
   $('tlca-log').innerHTML = rows.length
     ? `<table><tr><th>When</th><th>Person</th><th>Event</th><th>Status</th><th>Detail</th></tr>` +
       rows.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
         <td>${esc(r.event_title)}</td>
-        <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed' : '⏳ pending'}</td>
-        <td>${esc(r.detail || '')}</td></tr>`).join('') + '</table>'
+        <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed'
+          : r.hold_reason ? '⏸ held' : '⏳ pending'}</td>
+        <td>${esc(r.detail || r.hold_reason || '')}</td></tr>`).join('') + '</table>'
     : '<p class="hint left">Nothing queued yet — sign-ins appear here once the push is enabled (or an event is set to “Always push”).</p>';
   enhanceTable('tlca-log');
 }
@@ -1649,6 +1698,8 @@ async function saveTlcaSettings() {
   try {
     await jput('/admin/tlc-attendance/settings', {
       enabled: $('tlca-enabled').checked, use_lesson_plans: $('tlca-lessons').checked,
+      plan_check: $('tlca-plan-check').value,
+      hold_release_hours: Number($('tlca-hold-hours').value) || 72,
     });
     toast('Saved'); loadTlca();
   } catch (e) { toast(e.message, true); }
@@ -1663,6 +1714,8 @@ $('tlca-enabled').onchange = () => {
   saveTlcaSettings();
 };
 $('tlca-lessons').onchange = saveTlcaSettings;
+$('tlca-plan-check').onchange = saveTlcaSettings;
+$('tlca-hold-hours').onchange = saveTlcaSettings;
 $('pf-enabled').onchange = async () => {
   try {
     const s = await jput('/admin/permission-forms', { enabled: $('pf-enabled').checked ? 1 : 0 });
@@ -1711,6 +1764,32 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-retry') {
     try { const r = await jpost('/admin/tlc-attendance/retry', {}); toast(`${r.retried} row(s) queued again`); loadTlca(); }
     catch (err) { toast(err.message, true); }
+  }
+  // Skipped-advancement log: verify against TLC, then clear.
+  const vId = e.target.dataset && e.target.dataset.skipVerify;
+  if (vId) {
+    e.target.disabled = true;
+    try {
+      const r = await jpost(`/admin/tlc-attendance/skipped/${vId}/verify`, {});
+      toast(r.verify_result === 'confirmed' ? 'Confirmed on TLC' : (r.verify_detail || 'Not recorded on TLC yet'),
+        r.verify_result !== 'confirmed');
+    } catch (err) { toast(err.message, true); }
+    loadTlca();
+  }
+  const aId = e.target.dataset && e.target.dataset.skipAck;
+  if (aId) {
+    try {
+      await jpost(`/admin/tlc-attendance/skipped/${aId}/ack`, {});
+      toast('Cleared'); loadTlca();
+    } catch (err) {
+      // Not verified: the server refuses, so ask for the note that makes
+      // clearing it a deliberate, attributable act rather than a reflex.
+      const note = prompt(Portal.t(`${err.message}\n\nTo clear it anyway, say what was done on TLC:`), '');
+      if (note === null) return;
+      if (!note.trim()) { toast(Portal.t('A note is required.'), true); return; }
+      try { await jpost(`/admin/tlc-attendance/skipped/${aId}/ack`, { force: true, note }); toast('Cleared with a note'); loadTlca(); }
+      catch (err2) { toast(err2.message, true); }
+    }
   }
 });
 

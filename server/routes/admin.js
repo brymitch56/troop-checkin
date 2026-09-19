@@ -874,7 +874,36 @@ router.get('/tlc-attendance', (req, res) => {
     running: attendanceSync.isRunning(),
     credentials_configured: !!rosterSync.credentialInfo().source,
     recent: attendanceSync.recentRows(30),
+    // activity-plan guard: rows parked because their advancement would not
+    // land, and the permanent record of advancement the auto-release gave up
+    skipped: attendanceSync.skippedRows({ limit: 100 }),
   });
+});
+
+// Step one of the two-step dismissal: re-read TLC and check the youth now
+// holds what the plan should have given them. Never clears anything itself.
+router.post('/tlc-attendance/skipped/:id/verify', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) {
+    return res.status(422).json({ error: portal.t('Trail Life Connect credentials are not configured — save them under Automatic roster sync.') });
+  }
+  try {
+    res.json(await attendanceSync.verifySkipped(Number(req.params.id)));
+  } catch (e) {
+    res.status(e.code || 500).json({ error: e.message });
+  }
+});
+
+// Step two: clear it. Refused unless a verify confirmed the fix, or the
+// caller explicitly forces it and says what they did.
+router.post('/tlc-attendance/skipped/:id/ack', (req, res) => {
+  const b = req.body || {};
+  try {
+    res.json(attendanceSync.acknowledgeSkipped(Number(req.params.id), {
+      staffId: req.staff.staff_id, note: b.note, force: !!b.force,
+    }));
+  } catch (e) {
+    res.status(e.code || 500).json({ error: e.message });
+  }
 });
 
 router.put('/tlc-attendance/settings', (req, res) => {

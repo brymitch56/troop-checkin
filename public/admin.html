@@ -366,7 +366,26 @@
         <label class="check"><input id="tlca-enabled" type="checkbox"> Push attendance to Trail Life Connect</label>
         <label class="check"><input id="tlca-lessons" type="checkbox"> Track advancement with event activity plans</label>
       </div>
+      <p class="hint left"><b>Activity-plan check.</b> Marking someone Attended is the moment TLC applies
+      advancement, and it only happens once — the app never un-marks anyone, so a mis-scoped activity plan
+      costs that Trailman the credit with no error shown anywhere. When set to <b>Hold</b>, the app reads the
+      event's activity plan first and parks any push whose advancement would not land, then sends it
+      automatically once the plan is corrected on TLC. Held pushes are released after the window below so the
+      <i>attendance</i> record is never lost; whatever advancement that gave up is listed under
+      “Advancement skipped” until someone verifies it was fixed by hand.</p>
+      <div class="row wrap">
+        <label>Activity-plan check
+          <select id="tlca-plan-check">
+            <option value="off">Off — push without reading the plan</option>
+            <option value="warn">Warn — note it in the log, still push</option>
+            <option value="hold">Hold — wait until the plan would credit them</option>
+          </select></label>
+        <label>Release held pushes after
+          <input id="tlca-hold-hours" type="number" min="1" max="720" step="1" style="width:6em"> hours</label>
+      </div>
       <p id="tlca-status" class="hint left"></p>
+      <div id="tlca-plan-warnings"></div>
+      <div id="tlca-skipped"></div>
       <div class="row wrap">
         <label>From <input id="pl-from" type="date"></label>
         <label>To <input id="pl-to" type="date"></label>

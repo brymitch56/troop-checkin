@@ -111,11 +111,78 @@ body: userId=<userHashid>&eventId=<eventHashid>&value=1&use_lesson_plans=1
 ## Advancement caveat
 
 Advancement only accrues when the TLC event has **activity plans attached**
-("Activity plans covered during event" panel on `/attendance`). The test
-event had none, so the advancement side-effect itself was not exercised —
-only the flag that enables it. Before shipping, verify once against an event
-with an activity plan that `use_lesson_plans=1` actually writes the expected
-advancement records, and that `value=0` afterwards removes them.
+("Activity plans covered during event" panel on `/attendance`) *and* the plan
+actually matches the member. `toggle-attendance` takes no level parameter —
+TLC derives the level from the member's own profile — so the app cannot steer
+the grant. All it can do is read the plan first; see the guard below.
+
+## Activity-plan guard
+
+Implemented in `lib/tlcPlans.js` + the `plan_check` setting (`off` by
+default, then `warn`, then `hold`). Migration `016_tlc_plan_guard.sql`.
+
+The write-back spends a one-shot resource: marking someone Attended is the
+moment TLC applies advancement, and afterwards `runPush` sees `attended=1`
+and never re-posts (and never sends `value=0`). A plan that does not match
+the member therefore costs that youth the credit permanently, with a green
+`sent` row in the log and no error anywhere on either side.
+
+Read the plan with
+
+```
+GET /calendar/attendance-lesson-plans?eventId=<eventHashid>
+```
+
+The useful data is in the fragment's `<script>` block, not its markup — the
+markup also carries a static "No activity plans have been added to event."
+empty-state that Alpine hides, so stripping scripts and reading the text
+gives the opposite answer. Blobs: `$.lessons` (the plan rows), `$.levels`,
+`$.patrols`, `$.items`, `$.wtIds`, and `$.advancementsByUser` (userHashid →
+item ids already held at that member's current level). The user-list fragment
+the push already fetches carries `$.users` — youth only — with the `level_id`
+and `patrol_id` a plan is matched against, so per-member level/patrol costs
+no extra request.
+
+Two plan shapes credit (almost) nobody, both observed live 2026-09-19 on an
+event whose Manage Event tab looked correct:
+
+- `level_id: ["wt"]` — the "Woodlands Trail" umbrella. `track_attendance.js`
+  expands it to `$.wtIds` for **display only**; stored as the literal string
+  it matched no member of any Woodlands level.
+- `patrol_id: [""]` — an untouched select2 serialises to a one-element array
+  holding an empty string. The server counts that as a patrol selection (it
+  reports the plan back with `type:"patrol"` even when the author chose
+  Levels — `type` is client-side only and is not part of the save payload),
+  and the only member credited was the one with **no patrol assigned**.
+
+Plan writes exist too and are not used by the app: `create-lesson`,
+`update-lesson?useJson=1&id=`, `delete-lesson?useJson=1&id=`, saving JSON of
+`{title, badge_id, level_id, patrol_id, items_id}`. Rewriting a troop's plans
+is deliberately left to a human.
+
+Guard behaviour, per pending row:
+
+1. Rows with `use_lesson_plans=0`, adults (absent from `$.users`), and events
+   with no plan rows at all go straight through — nothing to protect.
+2. Otherwise coverage is computed. Already holding every item the plan offers
+   counts as covered: that is a no-op, not a miss.
+3. Not covered, mode `warn` → push, with the reason recorded on the row.
+4. Not covered, mode `hold` → **park it**. The row keeps `status='pending'`
+   with `hold_reason`/`hold_since` set, so every sweep re-evaluates it and
+   sends it the moment the plan is fixed on TLC. TLC never saw the member, so
+   the credit is still recoverable. Runs that contain only held rows poll on a
+   30-minute clock rather than every sweep.
+5. After `hold_release_hours` (default 72) the row pushes anyway — the
+   attendance record matters more than a perfect hold — and the forgone
+   advancement is written to `tlc_advancement_skipped`.
+
+A skipped row stays visible until a human clears it, in two steps:
+`POST /tlc-attendance/skipped/:id/verify` re-reads TLC and checks the youth
+now holds the plan's items, and `…/ack` refuses unless that verify came back
+`confirmed` or the caller passes `force` **and** a note.
+
+A plan read that fails never makes the write-back worse than it was before
+the guard existed: the error is recorded on the row and the push proceeds.
 
 ## Other UI parameters (for completeness)
 
