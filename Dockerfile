@@ -9,7 +9,7 @@
 #
 # better-sqlite3 ships prebuilt binaries for linux amd64/arm64, so no
 # compiler toolchain is needed in the image.
-FROM node:20-slim
+FROM node:22-slim
 
 ENV NODE_ENV=production
 

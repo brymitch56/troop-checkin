@@ -4,7 +4,7 @@ As built, 2026-07-19. Companion to the planning docs (01–04); where they disag
 
 ## Stack and layout
 
-Node 20 LTS + Express 4 + better-sqlite3 (WAL mode) on a Raspberry Pi; vanilla-JS PWA clients. Dependencies are deliberately few and arm64-safe: `better-sqlite3`, `express`, `multer` (2.x), `node-ical`, `xlsx`. Twilio is called over plain REST (no SDK).
+Node 22 LTS + Express 4 + better-sqlite3 (WAL mode) on a Raspberry Pi; vanilla-JS PWA clients. Dependencies are deliberately few and arm64-safe: `better-sqlite3`, `express`, `multer` (2.x), `node-ical`, `xlsx`. Twilio is called over plain REST (no SDK).
 
 ```
 server/
@@ -52,7 +52,7 @@ public/
   sw.js               app-shell cache (VERSION tc-v20 — bump when public/ changes)
   vendor/jsqr.min.js  vendored QR decoder (camera fallback path)
 scripts/
-  install-pi.sh       fresh clone -> Node 20 -> npm ci -> migrate -> systemd
+  install-pi.sh       fresh clone -> Node 22 -> npm ci -> migrate -> systemd
   deploy-verify.sh    post-deploy integrity guard (tree==HEAD, no 0-byte files, module
                       exports, migrations reconciled, service/healthz/sw) -> RESULT: PASS/FAIL
   troop-checkin.service.template

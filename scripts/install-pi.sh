@@ -7,7 +7,7 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="${SUDO_USER:-pi}"
-NODE_MAJOR=20
+NODE_MAJOR=22
 
 # --name <service>: systemd unit base name (default troop-checkin). A SECOND
 # instance on the same box (another troop/program, its own clone + .env with
@@ -36,7 +36,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-# --- Node 20 LTS (NodeSource; arm64-safe) ----------------------------------
+# --- Node 22 LTS (NodeSource; arm64-safe) ----------------------------------
 if ! command -v node >/dev/null || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt $NODE_MAJOR ]]; then
   echo "==> Installing Node $NODE_MAJOR LTS"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
