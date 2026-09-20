@@ -1,8 +1,9 @@
 'use strict';
 // Trail Life Connect iCal feed sync (Phase 2).
 // All events are discrete — no RRULE handling by design (see build plan).
-// Rule: an ical event that disappears from the feed is DELETED if it has no
-// transactions, but KEPT and flagged (removed_from_feed=1) if it has any.
+// Rule: an ical event that disappears from the feed is DELETED if nothing of
+// record hangs off it, but KEPT and flagged (removed_from_feed=1) if anything
+// does — sign-ins, texts, attendance pushes (see eventReferences below).
 const ical = require('node-ical');
 const { db } = require('../db');
 const env = require('./env');
@@ -16,7 +17,50 @@ const text = (v) => {
   return s == null || s === '' ? null : String(s);
 };
 
+// What an event that left the feed is still attached to decides its fate.
+// DERIVED tables are caches rebuilt from the member portal — they go with
+// the event. Every OTHER table that references event(id) is history (sign-ins,
+// texts sent, attendance pushed) and keeps the event, flagged. The list of
+// referencing tables is read from the schema, not written down here: a table
+// added later that nobody taught this file about counts as history, so the
+// worst case is a kept event — never a foreign-key error, which used to roll
+// back the ENTIRE sync and silently freeze the calendar.
+const DERIVED = new Set(['event_form_status']);
+function eventReferences() {
+  const refs = [];
+  for (const { name } of db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()) {
+    for (const fk of db.pragma(`foreign_key_list("${name.replace(/"/g, '""')}")`)) {
+      if (fk.table === 'event') refs.push({ table: name, column: fk.from });
+    }
+  }
+  return refs;
+}
+const quote = (id) => `"${id.replace(/"/g, '""')}"`;
+
+function eventStatements() {
+  const refs = eventReferences();
+  return {
+    history: refs.filter((r) => !DERIVED.has(r.table))
+      .map((r) => db.prepare(`SELECT 1 FROM ${quote(r.table)} WHERE ${quote(r.column)} = ? LIMIT 1`)),
+    derived: refs.filter((r) => DERIVED.has(r.table))
+      .map((r) => db.prepare(`DELETE FROM ${quote(r.table)} WHERE ${quote(r.column)} = ?`)),
+  };
+}
+
+// Shared with the admin "delete event" route: true = deleted (with its derived
+// rows), false = it has history and must stay.
+function deleteEventUnlessHistory(id) {
+  const { history, derived } = eventStatements();
+  if (history.some((q) => q.get(id))) return false;
+  db.transaction(() => {
+    for (const del of derived) del.run(id);
+    db.prepare('DELETE FROM event WHERE id = ?').run(id);
+  })();
+  return true;
+}
+
 function applyFeed(vevents) {
+  const { history, derived } = eventStatements();
   let added = 0, updated = 0, flagged = 0, deleted = 0;
   const run = db.transaction(() => {
     const seen = new Set();
@@ -50,10 +94,11 @@ function applyFeed(vevents) {
     }
     for (const row of db.prepare(`SELECT * FROM event WHERE source = 'ical'`).all()) {
       if (seen.has(`${row.ical_uid}|${row.start_at}`)) continue;
-      const hasTxn = db.prepare('SELECT 1 FROM txn WHERE event_id = ? LIMIT 1').get(row.id);
-      if (hasTxn) {
+      const hasHistory = history.some((q) => q.get(row.id));
+      if (hasHistory) {
         if (!row.removed_from_feed) { db.prepare('UPDATE event SET removed_from_feed = 1 WHERE id = ?').run(row.id); flagged++; }
       } else {
+        for (const del of derived) del.run(row.id);
         db.prepare('DELETE FROM event WHERE id = ?').run(row.id);
         deleted++;
       }
@@ -88,4 +133,4 @@ function scheduleNightly() {
   return timer;
 }
 
-module.exports = { syncIcal, applyFeed, scheduleNightly };
+module.exports = { syncIcal, applyFeed, scheduleNightly, deleteEventUnlessHistory };

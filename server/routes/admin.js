@@ -541,8 +541,14 @@ router.post('/events/:id/form-upload', formStatusUpload.single('file'), (req, re
 router.delete('/events/:id', (req, res) => {
   const used = db.prepare('SELECT 1 FROM txn WHERE event_id = ? LIMIT 1').get(req.params.id);
   if (used) return res.status(409).json({ error: 'Event has transactions — it cannot be deleted.' });
-  const r = db.prepare('DELETE FROM event WHERE id = ?').run(req.params.id);
-  if (!r.changes) return res.status(404).json({ error: 'No such event.' });
+  if (!db.prepare('SELECT 1 FROM event WHERE id = ?').get(req.params.id)) {
+    return res.status(404).json({ error: 'No such event.' });
+  }
+  // same rule as the feed sync: cached form statuses go with the event; texts
+  // sent or attendance pushed for it are history and keep it
+  if (!icalSync.deleteEventUnlessHistory(req.params.id)) {
+    return res.status(409).json({ error: 'Event has messages or attendance history — it cannot be deleted.' });
+  }
   res.json({ ok: true });
 });
 
