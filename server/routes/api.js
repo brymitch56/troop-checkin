@@ -770,6 +770,9 @@ router.post('/roster/import', auth.requireAuth('admin'), upload.single('file'), 
       added: p.adds.map((x) => `${x.first_name} ${x.last_name}`),
       updated: p.updates.map((u) => ({ name: `${u.p.first_name} ${u.p.last_name}`, fields: Object.keys(u.ch) })),
       deactivated: p.deactivate.map((d) => `${d.first_name} ${d.last_name}`),
+      // Adds that look like somebody already on the roster. A warning, not an
+      // action: approving still creates them, but nobody is surprised later.
+      possibleDuplicates: p.possibleDuplicates,
     });
   }
   const rawPath = path.join(UPLOAD_DIR, `${Date.now()}_${req.file.originalname}`);

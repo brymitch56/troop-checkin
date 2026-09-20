@@ -487,3 +487,65 @@ test('portal sign-in: Disconnect is safe when there is nothing stored', async ()
   assert.equal(r.status, 200);
   assert.equal(r.json.session.connected, false);
 });
+
+// ------------------------------------------- unregistered adults screen ----
+test('unregistered adults are bucketed by whether anyone still needs them', async () => {
+  const mk = (first, last, seen) => db.prepare(
+    `INSERT INTO person (is_youth, member_id, first_name, last_name, status, last_seen_in_import)
+     VALUES (0, NULL, ?, ?, 'active', ?) RETURNING *`).get(first, last, seen);
+  const mkYouth = (first, status) => db.prepare(
+    `INSERT INTO person (is_youth, member_id, first_name, last_name, status)
+     VALUES (1, ?, ?, 'Bucket', ?) RETURNING *`).get(`M-${first}`, first, status);
+  const link = (g, y) => db.prepare(
+    "INSERT INTO person_guardian (youth_id, guardian_id, relationship, authorized, source) VALUES (?, ?, 'parent', 1, 'manual')")
+    .run(y.id, g.id);
+
+  // Three imports, so "not seen in the last 3" has something to mean.
+  const ins = db.prepare('INSERT INTO roster_import (filename, imported_at) VALUES (?, ?)');
+  ins.run('a.xlsx', '2026-09-01 00:00:00');
+  ins.run('b.xlsx', '2026-09-08 00:00:00');
+  ins.run('c.xlsx', '2026-09-15 00:00:00');
+
+  const stale = mk('Stale', 'Bucket', '2026-08-01 00:00:00');   // in an old export only
+  const current = mk('Current', 'Bucket', '2026-09-15 00:00:00'); // in the newest
+  const orphan = mk('Orphan', 'Bucket', null);                   // hand-added, youth gone
+  const needed = mk('Needed', 'Bucket', null);                   // hand-added, youth here
+  const unlinked = mk('Unlinked', 'Bucket', null);               // hand-added, no links
+
+  link(orphan, mkYouth('Gone', 'inactive'));
+  link(needed, mkYouth('Here', 'active'));
+
+  const r = await req('GET', '/api/admin/unregistered-adults', { cookie: adminCookie });
+  assert.equal(r.status, 200);
+  const got = (name) => r.json.people.find((p) => p.first_name === name).bucket;
+  assert.equal(got('Stale'), 'stale');
+  assert.equal(got('Current'), 'current');
+  assert.equal(got('Orphan'), 'manual-orphaned', 'every youth they could collect has left');
+  assert.equal(got('Needed'), 'manual-needed', 'a pickup adult with an active youth is never offered');
+  assert.equal(got('Unlinked'), 'manual-unlinked', 'no link is not evidence they are unwanted');
+
+  // Only the two retirable buckets are offered for pre-selection. Scoped to
+  // this test's own fixtures — the shared database carries others.
+  const mine = r.json.people.filter((p) => p.last_name === 'Bucket');
+  assert.deepEqual(
+    mine.filter((p) => p.bucket === 'stale' || p.bucket === 'manual-orphaned').map((p) => p.first_name).sort(),
+    ['Orphan', 'Stale'],
+  );
+  assert.ok(r.json.retirable >= 2);
+
+  // Retiring is by explicit id, and scoped to this population.
+  const done = await req('POST', '/api/admin/unregistered-adults/deactivate', {
+    cookie: adminCookie, body: { ids: [stale.id, orphan.id] },
+  });
+  assert.equal(done.json.deactivated, 2);
+  assert.equal(db.prepare('SELECT status FROM person WHERE id = ?').get(stale.id).status, 'inactive');
+  assert.equal(db.prepare('SELECT status FROM person WHERE id = ?').get(needed.id).status, 'active');
+
+  // A youth id handed to it is ignored rather than obeyed.
+  const youth = db.prepare("SELECT id FROM person WHERE is_youth = 1 AND status = 'active' LIMIT 1").get();
+  const sneaky = await req('POST', '/api/admin/unregistered-adults/deactivate', {
+    cookie: adminCookie, body: { ids: [youth.id] },
+  });
+  assert.equal(sneaky.json.deactivated, 0);
+  assert.equal(db.prepare('SELECT status FROM person WHERE id = ?').get(youth.id).status, 'active');
+});

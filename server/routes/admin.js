@@ -662,6 +662,82 @@ router.post('/close-open', (req, res) => {
 });
 
 // -------------------------------------------------------- visitor merge ----
+// ------------------------------------------------- unregistered adults ----
+/**
+ * Adults with no member number, and what the roster export knows about them.
+ *
+ * Two populations that look identical in the person table and must NOT be
+ * treated alike:
+ *
+ *   stale           — the export used to describe them and no longer does.
+ *                     Today this screen is the only way they ever leave: the
+ *                     import cannot deactivate someone it cannot identify.
+ *   manual-orphaned — never in any export, and every youth they are linked to
+ *                     has gone inactive. A pickup adult exists to collect a
+ *                     particular child; when none of those children are still
+ *                     here, neither is the reason to keep them.
+ *   manual-needed   — never in any export, but at least one youth they may
+ *                     collect is still active. Never offered.
+ *   manual-unlinked — never in any export and linked to NO youth. Not offered
+ *                     either: no link is an absence of evidence, not evidence
+ *                     they are unwanted, and retiring the wrong one means a
+ *                     parent is turned away at pickup. Shown so the gap can
+ *                     be fixed.
+ *   current         — the last few exports still describe them.
+ *
+ * Deactivating is left to a person on purpose. Inactive removes someone from
+ * the check-in roster entirely, and getting it wrong means a leader cannot be
+ * signed in, or a parent cannot collect their child, on a meeting night.
+ */
+router.get('/unregistered-adults', (req, res) => {
+  const imports = db.prepare('SELECT imported_at FROM roster_import ORDER BY imported_at DESC LIMIT 10').all();
+  // "N imports ago" reads better than a date: a troop importing weekly and one
+  // importing twice a year need different patience.
+  const nth = (n) => (imports[n] ? imports[n].imported_at : null);
+  const rows = db.prepare(
+    `SELECT p.id, p.first_name, p.last_name, p.email, p.phone_mobile, p.patrol, p.role,
+            p.created_at, p.last_seen_in_import,
+            (SELECT COUNT(*) FROM person_guardian pg WHERE pg.guardian_id = p.id) AS youth_linked,
+            (SELECT COUNT(*) FROM person_guardian pg JOIN person y ON y.id = pg.youth_id
+              WHERE pg.guardian_id = p.id AND y.status = 'active') AS youth_active
+       FROM person p
+      WHERE p.is_youth = 0 AND p.member_id IS NULL AND p.status = 'active'
+      ORDER BY p.last_seen_in_import IS NULL, p.last_seen_in_import, p.last_name, p.first_name`
+  ).all();
+  const want = Number(req.query.imports) > 0 ? Number(req.query.imports) : 3;
+  const missedSince = nth(want - 1);
+  const bucketOf = (p) => {
+    if (p.last_seen_in_import) {
+      return missedSince && p.last_seen_in_import < missedSince ? 'stale' : 'current';
+    }
+    if (!p.youth_linked) return 'manual-unlinked';
+    return p.youth_active ? 'manual-needed' : 'manual-orphaned';
+  };
+  const people = rows.map((p) => ({ ...p, bucket: bucketOf(p) }));
+  res.json({
+    importsKnown: imports.length,
+    lastImportAt: nth(0),
+    missedSince,
+    // The two the screen may pre-select. Everything else is shown, not urged.
+    retirable: people.filter((p) => p.bucket === 'stale' || p.bucket === 'manual-orphaned').length,
+    people,
+  });
+});
+
+/** Retire a batch of them. Ids only — never a rule the server infers itself. */
+router.post('/unregistered-adults/deactivate', (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'Nothing selected.' });
+  const q = ids.map(() => '?').join(',');
+  // Scoped to exactly the population this screen shows, so a stray id cannot
+  // retire a registered member or a youth.
+  const done = db.prepare(
+    `UPDATE person SET status = 'inactive', updated_at = datetime('now')
+      WHERE id IN (${q}) AND is_youth = 0 AND member_id IS NULL AND status = 'active'`
+  ).run(...ids);
+  return res.json({ ok: true, deactivated: done.changes });
+});
+
 router.post('/merge', (req, res) => {
   const { from_id, into_id } = req.body || {};
   const from = db.prepare('SELECT * FROM person WHERE id = ?').get(from_id);

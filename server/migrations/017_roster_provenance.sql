@@ -1,0 +1,34 @@
+-- Provenance for roster-sourced people.
+--
+-- An adult without a member number has no stable identity, and that one gap
+-- causes two live problems:
+--
+--   1. DUPLICATES. rosterImport.findExisting matches such a person by EXACT
+--      lowercase name, so the day the export spells them "Robert" instead of
+--      "Rob" the import creates a second person instead of updating the first.
+--      Seen for real on 2026-09-19.
+--   2. THEY NEVER LEAVE. computePreview only considers deactivating people
+--      WHERE member_id IS NOT NULL, because you cannot safely retire someone
+--      you cannot identify. So an unregistered adult stays active forever,
+--      however long they have been off the export. One had sat active for
+--      twelve days after the rest of his family went inactive.
+--
+-- last_seen_in_import is the smallest thing that helps with both. It answers:
+--   - is this person stale?  (an old timestamp)
+--   - did they come from an export at all, or did a leader add them by hand
+--     at the door?  (NULL = hand-created, and must never be auto-retired —
+--     they are not in the export and never will be)
+--
+-- It is deliberately only a RECORD. Nothing deactivates anyone automatically
+-- on the strength of it: being inactive removes someone from the check-in
+-- roster entirely, and wrongly retiring a leader breaks them at the door on a
+-- meeting night. The admin screen lists who looks stale and a human decides.
+ALTER TABLE person ADD COLUMN last_seen_in_import TEXT;
+
+-- Backfill what can be known: anyone carrying a member number is, by
+-- definition, someone the export has described at some point. Their
+-- created_at is the earliest defensible answer and keeps them out of a
+-- "never seen" bucket they do not belong in. Member-number-less people are
+-- left NULL — the next import will stamp the ones that are really in it, and
+-- the ones that are not are exactly the list this column exists to surface.
+UPDATE person SET last_seen_in_import = created_at WHERE member_id IS NOT NULL;

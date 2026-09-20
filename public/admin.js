@@ -1480,6 +1480,7 @@ async function loadSync() {
         ${(pv.added || []).length ? `<p><b>New:</b> ${list(pv.added)}</p>` : ''}
         ${(pv.updated || []).length ? `<p><b>Updated:</b> ${pv.updated.map((u) => `${esc(u.name)} (${u.fields.map(esc).join(', ')})`).join('; ')}</p>` : ''}
         ${(pv.deactivated || []).length ? `<p class="error"><b>Deactivated:</b> ${list(pv.deactivated)}</p>` : ''}
+        ${(pv.possibleDuplicates || []).length ? `<p class="error"><b>Looks like a duplicate:</b> ${pv.possibleDuplicates.map((d) => `${esc(d.incoming)} may be <b>${esc(d.existing)}</b>, already on the roster (${esc(d.why)})`).join('; ')} — approving would add a second record. Fix the spelling on the portal and re-sync, or merge them afterwards.</p>` : ''}
         <p class="hint left">Diff computed when fetched; approving re-checks everything against the current
         roster (locks, guardians, deactivation scoping) exactly like a manual commit.</p>
         <div class="row wrap">
@@ -1630,6 +1631,8 @@ document.addEventListener('keydown', (e) => {
 
 // ------------------------------------------- TLC attendance write-back ----
 let tlcaTimer = null;
+if (document.getElementById('unreg-reload')) document.getElementById('unreg-reload').onclick = () => loadUnregistered();
+
 async function loadTlca() {
   const s = await api('/admin/tlc-attendance').catch(() => null);
   if (!s) return;
@@ -1952,6 +1955,7 @@ async function loadImport() {
   $('imp-result').innerHTML = '';
   loadSync();
   loadTlca();
+  loadUnregistered();
   api('/admin/permission-forms').then((s) => {
     if (document.activeElement !== $('pf-enabled')) $('pf-enabled').checked = !!s.enabled;
     if (document.activeElement !== $('pf-block-default')) $('pf-block-default').value = s.block_default ? '1' : '0';
@@ -2002,3 +2006,71 @@ $('imp-commit').onclick = async () => {
 };
 
 boot();
+
+// ------------------------------------------- unregistered adults screen ----
+// Guardians and pickup adults carry no member number, so the import can
+// neither recognise them after a rename nor retire them after they leave.
+// This is where a human does both jobs. Only two buckets are ever
+// pre-selected; the rest are shown precisely so they are NOT acted on.
+const UNREG_BUCKETS = {
+  stale: { label: 'not in recent exports', cls: 'error', offer: true },
+  'manual-orphaned': { label: 'added by hand · no active youth', cls: 'error', offer: true },
+  'manual-needed': { label: 'added by hand · can collect an active youth', cls: 'ok', offer: false },
+  'manual-unlinked': { label: 'added by hand · no youth linked', cls: 'off', offer: false },
+  current: { label: 'in a recent export', cls: 'ok', offer: false },
+};
+
+async function loadUnregistered() {
+  const box = $('unreg-list');
+  if (!box) return;
+  let data;
+  try { data = await api('/admin/unregistered-adults'); } catch (e) { box.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
+  const people = data.people || [];
+  if (!people.length) {
+    box.innerHTML = '<p class="hint left">No adults without a member number — nothing to tidy.</p>';
+    return;
+  }
+  const seenText = (p) => (p.last_seen_in_import
+    ? `last in an export ${fmtDT(p.last_seen_in_import)}`
+    : 'never seen in an export');
+  const rows = people.map((p) => {
+    const b = UNREG_BUCKETS[p.bucket] || { label: p.bucket, cls: 'off', offer: false };
+    return `<tr>
+      <td><input type="checkbox" class="unreg-pick" data-id="${p.id}" ${b.offer ? 'checked' : ''}
+        ${b.offer ? '' : 'title="Not offered — somebody may still need them"'}></td>
+      <td>${esc(p.first_name)} ${esc(p.last_name)}${p.role ? ` <span class="hint">${esc(p.role)}</span>` : ''}</td>
+      <td><span class="tag ${b.cls}">${b.label}</span></td>
+      <td class="hint">${seenText(p)}</td>
+      <td class="hint">${p.youth_linked ? `${p.youth_active} of ${p.youth_linked} youth still active` : 'no youth linked'}</td>
+    </tr>`;
+  }).join('');
+  const offered = people.filter((p) => (UNREG_BUCKETS[p.bucket] || {}).offer).length;
+  box.innerHTML = `
+    <p class="hint left">${people.length} adult(s) with no member number.
+      ${data.importsKnown < 3
+    ? `<b>Only ${data.importsKnown} import(s) on record</b> — "not in recent exports" cannot mean much yet, so nothing is judged stale until a few more have run.`
+    : `Judged against the last 3 imports (back to ${fmtDT(data.missedSince)}).`}</p>
+    <div class="tbl"><table>
+      <tr><th></th><th>Person</th><th>Standing</th><th>Export</th><th>Pickup</th></tr>
+      ${rows}
+    </table></div>
+    <div class="row wrap">
+      <button id="unreg-deactivate" class="btn primary small" ${offered ? '' : 'disabled'}>
+        Deactivate selected</button>
+      <span class="hint">${offered} pre-selected. Inactive removes someone from the check-in roster —
+        they can be reactivated from their record.</span>
+    </div>`;
+
+  $('unreg-deactivate').onclick = async () => {
+    const ids = [...document.querySelectorAll('.unreg-pick:checked')].map((c) => Number(c.dataset.id));
+    if (!ids.length) return toast('Nobody selected.', true);
+    if (!confirm(`Deactivate ${ids.length} adult(s)? They leave the check-in roster and can no longer be `
+      + 'signed in or chosen at pickup. Their records and history stay, and you can reactivate them.')) return;
+    try {
+      const r = await jpost('/admin/unregistered-adults/deactivate', { ids });
+      toast(`${r.deactivated} deactivated`);
+      loadUnregistered();
+      loadPeople();
+    } catch (e) { toast(e.message, true); }
+  };
+}

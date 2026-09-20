@@ -329,6 +329,21 @@
       </div>
 
       <div id="sync-pending"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Adults with no member number
+        <button id="unreg-reload" class="btn ghost small">Refresh</button>
+      </h3>
+      <p class="hint left">Guardians and pickup adults have no member number, so the import cannot
+      identify them — which means it can never retire them either, however long they have been off
+      the export. They accumulate here instead, and you decide.
+      <b>Anyone still needed is never pre-selected:</b> an adult who may collect a youth who is still
+      active stays, and so does one with no youth linked at all.</p>
+      <div id="unreg-list"></div>
+    </div>
+
+    <div class="panel">
       <details id="sync-creds">
         <summary>Trail Life Connect credentials</summary>
         <p id="sync-creds-info" class="hint left"></p>

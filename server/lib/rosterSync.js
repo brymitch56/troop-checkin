@@ -22,6 +22,7 @@ function stagePending(filePath, buf, source = 'sync') {
     added: p.adds.map((x) => `${x.first_name} ${x.last_name}`),
     updated: p.updates.map((u) => ({ name: `${u.p.first_name} ${u.p.last_name}`, fields: Object.keys(u.ch) })),
     deactivated: p.deactivate.map((d) => `${d.first_name} ${d.last_name}`),
+    possibleDuplicates: p.possibleDuplicates,
   };
   const run = db.transaction(() => {
     const replaced = db.prepare('SELECT COUNT(*) c FROM pending_import').get().c;

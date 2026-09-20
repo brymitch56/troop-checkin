@@ -130,9 +130,41 @@ function suggestLinks(people) {
 }
 
 // Find the DB person row matching a parsed record, or null.
+/**
+ * Who, if anyone, in the roster is the person this file row describes?
+ *
+ * Three tiers, strongest first:
+ *
+ *   1. MEMBER NUMBER. A real identifier; nothing else is consulted.
+ *   2. E-MAIL, but only when it picks out exactly ONE unregistered adult AND
+ *      the surname agrees. This tier exists because the name tier below
+ *      breaks the moment the export changes its mind about someone's first
+ *      name — "Rob" became "Robert" and a duplicate person appeared. On this
+ *      troop's rosters an address identifies exactly one adult in 43 of 47
+ *      cases, so it catches most of that.
+ *      The uniqueness guard is not theoretical: spouses share an address, and
+ *      two live examples do. For them the address identifies two people, this
+ *      tier abstains, and matching falls through to the name — i.e. exactly
+ *      the old behaviour, never a wrong person. Surname is checked too so a
+ *      shared address can never marry up two different families.
+ *   3. EXACT NAME, as before.
+ *
+ * A tier may only ever make matching BETTER than tier 3 alone. Attaching a
+ * file row to the wrong person is far worse than creating a duplicate, so
+ * every tier that cannot be sure declines and lets the next one try.
+ */
 function findExisting(p) {
   if (p.member_id) {
     return db.prepare('SELECT * FROM person WHERE member_id = ?').get(p.member_id) || null;
+  }
+  const email = lower(p.email);
+  if (email) {
+    const byEmail = db.prepare(
+      `SELECT * FROM person
+        WHERE is_youth = 0 AND member_id IS NULL AND status != 'merged'
+          AND email IS NOT NULL AND lower(email) = ?`
+    ).all(email);
+    if (byEmail.length === 1 && lower(byEmail[0].last_name) === lower(p.last_name)) return byEmail[0];
   }
   // unregistered adult: match by type + name among rows without a member number
   return db.prepare(
@@ -140,6 +172,44 @@ function findExisting(p) {
       WHERE is_youth = 0 AND member_id IS NULL AND status != 'merged'
         AND lower(first_name) = ? AND lower(last_name) = ?`
   ).get(lower(p.first_name), lower(p.last_name)) || null;
+}
+
+/**
+ * Adds that look like somebody the roster already has — the ones a human
+ * should be asked about before a second copy appears.
+ *
+ * Only surname plus a shared contact detail plus a first-name variant counts,
+ * which on both troops' current rosters produces no false alarms at all: the
+ * spouse pairs and the parent pairs that share an address or a phone have
+ * genuinely different first names and are left alone. It is a question, never
+ * an action — nothing here merges anything.
+ */
+const firstNameVariant = (a, b) => a !== b && a && b && (a.startsWith(b) || b.startsWith(a));
+const lastTen = (s) => String(s || '').replace(/\D/g, '').slice(-10);
+
+function possibleDuplicates(adds) {
+  const out = [];
+  const candidates = db.prepare(
+    `SELECT id, first_name, last_name, email, phone_mobile FROM person
+      WHERE is_youth = 0 AND member_id IS NULL AND status != 'merged'`
+  ).all();
+  for (const p of adds) {
+    if (p.is_youth || p.member_id) continue;
+    for (const c of candidates) {
+      if (lower(c.last_name) !== lower(p.last_name)) continue;
+      const sameEmail = lower(p.email) && lower(p.email) === lower(c.email);
+      const samePhone = lastTen(p.phone_mobile) && lastTen(p.phone_mobile) === lastTen(c.phone_mobile);
+      if (!sameEmail && !samePhone) continue;
+      if (!firstNameVariant(lower(p.first_name), lower(c.first_name))) continue;
+      out.push({
+        incoming: `${p.first_name} ${p.last_name}`,
+        existing: `${c.first_name} ${c.last_name}`,
+        existingId: c.id,
+        why: sameEmail ? 'same e-mail' : 'same mobile',
+      });
+    }
+  }
+  return out;
 }
 
 const UPDATABLE = ['first_name', 'last_name', 'nickname', 'role', 'patrol', 'level',
@@ -183,7 +253,7 @@ function computePreview(people) {
     if (!c.is_youth && !hasAdults) continue;
     if (!fileMemberIds.has(c.member_id)) deactivate.push(c);
   }
-  return { adds, updates, unchanged, deactivate };
+  return { adds, updates, unchanged, deactivate, possibleDuplicates: possibleDuplicates(adds) };
 }
 
 const applyImport = (people, links, staffId, filename, rawPath) => {
@@ -214,6 +284,13 @@ const applyImport = (people, links, staffId, filename, rawPath) => {
         }
       }
     });
+
+    // Stamp everyone the file described. This is what later tells a stale
+    // person (an old timestamp) from one a leader added by hand at the door
+    // (NULL, and never to be retired automatically — they are not in any
+    // export and never will be).
+    const stampSeen = db.prepare("UPDATE person SET last_seen_in_import = datetime('now') WHERE id = ?");
+    for (const id of idOf.values()) stampSeen.run(id);
 
     for (const d of preview.deactivate) {
       db.prepare(`UPDATE person SET status = 'inactive', updated_at = datetime('now') WHERE id = ?`)
@@ -256,4 +333,5 @@ const applyImport = (people, links, staffId, filename, rawPath) => {
 };
 
 module.exports = {
-  HEADER_ALIASES, parseWorkbook, suggestLinks, computePreview, applyImport, UPDATABLE };
+  HEADER_ALIASES, parseWorkbook, suggestLinks, computePreview, applyImport, UPDATABLE,
+  possibleDuplicates, findExisting };

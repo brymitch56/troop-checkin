@@ -243,3 +243,76 @@ test('manual guardian links are never duplicated by import', () => {
   const cnt = db.prepare(`SELECT COUNT(*) c FROM person_guardian WHERE youth_id = ?`).get(emma.id).c;
   assert.equal(cnt, 2); // Bob (import) + Carol (manual), no dups
 });
+
+// ============================ unregistered adults ==========================
+// An adult with no member number has no stable identity. These are the rules
+// that stop that gap producing duplicates, and that let such a person
+// eventually leave.
+
+const mkAdult = (first, last, email, phone) => db.prepare(
+  `INSERT INTO person (is_youth, member_id, first_name, last_name, email, phone_mobile, status)
+   VALUES (0, NULL, ?, ?, ?, ?, 'active') RETURNING *`).get(first, last, email, phone);
+
+test('findExisting: e-mail matches a renamed unregistered adult', () => {
+  mkAdult('Rob', 'Tallis', 'rob.tallis@example.com', '555-0101');
+  // The export now spells him Robert. The name tier would create a duplicate.
+  const hit = roster.findExisting({
+    is_youth: 0, member_id: null, first_name: 'Robert', last_name: 'Tallis',
+    email: 'rob.tallis@example.com',
+  });
+  assert.ok(hit, 'the e-mail tier should have recognised him');
+  assert.equal(hit.first_name, 'Rob');
+});
+
+test('findExisting: a shared address abstains rather than guessing', () => {
+  // Spouses share one address — live on this troop's roster, twice.
+  mkAdult('Jan', 'Marlowe', 'house.marlowe@example.com', '555-0201');
+  mkAdult('Dev', 'Marlowe', 'house.marlowe@example.com', '555-0202');
+  const hit = roster.findExisting({
+    is_youth: 0, member_id: null, first_name: 'Janet', last_name: 'Marlowe',
+    email: 'house.marlowe@example.com',
+  });
+  assert.equal(hit, null, 'two people share it, so the e-mail identifies nobody');
+});
+
+test('findExisting: an address never marries up two different surnames', () => {
+  mkAdult('Sol', 'Anwar', 'shared.desk@example.com', '555-0301');
+  const hit = roster.findExisting({
+    is_youth: 0, member_id: null, first_name: 'Sol', last_name: 'Brennan',
+    email: 'shared.desk@example.com',
+  });
+  assert.equal(hit, null);
+});
+
+test('possibleDuplicates: asks about a name variant, ignores a spouse', () => {
+  mkAdult('Pen', 'Okafor', 'okafor.home@example.com', '555-0401');
+  const flagged = roster.possibleDuplicates([
+    // same household, a longer form of the same first name -> ask
+    { is_youth: 0, member_id: null, first_name: 'Penelope', last_name: 'Okafor', email: 'okafor.home@example.com' },
+    // same household, a different person -> say nothing
+    { is_youth: 0, member_id: null, first_name: 'Chidi', last_name: 'Okafor', email: 'okafor.home@example.com' },
+  ]);
+  assert.equal(flagged.length, 1);
+  assert.equal(flagged[0].incoming, 'Penelope Okafor');
+  assert.equal(flagged[0].existing, 'Pen Okafor');
+  assert.equal(flagged[0].why, 'same e-mail');
+});
+
+test('possibleDuplicates: a youth or a registered adult is never flagged', () => {
+  mkAdult('Kit', 'Vance', 'kit.vance@example.com', '555-0501');
+  assert.equal(roster.possibleDuplicates([
+    { is_youth: 1, member_id: null, first_name: 'Kitty', last_name: 'Vance', email: 'kit.vance@example.com' },
+    { is_youth: 0, member_id: 'TL-9', first_name: 'Kitty', last_name: 'Vance', email: 'kit.vance@example.com' },
+  ]).length, 0);
+});
+
+test('applyImport stamps who the file described, and leaves hand-added people NULL', () => {
+  const handAdded = mkAdult('Gale', 'Pickup', 'gale.pickup@example.com', '555-0601');
+  const people = roster.parseWorkbook(buildWorkbookBuffer());
+  roster.applyImport(people, roster.suggestLinks(people), null, 'synthetic.xlsx', null);
+  const fromFile = db.prepare("SELECT last_seen_in_import FROM person WHERE first_name = 'Alice'").get();
+  assert.ok(fromFile.last_seen_in_import, 'someone in the file is stamped');
+  const still = db.prepare('SELECT last_seen_in_import FROM person WHERE id = ?').get(handAdded.id);
+  assert.equal(still.last_seen_in_import, null,
+    'an adult a leader added by hand is not in the export and must stay unstamped');
+});
