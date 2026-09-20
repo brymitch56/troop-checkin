@@ -1315,7 +1315,14 @@ if ('serviceWorker' in navigator) {
     location.reload();
   }
 
+  // A page that loaded with NO controller is already running the network copy
+  // the first worker just precached, so that worker claiming it is not an
+  // update — reloading there only yanks the login screen out from under
+  // whoever just opened the app for the first time.
+  let hadController = !!navigator.serviceWorker.controller;
+
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // first install, not an update
     updateReady = true;
     reloadWhenIdle();
   });

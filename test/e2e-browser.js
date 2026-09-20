@@ -4,6 +4,7 @@
 //   npm install --no-save puppeteer && node test/e2e-browser.js
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 
@@ -13,6 +14,8 @@ const { buildWorkbookBuffer } = require('../server/scripts/make-synthetic-roster
 const roster = require('../server/lib/rosterImport');
 const auth = require('../server/auth');
 const { db } = require('../server/db');
+
+const trail = []; // browser-side breadcrumbs, dumped if the run fails
 
 async function main() {
   const puppeteer = require('puppeteer');
@@ -30,8 +33,22 @@ async function main() {
               VALUES ('manual', 'E2E Meeting', datetime('now', '-1 hour'), datetime('now', '+2 hours'))`).run();
 
   const app = require('../server/index');
-  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  // every request path that reaches the server, in order — the admin/kiosk
+  // document-strategy section below reads it to tell network from cache
+  const hits = [];
+  const server = await new Promise((res) => {
+    const s = http.createServer((req, rsp) => { hits.push(req.url.split('?')[0]); app(req, rsp); })
+      .listen(0, () => res(s));
+  });
   const base = `http://127.0.0.1:${server.address().port}`;
+  // The themed PNG icons are rasterized synchronously on first request (then
+  // memoized) — a second or two of blocked event loop. This process is also
+  // the puppeteer driver, so on a busy runner that stall landed on the first
+  // page load and pushed the kiosk's /api calls past their 6 s abort. Render
+  // them now, before a browser is waiting on anything.
+  for (const icon of ['/icon-512.png', '/icon-192.png', '/apple-touch-icon.png']) {
+    await fetch(base + icon).then((r) => r.arrayBuffer());
+  }
 
   const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const page = await browser.newPage();
@@ -39,8 +56,22 @@ async function main() {
   page.on('dialog', (d) => d.accept()); // staff-override confirm
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
+  // breadcrumbs printed only when a step fails — a red advisory job should
+  // say WHY without a local repro
+  const watch = (pg, tag) => {
+    pg.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warn') trail.push(`${tag} console.${m.type()}: ${m.text()}`); });
+    pg.on('requestfailed', (r) => trail.push(`${tag} request failed: ${r.method()} ${r.url()} (${r.failure()?.errorText})`));
+    pg.on('framenavigated', (fr) => { if (fr === pg.mainFrame()) trail.push(`${tag} navigated: ${fr.url()}`); });
+  };
+  watch(page, 'kiosk');
 
   const step = (msg) => console.log('  ✓', msg);
+  // A scanner wedge is a burst: the app only treats keys as a scan while every
+  // gap stays under 35 ms. Typing key-by-key puts a CDP round trip (or three)
+  // inside each gap, which a busy runner stretches past that — so queue the
+  // whole burst at once and let the browser deliver it back-to-back.
+  const wedgeScan = (code) => Promise.all(
+    [...code, 'Enter'].flatMap((k) => [page.keyboard.down(k), page.keyboard.up(k)]));
   // DOM click: kiosk buttons can sit outside the emulated viewport
   const click = (sel) => page.$eval(sel, (el) => el.click());
   // wait for a *fresh* visible search result containing `name`, then click it
@@ -60,6 +91,20 @@ async function main() {
   await page.waitForFunction(() => document.title.endsWith('Check-In') &&
     document.querySelector('[data-brand-id]').textContent !== 'TROOP');
   step('page loads with env branding');
+
+  // A fresh profile installs the service worker during this first load, and
+  // the worker then claims the page. That claim is NOT an update and must not
+  // reload the app (it used to: the reload landed mid-login and tore down the
+  // execution context under whatever step was running). Wait for the claim so
+  // nothing below races it, then prove the document survived it.
+  const survived = await (async () => {
+    await page.evaluate(() => { window.__e2eFirstLoad = true; });
+    await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+    await page.waitForFunction(() => window.Offline.queueSize().then(() => true)); // the reload sat behind this await
+    return page.evaluate(() => window.__e2eFirstLoad === true);
+  })().catch(() => false); // a reload mid-wait destroys the execution context
+  assert.equal(survived, true, 'first service-worker install must not reload the page');
+  step('first service-worker install claims the page without reloading it');
 
   // -- login ----------------------------------------------------------------
   await page.waitForSelector('#staff-list button');
@@ -88,16 +133,14 @@ async function main() {
   step('event auto-selected');
 
   // -- badge scan via keyboard wedge (fast burst + Enter) --------------------
-  await page.keyboard.type('Y-2001 | tokE2E', { delay: 5 });
-  await page.keyboard.press('Enter');
+  await wedgeScan('Y-2001 | tokE2E');
   await page.waitForFunction(() =>
     [...document.querySelectorAll('#cart-list .cart-name')].some((n) => n.textContent.includes('Dan')));
   step('wedge scan adds Danny to cart');
 
   // wedge burst into a focused input must not pollute it
   await page.focus('#search-input');
-  await page.keyboard.type('Y-2001 | tokE2E', { delay: 5 });
-  await page.keyboard.press('Enter'); // duplicate scan -> toast, cart unchanged
+  await wedgeScan('Y-2001 | tokE2E'); // duplicate scan -> toast, cart unchanged
   const leaked = await page.$eval('#search-input', (el) => el.value);
   assert.equal(leaked, '', `scanner chars leaked into search input: "${leaked}"`);
   step('wedge burst scrubbed from focused input');
@@ -105,8 +148,7 @@ async function main() {
   // -- unlinked reprinted badge offers to link ------------------------------
   await page.evaluate(() => window.handleScanTest ? null : null); // no-op; scan Emma via wedge
   await click('body'); // blur input
-  await page.keyboard.type('Y-2002 | tokNEW', { delay: 5 });
-  await page.keyboard.press('Enter');
+  await wedgeScan('Y-2002 | tokNEW');
   await page.waitForSelector('#modal-link:not([hidden])');
   await click('#link-confirm');
   await page.waitForFunction(() => document.querySelectorAll('#cart-list li').length === 2);
@@ -153,9 +195,12 @@ async function main() {
   await page.waitForSelector('#screen-onsite:not([hidden])');
   await page.waitForFunction(() => document.querySelectorAll('#onsite-list .person').length === 3);
   // patrol filter
+  await page.waitForFunction(() =>
+    [...document.getElementById('onsite-patrol').options].some((o) => o.value === 'Hawks'));
   await page.evaluate(() => {
-    const b = [...document.querySelectorAll('#patrol-filters button')].find((x) => x.textContent === 'Hawks');
-    b.click();
+    const sel = document.getElementById('onsite-patrol');
+    sel.value = 'Hawks';
+    sel.dispatchEvent(new Event('change'));
   });
   await page.waitForFunction(() => document.querySelectorAll('#onsite-list .person').length === 1);
   step('onsite list + patrol filter');
@@ -207,6 +252,7 @@ async function main() {
   const admin = await browser.newPage();
   await admin.setViewport({ width: 1200, height: 1400 });
   admin.on('pageerror', (e) => errors.push('admin: ' + e));
+  watch(admin, 'admin');
   await admin.goto(base + '/admin.html', { waitUntil: 'networkidle0' });
   await admin.waitForSelector('#login-staff option');
   await admin.type('#login-pass', 'adminpass', { delay: 20 });
@@ -326,39 +372,40 @@ async function main() {
   // -- admin document strategy (tc-v22) --------------------------------------
   // The admin document must be NETWORK-first (so an expired Cloudflare Access
   // session shows the login instead of a silently-empty cached page) while
-  // the kiosk shell stays CACHE-first (offline check-in). Prove it by editing
-  // the served files on disk: a reload must pick up the admin change but NOT
-  // the kiosk change. Files are restored immediately after.
-  const pubDir = path.join(__dirname, '..', 'public');
-  const adminPath = path.join(pubDir, 'admin.html');
-  const indexPath = path.join(pubDir, 'index.html');
-  const adminOrig = fs.readFileSync(adminPath, 'utf8');
-  const indexOrig = fs.readFileSync(indexPath, 'utf8');
-  try {
-    fs.writeFileSync(adminPath, adminOrig + '\n<!-- e2e-marker-admin -->');
-    fs.writeFileSync(indexPath, indexOrig + '\n<!-- e2e-marker-kiosk -->');
+  // the kiosk shell stays CACHE-first (offline check-in). Prove it by counting
+  // the document requests that actually reach the server: an admin reload
+  // must produce one, a kiosk reload must not. (The server memoizes both
+  // pages, so editing the files on disk would prove nothing.)
+  const docHits = (paths) => hits.filter((h) => paths.includes(h)).length;
 
-    await admin.reload({ waitUntil: 'load' });
-    await admin.waitForSelector('#screen-login, #screen-app', { timeout: 8000 });
-    const adminHtml = await admin.content();
-    assert.ok(adminHtml.includes('e2e-marker-admin'), 'admin document must be served network-first');
-    step('admin document is network-first (Access re-login can happen)');
+  // (each page is fronted for its own part: Chrome throttles timers and
+  // rAF in a background tab, which is what waitForFunction polls on)
+  await admin.bringToFront();
+  hits.length = 0;
+  await admin.reload({ waitUntil: 'load' });
+  await admin.waitForSelector('#screen-login, #screen-app', { timeout: 8000 });
+  assert.ok(docHits(['/admin.html']) >= 1, 'admin document must be served network-first');
+  step('admin document is network-first (Access re-login can happen)');
 
-    await page.reload({ waitUntil: 'load' });
-    const kioskHtml = await page.content();
-    assert.ok(!kioskHtml.includes('e2e-marker-kiosk'), 'kiosk shell must stay cache-first');
-    step('kiosk shell still cache-first');
+  await page.bringToFront();
+  hits.length = 0;
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('#screen-main:not([hidden])', { timeout: 8000 });
+  assert.equal(docHits(['/', '/index.html']), 0, 'kiosk shell must stay cache-first');
+  step('kiosk shell still cache-first');
 
-    // offline: admin falls back to the cached copy instead of failing
-    await admin.setOfflineMode(true);
-    await admin.reload({ waitUntil: 'load' }).catch(() => {});
-    await admin.waitForSelector('#screen-login, #screen-app', { timeout: 8000 });
-    step('offline: admin falls back to the cached shell');
-    await admin.setOfflineMode(false);
-  } finally {
-    fs.writeFileSync(adminPath, adminOrig);
-    fs.writeFileSync(indexPath, indexOrig);
-  }
+  // offline: admin falls back to the cached copy instead of failing. Let the
+  // reloaded dashboard finish first (its on-site table is the last thing it
+  // fetches) — cutting the network under a half-loaded dashboard is a
+  // different scenario, and its failed fetch would land in `errors`.
+  await admin.bringToFront();
+  await admin.waitForFunction(() => !document.getElementById('screen-login').hidden
+    || document.getElementById('dash-open').childElementCount > 0);
+  await admin.setOfflineMode(true);
+  await admin.reload({ waitUntil: 'load' }).catch(() => {});
+  await admin.waitForSelector('#screen-login, #screen-app', { timeout: 8000 });
+  step('offline: admin falls back to the cached shell');
+  await admin.setOfflineMode(false);
 
   // -- plain LAN HTTP (insecure context) parity ------------------------------
   // Phones at a meeting hit http://<pi-ip>:3000 — an INSECURE context where
@@ -371,6 +418,7 @@ async function main() {
     const lan = await browser.newPage();
     await lan.setViewport({ width: 1024, height: 1400 });
     lan.on('pageerror', (e) => errors.push('lan: ' + e));
+    watch(lan, 'lan');
     lan.on('dialog', (d) => d.accept());
     await lan.goto(`http://${lanIp}:${server.address().port}`, { waitUntil: 'networkidle0' });
     const ctx = await lan.evaluate(() => ({ secure: window.isSecureContext, hasUUID: !!crypto.randomUUID }));
@@ -417,4 +465,8 @@ async function main() {
   console.log('\nE2E: all steps passed');
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  if (trail.length) console.error(['', 'browser trail (last 40):', ...trail.slice(-40)].join('\n  '));
+  process.exit(1);
+});
