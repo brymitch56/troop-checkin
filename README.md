@@ -17,7 +17,7 @@ macOS is not supported as a server (Mac browsers work fine as clients).
 ## Quickstart A — Raspberry Pi
 
 1. Flash 64-bit Raspberry Pi OS Lite; boot; `sudo apt update && sudo apt install -y git`.
-2. Clone and install (installs Node 20 LTS, dependencies, systemd service):
+2. Clone and install (installs Node 22 LTS, dependencies, systemd service):
 
    ```bash
    git clone https://github.com/brymitch56/troop-checkin.git
