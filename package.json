@@ -1,6 +1,6 @@
 {
   "name": "troop-checkin",
-  "version": "0.4.54",
+  "version": "0.4.55",
   "description": "Self-hosted youth sign-in/out kiosk for troops (Raspberry Pi, Windows, or Docker)",
   "private": true,
   "type": "commonjs",
@@ -17,12 +17,9 @@
   "engines": { "node": ">=22" },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "multer": "^2.0.1",
-    "node-ical": "^0.25.0",
+    "node-ical": "^0.27.2",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
-  },
-  "overrides": {
-    "qs": "^6.16.0"
   }
 }
