@@ -438,7 +438,11 @@ window.addEventListener('keydown', (e) => {
   if (!key || key === 'Unidentified' || key === 'Process' || e.isComposing) return;
   const el = document.activeElement;
   const typingInField = /INPUT|TEXTAREA/.test(el?.tagName || '');
-  const now = Date.now();
+  // Time the gaps by when each key was PRESSED (e.timeStamp), not by when this
+  // handler got to run: a busy main thread — a roster snapshot saving, a slow
+  // tablet repainting — delays the handler, and a scanner burst that stalled
+  // for one long task used to read as human typing and the scan was dropped.
+  const now = e.timeStamp || performance.now();
   const gap = now - wedgeLast;
   if (gap > 120) { wedgeBuf = ''; wedgeFast = true; wedgeLeaked = 0; }
   wedgeLast = now;
@@ -1315,7 +1319,14 @@ if ('serviceWorker' in navigator) {
     location.reload();
   }
 
+  // A page that loaded with NO controller is already running the network copy
+  // the first worker just precached, so that worker claiming it is not an
+  // update — reloading there only yanks the login screen out from under
+  // whoever just opened the app for the first time.
+  let hadController = !!navigator.serviceWorker.controller;
+
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // first install, not an update
     updateReady = true;
     reloadWhenIdle();
   });
