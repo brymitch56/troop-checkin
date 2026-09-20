@@ -133,10 +133,22 @@ async function main() {
   step('event auto-selected');
 
   // -- badge scan via keyboard wedge (fast burst + Enter) --------------------
+  // ...with a long task dropped into the middle of the burst: the app must
+  // time the gaps by when the keys were pressed, not by when a busy main
+  // thread got round to the handler, or a slow tablet loses scans
+  await page.evaluate(() => {
+    let n = 0;
+    window.addEventListener('keydown', function jank() {
+      if (++n < 5) return;
+      window.removeEventListener('keydown', jank);
+      const until = Date.now() + 80;
+      while (Date.now() < until); // block the main thread mid-burst
+    });
+  });
   await wedgeScan('Y-2001 | tokE2E');
   await page.waitForFunction(() =>
     [...document.querySelectorAll('#cart-list .cart-name')].some((n) => n.textContent.includes('Dan')));
-  step('wedge scan adds Danny to cart');
+  step('wedge scan adds Danny to cart (despite a main-thread stall mid-burst)');
 
   // wedge burst into a focused input must not pollute it
   await page.focus('#search-input');
