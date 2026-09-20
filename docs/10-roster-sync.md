@@ -159,6 +159,59 @@ the borrower is expected to give up quietly and exit; a borrower that
 "helpfully" retried with a password would text the human again, which is the
 entire problem. A test asserts the route cannot even reach the sign-in code.
 
+### Identity, duplicates, and who can leave (added 2026-09-19, tc-v76)
+
+The export is the only thing that can say "this person is still in the
+troop", and it can only say it about people it *contains*. Two groups fall
+outside that: adults with no member number (the export carries no stable id
+for them), and the pickup adults a leader adds by hand at the door, who are
+not in the export and never will be. Both used to be permanent.
+
+**Matching an incoming row (`rosterImport.findExisting`), in order:**
+
+1. **Member number.** Exact, unique, authoritative — used whenever present.
+2. **Email**, only when it matches exactly one active person *and* the
+   surname agrees. The uniqueness guard matters because spouses share an
+   address on some exports; the surname check stops an email tying a row to
+   the wrong family member. Either test failing falls through.
+3. **Exact lowercase full name.** The last resort, and the one that breaks:
+   the day an export spells a name "Benjamin" instead of "Ben", tier 3 misses
+   and the import creates a second person. Tier 2 exists to catch most of
+   those before they get here.
+
+**Duplicate warning.** `possibleDuplicates(adds)` runs over the rows an
+import would *add* and flags any that look like an existing active person
+(same surname plus a first-name relationship, shared email, shared mobile).
+It appears in the preview, in both the pending-import panel and the sync
+preview payload. It only warns — the import still adds the row, because the
+alternative (silently updating whichever record it guessed at) is worse.
+Merging the two afterwards is a deliberate human action.
+
+**`last_seen_in_import`.** `applyImport` stamps every person the file
+described, whether that row changed anything or not. Migration 017 adds the
+column and backfills `created_at` for anyone carrying a member number.
+Nothing reads it to make a decision; it only lets the admin screen ask "when
+did an export last vouch for this person?"
+
+**The "Adults with no member number" screen** (`GET /unregistered-adults`)
+buckets that population so a human can retire the ones who are done:
+
+| bucket | meaning |
+|---|---|
+| `current` | in a recent import — leave alone |
+| `stale` | was in an export, has not been for a while |
+| `manual-needed` | hand-added, still linked to at least one active youth |
+| `manual-unlinked` | hand-added, no guardian links at all |
+| `manual-orphaned` | hand-added, and every youth they can pick up is inactive |
+
+`retirable` counts the last two — a pickup adult whose youth have all left
+has nothing to pick up. `POST /unregistered-adults/deactivate` takes an
+explicit list of ids and is scoped in SQL to
+`is_youth = 0 AND member_id IS NULL AND status = 'active'`, so a stray id
+cannot retire a youth or a registered adult. Nothing deactivates on its own:
+being inactive removes someone from the check-in roster, and wrongly
+retiring a leader breaks them at the door on a meeting night.
+
 ### Safety rules (non-negotiable)
 
 1. **The job never commits.** It downloads, validates, and hands the file to `/api/roster/import?mode=preview`. A pending import appears in the admin UI for one-tap approval.

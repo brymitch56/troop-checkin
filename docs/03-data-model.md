@@ -32,6 +32,7 @@ One table for youth, adults, and visitors — attendance and history stay in one
 | last_emerg_phone_1 / last_emerg_phone_2 | TEXT NULL | prefill defaults for FR-13 |
 | status | TEXT | `active` / `inactive` / `visitor` / `merged` |
 | notes | TEXT NULL | |
+| last_seen_in_import | TEXT NULL | ISO 8601 stamp of the last import whose file described this row. NULL = hand-added at the door and never described by an export. Purely a record — nothing is auto-retired on the strength of it (see docs/10-roster-sync.md). |
 | created_at / updated_at | TEXT | ISO 8601 |
 
 ### person_guardian
