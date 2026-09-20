@@ -125,8 +125,11 @@ function applyGrid(rows) {
   const apply = db.transaction(() => {
     for (const r of rows) {
       const ev = db.prepare(
+        // two rows can share a portal id (an edited event whose old row kept
+        // its own sign-ins): the one still in the feed is the real event
         `SELECT id, requires_permission_form, permission_form_source, tlc_et_slug
-           FROM event WHERE tlc_event_id = ?`).get(r.tlc_event_id);
+           FROM event WHERE tlc_event_id = ?
+          ORDER BY removed_from_feed ASC, id DESC`).get(r.tlc_event_id);
       if (!ev) continue;
       if (r.et_slug && r.et_slug !== ev.tlc_et_slug) {
         db.prepare('UPDATE event SET tlc_et_slug = ? WHERE id = ?').run(r.et_slug, ev.id);
