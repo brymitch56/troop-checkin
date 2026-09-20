@@ -8,6 +8,13 @@ const { db } = require('../db');
 const env = require('./env');
 
 const iso = (d) => new Date(d).toISOString();
+// node-ical returns a text property as a plain string — unless the feed put a
+// parameter on it (SUMMARY;LANGUAGE=en-US:…), when it is { params, val }.
+// Handing that object to SQLite throws and rolls back the whole sync.
+const text = (v) => {
+  const s = v && typeof v === 'object' ? v.val : v;
+  return s == null || s === '' ? null : String(s);
+};
 
 function applyFeed(vevents) {
   let added = 0, updated = 0, flagged = 0, deleted = 0;
@@ -22,7 +29,8 @@ function applyFeed(vevents) {
       seen.add(`${e.uid}|${startAt}`);
       const allDay = e.datetype === 'date' ? 1 : 0;
       const ex = db.prepare('SELECT * FROM event WHERE ical_uid = ? AND start_at = ?').get(e.uid, startAt);
-      const title = e.summary || '(untitled)';
+      const title = text(e.summary) || '(untitled)';
+      const location = text(e.location), description = text(e.description);
       if (!ex) {
         // new feed events start on the global adult-tracking default; the
         // feed never touches track_adults again (app-owned, like the forms)
@@ -30,14 +38,14 @@ function applyFeed(vevents) {
           `INSERT INTO event (source, ical_uid, title, location, description, start_at, end_at, all_day,
                               track_adults, track_adults_source)
            VALUES ('ical', ?, ?, ?, ?, ?, ?, ?, ?, 'auto')`
-        ).run(e.uid, title, e.location || null, e.description || null, startAt, endAt, allDay,
+        ).run(e.uid, title, location, description, startAt, endAt, allDay,
               require('./adultTracking').getSettings().default);
         added++;
       } else {
-        const changed = ex.title !== title || ex.location !== (e.location || null) ||
-          ex.description !== (e.description || null) || ex.end_at !== endAt ||
+        const changed = ex.title !== title || ex.location !== location ||
+          ex.description !== description || ex.end_at !== endAt ||
           ex.all_day !== allDay || ex.removed_from_feed !== 0;
-        if (changed) { upd.run(title, e.location || null, e.description || null, endAt, allDay, ex.id); updated++; }
+        if (changed) { upd.run(title, location, description, endAt, allDay, ex.id); updated++; }
       }
     }
     for (const row of db.prepare(`SELECT * FROM event WHERE source = 'ical'`).all()) {

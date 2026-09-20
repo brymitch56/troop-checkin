@@ -4,7 +4,7 @@ As built, 2026-07-19. Companion to the planning docs (01–04); where they disag
 
 ## Stack and layout
 
-Node 22 LTS + Express 4 + better-sqlite3 (WAL mode) on a Raspberry Pi; vanilla-JS PWA clients. Dependencies are deliberately few and arm64-safe: `better-sqlite3`, `express`, `multer` (2.x), `node-ical`, `xlsx`. Twilio is called over plain REST (no SDK).
+Node 22 LTS + Express 5 + better-sqlite3 (WAL mode) on a Raspberry Pi; vanilla-JS PWA clients. Dependencies are deliberately few and arm64-safe: `better-sqlite3`, `express`, `multer` (2.x), `node-ical`, `xlsx`. Twilio is called over plain REST (no SDK).
 
 ```
 server/

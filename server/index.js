@@ -170,5 +170,14 @@ if (require.main === module) {
   require('./lib/webhook').scheduleSweep(); // integration webhook deliveries — no-op while disabled
   try { require('./lib/attendanceSync').backfillFromBadges(); } // badges carry TLC hashids — fill empty mappings
   catch (e) { console.error('[tlc-attendance] badge backfill failed:', e.message); }
-  app.listen(PORT, () => console.log(`troop-checkin listening on :${PORT}`));
+  // Express 5 hands a bind failure (EADDRINUSE, EACCES) to this callback
+  // instead of throwing. Exit non-zero so systemd restarts us, rather than
+  // logging "listening" with no port and idling on the schedulers above.
+  app.listen(PORT, (err) => {
+    if (err) {
+      console.error(`troop-checkin could not listen on :${PORT}: ${err.message}`);
+      process.exit(1);
+    }
+    console.log(`troop-checkin listening on :${PORT}`);
+  });
 }
