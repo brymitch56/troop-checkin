@@ -61,11 +61,15 @@ function userListHtml(users, eventHash = EV) {
     </div>
     <div style="x"><div class="cbx-container"><div class="cbx cbx-md" tabindex="1000"><span class="cbx-icon"></span></div>
       <input type="text" id="${u.hash}-${eventHash}-attended" class="cbx-hide" name="attended-1" value="${u.attended}" data-krajee-checkboxx="1"></div></div>`).join('\n') +
-    // `$.users` rides along in the real fragment (youth only) and carries the
-    // level/patrol the activity-plan guard matches against.
-    `\n<script>\n$.users = ${JSON.stringify(Object.fromEntries(users
+    // `$.users` rides along in the real fragment and carries the level/patrol
+    // the activity-plan guard matches against: every youth, plus any adult who
+    // still holds a level. Laid out EXACTLY as the portal sends it — on the
+    // same line as its <script> tag, CRLF-terminated. An earlier fixture gave
+    // it a line of its own, which the portal never does, and the parser that
+    // passed against it read nobody in production.
+    `\r\n<script>$.users = ${JSON.stringify(Object.fromEntries(users
       .filter((u) => u.level_id !== undefined)
-      .map((u) => [u.hash, { id: u.hash, level_id: u.level_id, patrol_id: u.patrol_id ?? null }])))};\n</script>`;
+      .map((u) => [u.hash, { id: u.hash, level_id: u.level_id, patrol_id: u.patrol_id ?? null }])))};\r\n</script>`;
 }
 
 // The plans fragment: an Alpine empty-state in the markup (which must NOT be

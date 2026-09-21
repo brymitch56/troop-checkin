@@ -36,15 +36,36 @@
 
 const UMBRELLA = 'wt';
 
-// `$.name = <json>;` on its own line. Anything that is not plain JSON (e.g.
-// `$.flatBadges = Object.assign(...)`) yields null rather than throwing.
+// `$.name = <json>;` wherever it sits. The portal is not consistent about
+// layout: the lesson-plan fragment gives each blob its own line, but the
+// user-list fragment writes `<script>$.users = {…};` — the assignment starts
+// after the tag, mid-line. A reader that wanted it at the start of a line read
+// NOBODY from that map, which left the plan guard with no one it considered
+// applicable, so it could never warn or hold. The JSON is therefore found by
+// its own brackets, not by where the line happens to break. Anything that is
+// not plain JSON (e.g. `$.flatBadges = Object.assign(...)`) yields null
+// rather than throwing.
+function jsonEnd(src, start) {
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < src.length; i++) {
+    const c = src[i];
+    if (inStr) {
+      if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
 function readBlob(html, name) {
-  for (const line of String(html || '').split('\n')) {
-    const t = line.trim();
-    if (!t.startsWith(`$.${name}`)) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    try { return JSON.parse(t.slice(eq + 1).trim().replace(/;$/, '')); } catch { return null; }
+  const src = String(html || '');
+  const re = new RegExp(`\\$\\.${name}\\s*=\\s*`, 'g');
+  for (let m; (m = re.exec(src));) {
+    const start = m.index + m[0].length;
+    if (src[start] !== '{' && src[start] !== '[') continue;
+    const end = jsonEnd(src, start);
+    if (end < 0) continue;
+    try { return JSON.parse(src.slice(start, end + 1)); } catch { /* not plain JSON — keep looking */ }
   }
   return null;
 }
@@ -88,8 +109,10 @@ function parsePlans(html) {
   };
 }
 
-// The user-list fragment carries `$.users` — youth only (adults are on the
-// roster but not in the map), each with the level and patrol the grant is
+// The user-list fragment carries `$.users` — the people the portal will credit
+// advancement to: every youth, plus any adult who still holds a level. Other
+// adults are on the roster but not in the map. Each entry has the level and
+// patrol the grant is
 // matched against. Free: that fragment is already fetched for every push.
 function parseUsers(html) {
   const raw = readBlob(html, 'users') || {};
