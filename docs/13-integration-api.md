@@ -93,15 +93,27 @@ malformed date.
    "requires_permission_form": 0 }]
 ```
 
-Shared event identity between systems is `ical_uid` + `start_at` — the same
-`UNIQUE (ical_uid, start_at)` the app's schema uses — because both systems
-ingest the same iCal feed. `tlc_event_id` is the TLC hashid when known.
+**Which field identifies an event?** Prefer `id`. It is this app's row id and
+it is stable for the life of the event — including when the event is edited
+or rescheduled in the member portal. `tlc_event_id` (the portal's own event
+id, when known) is equally stable and is the one to use across systems that
+do not share this database.
+
+`ical_uid` + `start_at` is unique at any moment (the schema has
+`UNIQUE (ical_uid, start_at)`) but it is **not stable**: a portal UID is
+`<head>-<event id>-<tail>`, and the tail changes every time the event is
+edited in the portal, even when nothing visible changed. An integration that
+keys on it will see an edit as one event vanishing and another appearing.
+Match on `id` first and treat `ical_uid` + `start_at` as a fallback for rows
+you have never seen — and refresh your stored `ical_uid`/`start_at` from each
+response.
 
 ### `GET /api/integration/events/:id/attendance`
 ### `GET /api/integration/attendance?ical_uid=…&start_at=…`
 
-Presence at one event. The second form looks the event up by shared
-identity; `start_at` is normalized through `Date` so `…T23:00:00Z` and
+Presence at one event. Use the first form whenever you have the `id`. The
+second looks the event up by its CURRENT `ical_uid` + `start_at` — values
+captured before a portal edit will no longer match (`404`); `start_at` is normalized through `Date` so `…T23:00:00Z` and
 `…T23:00:00.000Z` both match. `404` when no event matches.
 
 ```json
