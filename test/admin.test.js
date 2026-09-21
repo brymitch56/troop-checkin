@@ -269,6 +269,58 @@ test('CSV exports produce well-formed files', async () => {
   assert.ok(vis.text.includes('iris@example.com'), 'guardian email rides along');
 });
 
+test('aged-out merge: a youth who turned 18 folds into his new adult record', async () => {
+  // The portal retires his youth record and issues a fresh adult one: history
+  // on one row, future on the other. Same person — but a father and son with
+  // the same name look identical, so nothing here may happen by accident.
+  const merge = (body) => req('POST', '/api/admin/merge', { cookie: adminCookie, body });
+  const ins = db.prepare(`INSERT INTO person (is_youth, member_id, first_name, last_name, patrol, level, status, role, badge_code, tlc_user_id, photo_path)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const youth = Number(ins.run(1, 'Y-7001', 'Owen', 'Agedout', 'Adventurers 1', 'Adventurer', 'inactive', null, 'Y-7001 | tok-owen', 'ufakeowen001', 'photos/owen.jpg').lastInsertRowid);
+  const adult = Number(ins.run(0, null, 'Owen', 'Agedout', 'Leader/Registered Adult', null, 'active', 'Pending Registered Adult', null, null, null).lastInsertRowid);
+  const father = Number(ins.run(0, 'A-7002', 'Owen', 'Agedout', null, null, 'active', 'Trailmaster', null, null, null).lastInsertRowid);
+  db.prepare(`INSERT INTO person_guardian (youth_id, guardian_id, relationship, authorized, is_primary, source) VALUES (?, ?, 'parent', 1, 1, 'manual')`).run(youth, father);
+  const txnId = Number(db.prepare(`INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id, signer_person_id)
+                                   VALUES (?, ?, 'in', ?, 1, ?)`).run(uuid(), eventId, new Date().toISOString(), father).lastInsertRowid);
+  db.prepare('INSERT INTO txn_person (txn_id, person_id, open) VALUES (?, ?, 0)').run(txnId, youth);
+
+  // 1. it has to be ASKED for: the ordinary merge still refuses both ways it could slip through
+  const plain = await merge({ from_id: youth, into_id: adult });
+  assert.equal(plain.status, 400, 'a member-numbered youth does not merge into an adult by the ordinary route');
+  assert.equal((await merge({ from_id: adult, into_id: youth, aged_out: true })).status, 400, 'never adult -> youth');
+
+  // 2. an ACTIVE youth record means the roster still lists him as a youth
+  db.prepare(`UPDATE person SET status = 'active' WHERE id = ?`).run(youth);
+  const tooSoon = await merge({ from_id: youth, into_id: adult, aged_out: true });
+  assert.equal(tooSoon.status, 409);
+  assert.match(tooSoon.json.error, /still active/);
+  db.prepare(`UPDATE person SET status = 'inactive' WHERE id = ?`).run(youth);
+
+  // 3. the real thing
+  const r = await merge({ from_id: youth, into_id: adult, aged_out: true });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual(r.json, { ok: true, aged_out: true, moved: { sign_ins: 1, guardian_links_dropped: 1 } });
+
+  const y = db.prepare('SELECT * FROM person WHERE id = ?').get(youth);
+  const a = db.prepare('SELECT * FROM person WHERE id = ?').get(adult);
+  assert.deepEqual({ status: y.status, into: y.merged_into_id, member: y.member_id, badge: y.badge_code },
+    { status: 'merged', into: adult, member: null, badge: null },
+    'the retired row keeps NO member number — the import matches on the number alone and would resurrect him as a youth');
+  assert.equal(a.is_youth, 0, 'he stays an adult');
+  assert.equal(a.member_id, null, 'the youth number is not copied: the portal issues adults their own');
+  assert.equal(a.badge_code, 'Y-7001 | tok-owen', 'his badge keeps working');
+  assert.equal(a.tlc_user_id, 'ufakeowen001');
+  assert.equal(a.photo_path, 'photos/owen.jpg');
+  assert.match(a.notes, /Was youth record #\d+ \(youth member no\. Y-7001\); merged \d{4}-\d\d-\d\d\./);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM txn_person WHERE person_id = ?').get(adult).n, 1, 'his attendance came with him');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM person_guardian WHERE youth_id IN (?, ?)').get(youth, adult).n, 0, 'an adult has no guardians');
+  assert.equal(db.prepare('SELECT signer_person_id s FROM txn WHERE id = ?').get(txnId).s, father, 'who signed him in back then is history, and stays');
+  assert.equal(db.prepare('SELECT status FROM person WHERE id = ?').get(father).status, 'active', 'his father is untouched');
+
+  // 4. and it cannot be done twice
+  assert.equal((await merge({ from_id: youth, into_id: adult, aged_out: true })).status, 409);
+});
+
 test('iCal applyFeed: add, update, removed-from-feed keep/flag vs delete', async () => {
   const mk = (uid, title, startMs, endMs) => ({
     type: 'VEVENT', uid, summary: title, start: new Date(startMs), end: new Date(endMs),

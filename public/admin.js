@@ -360,6 +360,7 @@ async function openPerson(id, pushFrom) {
     <div class="row wrap">
       <button class="btn primary small" id="pp-save">Save</button>
       ${!p.member_id ? '<button class="btn ghost small" id="pp-merge">Merge into another record…</button>' : ''}
+      ${p.is_youth && p.status === 'inactive' ? '<button class="btn ghost small" id="pp-agedout">He is an adult now — merge into his adult record…</button>' : ''}
       <button class="btn ghost small" id="pp-close">Close</button>
     </div>
     ${p.is_youth ? guardianBlock(p, forms) : adultSmsBlock(p, forms) + wardBlock(p)}`;
@@ -392,6 +393,39 @@ async function openPerson(id, pushFrom) {
   if ($('pp-photo-del')) $('pp-photo-del').onclick = async () => {
     await api(`/admin/people/${id}/photo`, { method: 'DELETE' }).catch((e) => toast(e.message, true));
     openPerson(id);
+  };
+
+  // A youth who turned 18: the portal retired this youth record and issued a
+  // new adult one, so his history is here and his future is there. Offered only
+  // on an INACTIVE youth record (an active one means the roster still lists him
+  // as a youth, and the server refuses). The confirm is blunt about the one way
+  // this goes badly wrong: a parent with the same name.
+  if ($('pp-agedout')) $('pp-agedout').onclick = async () => {
+    const q = prompt(`${p.first_name} ${p.last_name} is an adult now. Which ADULT record is his?\n\n`
+      + 'Type part of his name. His sign-in history, badge and photo move to the adult record, '
+      + 'and this youth record is retired.', p.last_name);
+    if (!q) return;
+    const hits = (await api('/admin/people?type=adult&status=active&q=' + encodeURIComponent(q)))
+      .filter((x) => x.id !== id);
+    if (!hits.length) return toast('No active adult record matches — has the roster import created it yet?', true);
+    for (const pick of hits) {
+      if (confirm(Portal.t(`Is this adult record the SAME PERSON as this youth?`
+        + `\n\n  RETIRE (youth)  ${p.first_name} ${p.last_name} — ${[p.patrol, p.level].filter(Boolean).join(' · ') || 'youth'} — ${stamp(p)}`
+        + `\n  KEEP   (adult)  ${pick.first_name} ${pick.last_name} — ${pick.role || 'no role listed'}`
+        + `${pick.member_id ? ` — roster #${pick.member_id}` : ' — no member number yet'} — ${stamp(pick)}`
+        + '\n\n⚠ A FATHER AND SON WITH THE SAME NAME look exactly like this. Check the role and '
+        + 'the dates above. A brand-new adult record with a role like “Pending Registered Adult” is '
+        + 'the young man himself; a long-standing record with a leadership role is almost certainly his parent.'
+        + '\n\nHis sign-in history, badge, photo and TLC mapping move to the adult record. '
+        + 'His guardian links are dropped — an adult has none. Cannot be undone.'
+        + (hits.length > 1 ? '\n\n(Cancel to see the next match.)' : '')))) {
+        try {
+          const r = await jpost('/admin/merge', { from_id: id, into_id: pick.id, aged_out: true });
+          toast(`Merged — ${r.moved.sign_ins} sign-in record(s) moved`); closePersonModal(); loadDupes(true); loadPeople();
+        } catch (e) { toast(e.message, true); }
+        return;
+      }
+    }
   };
 
   if ($('pp-merge')) $('pp-merge').onclick = async () => {
