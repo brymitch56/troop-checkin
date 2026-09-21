@@ -744,24 +744,59 @@ router.post('/unregistered-adults/deactivate', (req, res) => {
   return res.json({ ok: true, deactivated: done.changes });
 });
 
+// Two kinds of merge.
+//  - the ordinary one: two records of the same type for one individual, where
+//    the retired record has NO member number (a visitor-made or unregistered
+//    copy). Unchanged.
+//  - aged out ({aged_out: true}): a youth who turned 18. The portal retires his
+//    youth record and issues a NEW adult one, so the app ends up with an
+//    inactive youth record holding his history and a fresh adult record with
+//    none. Same person — but it crosses types and the youth record has a member
+//    number, both of which the ordinary merge rightly refuses. It must be asked
+//    for explicitly, because a father and son with the same name look exactly
+//    like this pair, and merging THEM would be a disaster.
 router.post('/merge', (req, res) => {
   const { from_id, into_id } = req.body || {};
+  const wantsAgedOut = (req.body || {}).aged_out === true;
   const from = db.prepare('SELECT * FROM person WHERE id = ?').get(from_id);
   const into = db.prepare('SELECT * FROM person WHERE id = ?').get(into_id);
   if (!from || !into) return res.status(400).json({ error: 'from_id and into_id are required.' });
   if (from.id === into.id) return res.status(400).json({ error: 'Cannot merge a person into themselves.' });
   if (from.status === 'merged') return res.status(409).json({ error: 'Already merged.' });
   if (into.status === 'merged') return res.status(409).json({ error: 'That target was itself merged away — pick the surviving record.' });
-  if (from.member_id) return res.status(400).json({ error: 'Only visitor/unregistered records (no member number) can be merged.' });
-  if (from.is_youth !== into.is_youth) return res.status(400).json({ error: 'Youth records merge into youth; adults into adults.' });
+  const agedOut = wantsAgedOut && !!from.is_youth && !into.is_youth;
+  if (wantsAgedOut && !agedOut) {
+    return res.status(400).json({ error: 'An aged-out merge goes from a YOUTH record into an ADULT record.' });
+  }
+  if (agedOut) {
+    // Still active = the roster still exports him as a youth. Retire him now
+    // and the very next import finds no record for that row and recreates him.
+    if (from.status === 'active') {
+      return res.status(409).json({ error: 'His youth record is still active — the roster still lists him as a youth. '
+        + 'Merge once a roster import has made the youth record inactive; otherwise the next import simply recreates him as a youth.' });
+    }
+    if (into.status !== 'active') return res.status(409).json({ error: 'The adult record to keep must be active.' });
+  } else {
+    if (from.member_id) return res.status(400).json({ error: 'Only visitor/unregistered records (no member number) can be merged.' });
+    if (from.is_youth !== into.is_youth) {
+      return res.status(400).json({ error: 'Youth records merge into youth; adults into adults. '
+        + '(For a youth who is now an adult, open his old youth record and use “He is an adult now”.)' });
+    }
+  }
+  const moved = { sign_ins: 0, guardian_links_dropped: 0 };
   const run = db.transaction(() => {
     // attendance history transfers (guard against same-txn duplicates)
     for (const tp of db.prepare('SELECT * FROM txn_person WHERE person_id = ?').all(from.id)) {
       const clash = db.prepare('SELECT 1 FROM txn_person WHERE txn_id = ? AND person_id = ?').get(tp.txn_id, into.id);
       if (clash) db.prepare('DELETE FROM txn_person WHERE txn_id = ? AND person_id = ?').run(tp.txn_id, from.id);
-      else db.prepare('UPDATE txn_person SET person_id = ? WHERE txn_id = ? AND person_id = ?').run(into.id, tp.txn_id, from.id);
+      else { db.prepare('UPDATE txn_person SET person_id = ? WHERE txn_id = ? AND person_id = ?').run(into.id, tp.txn_id, from.id); moved.sign_ins++; }
     }
     db.prepare('UPDATE txn SET signer_person_id = ? WHERE signer_person_id = ?').run(into.id, from.id);
+    // An adult has no guardians: his parents' links end with his youth record.
+    // (Past sign-outs keep their signer — that is history, and it stays true.)
+    if (agedOut) {
+      moved.guardian_links_dropped = db.prepare('DELETE FROM person_guardian WHERE youth_id = ?').run(from.id).changes;
+    }
     // guardian links move unless the target already has that link
     for (const pg of db.prepare('SELECT * FROM person_guardian WHERE youth_id = ?').all(from.id)) {
       const clash = db.prepare('SELECT 1 FROM person_guardian WHERE youth_id = ? AND guardian_id = ?').get(into.id, pg.guardian_id);
@@ -788,11 +823,28 @@ router.post('/merge', (req, res) => {
       if (clash) db.prepare('DELETE FROM tlc_attendance_push WHERE id = ?').run(q.id);
       else db.prepare('UPDATE tlc_attendance_push SET person_id = ? WHERE id = ?').run(into.id, q.id);
     }
+    if (agedOut) {
+      if (from.photo_path && !into.photo_path) {
+        db.prepare('UPDATE person SET photo_path = NULL WHERE id = ?').run(from.id);
+        db.prepare(`UPDATE person SET photo_path = ?, updated_at = datetime('now') WHERE id = ?`).run(from.photo_path, into.id);
+      }
+      // The youth member number must not stay behind on a retired row. The
+      // roster import matches a numbered row on the number ALONE — merged and
+      // inactive records included — so if the portal ever reused it, the import
+      // would latch onto this retired record and bring him back as a youth.
+      // It is NOT copied to the adult record either: the portal issues adults
+      // their own number, and a wrong one there would block the import from
+      // ever matching him. Kept in the note, so nothing is lost.
+      const line = `Was youth record #${from.id}${from.member_id ? ` (youth member no. ${from.member_id})` : ''}; merged ${new Date().toISOString().slice(0, 10)}.`;
+      db.prepare(`UPDATE person SET notes = CASE WHEN COALESCE(notes, '') = '' THEN ? ELSE notes || char(10) || ? END,
+                                    updated_at = datetime('now') WHERE id = ?`).run(line, line, into.id);
+      db.prepare('UPDATE person SET member_id = NULL WHERE id = ?').run(from.id);
+    }
     db.prepare(`UPDATE person SET status = 'merged', merged_into_id = ?, badge_code = NULL,
                                   updated_at = datetime('now') WHERE id = ?`).run(into.id, from.id);
   });
   run();
-  res.json({ ok: true });
+  res.json({ ok: true, aged_out: agedOut, moved });
 });
 
 // ------------------------------------------------- automated roster sync ----
