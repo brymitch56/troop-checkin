@@ -249,8 +249,10 @@ function parseUserList(html, tlcEventId) {
     const key = nameKey(e.name.slice(0, ci), e.name.slice(ci + 1));
     byName.set(key, byName.has(key) ? 'AMBIGUOUS' : hash);
   }
-  // `$.users` rides along in the same fragment: youth only, each with the
-  // level and patrol an activity plan is matched against. Free input for the
+  // `$.users` rides along in the same fragment: everyone the portal will
+  // credit advancement to — every youth, AND any adult who still holds a level
+  // (an 18-year-old finishing his program year) — each with the level and
+  // patrol an activity plan is matched against. Free input for the
   // plan guard — no extra request.
   return { byHash, byName, users: tlcPlans.parseUsers(html) };
 }
