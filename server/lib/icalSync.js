@@ -102,10 +102,20 @@ function applyFeed(vevents) {
         // every row this portal event has ever produced, the exact match included
         const rows = rowsForPortalId(pid);
         if (rows.length && !(rows.length === 1 && ex)) {
-          // keep the row that carries the most: history, then attachments or
-          // hand-made settings, then the exact match, then the oldest
-          const score = (r) => (hasHistory(r) ? 4 : 0) + (isBare(r) ? 0 : 2) + (ex && r.id === ex.id ? 1 : 0);
-          const keeper = rows.reduce((best, r) => (score(r) > score(best) ? r : best));
+          // Keep the row that carries the most: history, then attachments or
+          // hand-made settings, then the oldest.
+          //
+          // EXCEPT: a row that already holds this exact (uid, start) and is not
+          // bare IS the keeper, whatever else exists. It cannot be folded away,
+          // and the schema has UNIQUE (ical_uid, start_at), so moving the
+          // identity onto another row while it stands is a constraint error —
+          // which rolls back the WHOLE sync, every night (the frozen-calendar
+          // failure, reintroduced). The other row then simply stays flagged
+          // "gone from feed"; nothing is merged and nothing is lost.
+          const score = (r) => (hasHistory(r) ? 4 : 0) + (isBare(r) ? 0 : 2);
+          const keeper = ex && !isBare(ex)
+            ? ex
+            : rows.reduce((best, r) => (score(r) > score(best) ? r : best));
           for (const r of rows) {
             if (r.id === keeper.id || !isBare(r)) continue; // a second row with its own history stays, flagged below
             db.prepare('DELETE FROM event WHERE id = ?').run(r.id);

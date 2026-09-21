@@ -113,6 +113,34 @@ test('when BOTH rows have their own sign-ins, neither is lost: the live one is c
   assert.equal(db.prepare('SELECT requires_permission_form f FROM event WHERE id = ?').get(old).f, 0, 'the ghost is left alone');
 });
 
+test('the old row has sign-ins and the live row is NOT empty: no merge, and above all no constraint error', () => {
+  // The schema has UNIQUE (ical_uid, start_at). The first version of this fix
+  // preferred the row with history and tried to move the feed's identity onto
+  // it — while the live row, which a leader had already set up by hand, still
+  // held that identity. SQLite refused, and because the sync is one
+  // transaction the WHOLE sync rolled back, every night: the frozen calendar.
+  const ins = db.prepare(`INSERT INTO event (source, ical_uid, title, start_at, end_at, all_day, removed_from_feed, tlc_event_id,
+                                             requires_permission_form, permission_form_source)
+                          VALUES ('ical', ?, 'Winter Campout', ?, ?, 0, ?, 'evfake000004', ?, ?)`);
+  const old = ins.run(uid('evfake000004', '20260801t000000'), '2026-12-11T21:00:00.000Z', '2026-12-13T15:00:00.000Z', 1, 0, null).lastInsertRowid;
+  const live = ins.run(uid('evfake000004', '20260901t000000'), '2026-12-11T22:30:00.000Z', '2026-12-13T14:00:00.000Z', 0, 1, 'manual').lastInsertRowid;
+  db.prepare(`INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id) VALUES ('edit-test-4', ?, 'in', ?, ?)`)
+    .run(old, new Date().toISOString(), staff);
+  db.prepare(`INSERT INTO event_form_status (event_id, person_id, signed) VALUES (?, ?, 1)`).run(live, youth);
+
+  const everything = () => db.prepare(`SELECT ical_uid, start_at FROM event WHERE source = 'ical' AND removed_from_feed = 0`).all()
+    .map((r) => ({ type: 'VEVENT', uid: r.ical_uid, summary: 'x', start: new Date(r.start_at), end: new Date(Date.parse(r.start_at) + 3600e3) }));
+  const before = db.prepare('SELECT COUNT(*) n FROM event').get().n;
+  let r;
+  assert.doesNotThrow(() => { r = applyFeed(everything()); }, 'a sync must never die on its own bookkeeping');
+  assert.equal(r.merged, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM event').get().n, before, 'both rows stand');
+  const L = db.prepare('SELECT * FROM event WHERE id = ?').get(live), O = db.prepare('SELECT * FROM event WHERE id = ?').get(old);
+  assert.deepEqual({ gone: L.removed_from_feed, form: L.requires_permission_form, start: L.start_at }, { gone: 0, form: 1, start: '2026-12-11T22:30:00.000Z' }, 'the live row is current, settings intact');
+  assert.equal(O.removed_from_feed, 1, 'the old one stays flagged, with its sign-ins');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM txn WHERE event_id = ?').get(old).n, 1);
+});
+
 test('UIDs with no portal id (manual or foreign feeds) keep the exact-match rule', () => {
   const r1 = applyFeed([ev('plain-uid-1', 'Open House', '2026-11-01T18:00:00Z', '2026-11-01T20:00:00Z')]);
   assert.equal(r1.added, 1);

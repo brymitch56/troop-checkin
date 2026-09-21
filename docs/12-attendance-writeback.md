@@ -139,9 +139,17 @@ empty-state that Alpine hides, so stripping scripts and reading the text
 gives the opposite answer. Blobs: `$.lessons` (the plan rows), `$.levels`,
 `$.patrols`, `$.items`, `$.wtIds`, and `$.advancementsByUser` (userHashid →
 item ids already held at that member's current level). The user-list fragment
-the push already fetches carries `$.users` — youth only — with the `level_id`
-and `patrol_id` a plan is matched against, so per-member level/patrol costs
-no extra request.
+the push already fetches carries `$.users` — the people the portal will credit
+advancement to: every youth, **plus any adult whose member record still holds a
+level** (the portal keeps that level as a hidden field on an adult record, so
+it is not a reliable sign that he is still earning awards) — with the
+`level_id` and `patrol_id` a plan is matched against, so per-member
+level/patrol costs no extra request. Layout matters: this fragment writes
+`<script>$.users = {…};` on ONE line, unlike the lesson-plan fragment, which
+gives each blob a line of its own. `tlcPlans.readBlob` therefore finds the
+assignment anywhere and reads the JSON by its own brackets; a line-anchored
+reader saw an empty map here, and the guard then judged nobody applicable
+and could never warn or hold.
 
 Two plan shapes credit (almost) nobody, both observed live 2026-09-19 on an
 event whose Manage Event tab looked correct:
