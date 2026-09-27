@@ -209,17 +209,37 @@ async function loadDash() {
   $('dash-open').innerHTML = open.length ? `<table><tr><th>Name</th><th>Patrol</th><th>Event</th><th>In since</th><th data-nofilter></th></tr>` +
     open.map((r) => `<tr><td>${esc(r.first_name)} ${esc(r.last_name)}</td><td>${esc(r.patrol || '')}</td>
       <td>${esc(r.event_title)}</td>${dtCell(r.signed_at)}
-      <td><button class="btn ghost small" data-close="${r.id}">Admin close</button></td></tr>`).join('') + '</table>'
+      <td><button class="btn ghost small" data-close="${r.id}" data-close-name="${esc(r.first_name)} ${esc(r.last_name)}">Admin close</button></td></tr>`).join('') + '</table>'
     : '<p class="hint left">Nobody is on site.</p>';
   enhanceTable('dash-open');
-  $('dash-open').onclick = async (e) => {
+  $('dash-open').onclick = (e) => {
     const b = e.target.closest('button[data-close]');
-    if (!b) return;
-    if (!confirm('Close this open sign-in without a guardian signature? This is recorded as an admin action.')) return;
-    try { await jpost('/admin/close-open', { person_id: Number(b.dataset.close) }); toast('Closed'); loadDash(); }
-    catch (err) { toast(err.message, true); }
+    if (b) openCloseModal(Number(b.dataset.close), b.dataset.closeName);
   };
 }
+// Admin close asks the same advancement question as a kiosk sign-out:
+// unchecked pushes attendance to the member portal WITHOUT advancement.
+function openCloseModal(personId, name) {
+  $('close-modal').dataset.pid = personId;
+  $('close-modal-title').textContent = `Admin close: ${name || 'this person'}`;
+  $('close-advancement').checked = true; // default yes, every time
+  $('close-modal').hidden = false;
+}
+function closeCloseModal() { $('close-modal').hidden = true; }
+$('close-modal-x').onclick = closeCloseModal;
+$('close-cancel').onclick = closeCloseModal;
+$('close-confirm').onclick = async () => {
+  const btn = $('close-confirm');
+  const advancement = $('close-advancement').checked;
+  btn.disabled = true;
+  try {
+    await jpost('/admin/close-open', { person_id: Number($('close-modal').dataset.pid), advancement });
+    closeCloseModal();
+    toast(advancement ? 'Closed' : 'Closed — attendance without advancement');
+    loadDash();
+  } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; }
+};
 $('tool-backup').onclick = async () => {
   try { const r = await jpost('/admin/backup', {}); toast(`Backup written (${r.signature_count} signatures)`); }
   catch (e) { toast(e.message, true); }
@@ -714,12 +734,14 @@ document.addEventListener('keydown', (e) => {
   else if (!$('person-modal').hidden) closePersonModal();
   else if (!$('event-modal').hidden) closeEventModal();
   else if (!$('txn-modal').hidden) closeTxnModal();
+  else if (!$('close-modal').hidden) closeCloseModal();
 });
 document.addEventListener('mousedown', (e) => {
   if (e.target.id === 'adm-modal') closeFamilyModal();
   if (e.target.id === 'person-modal') closePersonModal();
   if (e.target.id === 'event-modal') closeEventModal();
   if (e.target.id === 'txn-modal') closeTxnModal();
+  if (e.target.id === 'close-modal') closeCloseModal();
 });
 document.addEventListener('click', (e) => {
   if (e.target.id === 'ev-modal-close') closeEventModal();
@@ -1243,13 +1265,26 @@ $('sms-recipients').onchange = async () => {
     toast(r.mode === 'all' ? 'Texting all opted-in guardians.' : 'Texting the primary guardian only.');
   } catch (e) { toast(e.message, true); }
 };
+$('sms-reply-alerts').onchange = async () => {
+  try {
+    const r = await jput('/admin/sms-reply-alerts', { enabled: $('sms-reply-alerts').checked });
+    toast(r.enabled ? 'Stations will show new replies.' : 'Stations will not show replies.');
+  } catch (e) { toast(e.message, true); }
+};
+$('msg-seen-all').onclick = async () => {
+  try { const r = await jpost('/admin/messages/seen', {}); toast(`Marked ${r.marked} seen`); loadMessages(); }
+  catch (e) { toast(e.message, true); }
+};
 async function loadMessages() {
   api('/admin/sms-recipients').then((s) => {
     if (document.activeElement !== $('sms-recipients')) $('sms-recipients').value = s.mode;
   }).catch(() => {});
+  api('/admin/sms-reply-alerts').then((s) => { $('sms-reply-alerts').checked = s.enabled; }).catch(() => {});
   const rows = await api('/admin/messages');
   const kindTag = (m) => m.direction === 'in'
-    ? (m.kind === 'reply' ? '<span class="tag warn">reply</span>' : '<span class="tag off">keyword</span>')
+    ? (m.kind === 'reply'
+      ? '<span class="tag warn">reply</span>' + (m.seen_at ? '' : ' <span class="tag warn">new</span>')
+      : '<span class="tag off">keyword</span>')
     : (m.kind === 'custom' ? '<span class="tag youth">broadcast</span>' : '<span class="tag off">pickup alert</span>');
   $('msg-list').innerHTML = rows.length
     ? `<table><tr><th>In/Out</th><th>When</th><th>Who</th><th>Type</th><th>Message</th><th>Status</th><th data-nofilter></th></tr>` +

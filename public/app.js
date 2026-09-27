@@ -223,6 +223,7 @@ async function doLogin() {
 $('staff-pill').onclick = async () => {
   await jpost('/logout', {}).catch(() => {});
   state.me = null; state.cart = []; state.direction = null;
+  $('reply-alert').hidden = true;
   renderLogin();
 };
 
@@ -237,6 +238,7 @@ async function enterKiosk() {
   refreshSnapshot();
   flushQueue();
   updateQueuePill();
+  pollReplies();
   await pickEventAuto();
 }
 
@@ -1070,16 +1072,78 @@ function renderNotifyResults(r) {
       : '');
   openModal('modal-notify');
 }
+// The pickup reminder is one tap from ✉️ Message, and a generic "are you
+// sure?" popup got clicked through by a leader who meant to write their own
+// text. So the confirmation is a real dialog that says "pickup reminder",
+// shows the exact wording and reach (a dry run — nothing sent), and points
+// at ✉️ Message for anything else.
 $('onsite-notify').onclick = async () => {
-  if (!confirm('Text the guardians of everyone still on site' +
-    (scopeLabel() ? ` (${scopeLabel()})` : '') + '? Each family gets one message.')) return;
-  try {
-    renderNotifyResults(await jpost('/notify-onsite', {
-      patrol: state.patrol || undefined, level: state.level || undefined,
-    }));
-  } catch (e) { toast(e.message, true); }
+  const scope = { patrol: state.patrol || undefined, level: state.level || undefined };
+  let p;
+  try { p = await jpost('/notify-onsite/preview', scope); }
+  catch (e) { return toast(e.message, true); }
+  if (!p.families) {
+    return toast(p.onsite_youth
+      ? 'No one to remind: every family here was already reminded or has no opted-in mobile.'
+      : 'Nobody is on site.', true);
+  }
+  $('remind-scope').textContent =
+    `${p.families} famil${p.families === 1 ? 'y' : 'ies'} will be texted about ` +
+    `${p.onsite_youth} youth still on site${scopeLabel() ? ` (${scopeLabel()})` : ''}.` +
+    (p.skipped ? ` ${p.skipped} can't be texted — you'll see who after sending.` : '');
+  $('remind-sample').textContent = p.sample;
+  $('remind-error').textContent = '';
+  $('remind-send').dataset.scope = JSON.stringify(scope);
+  openModal('modal-remind');
+};
+$('remind-cancel').onclick = closeModal;
+$('remind-send').onclick = async () => {
+  const btn = $('remind-send');
+  btn.disabled = true;
+  try { renderNotifyResults(await jpost('/notify-onsite', JSON.parse(btn.dataset.scope || '{}'))); }
+  catch (e) { $('remind-error').textContent = e.message; }
+  finally { btn.disabled = false; }
 };
 $('notify-close').onclick = closeModal;
+
+// Guardian text replies (server lib/replyAlerts). Polled while signed in; a
+// banner sits above whichever screen is up until someone taps "Got it",
+// which clears it on every station. Offline or signed out: stay quiet.
+const REPLY_POLL_MS = 30_000;
+let replyRows = [];
+async function pollReplies() {
+  if (!state.me || state.offline) { $('reply-alert').hidden = true; return; }
+  try { replyRows = await api('/sms-replies/unread'); }
+  catch { return; } // keep the last banner rather than flicker on a blip
+  const n = replyRows.length;
+  $('reply-alert').hidden = !n;
+  if (n) {
+    const r = replyRows[0];
+    $('reply-alert').textContent = `💬 ${n} new text repl${n === 1 ? 'y' : 'ies'}` +
+      ` — latest from ${r.guardian_name || r.phone || 'unknown number'}. Tap to read.`;
+  }
+}
+setInterval(pollReplies, REPLY_POLL_MS);
+$('reply-alert').onclick = () => {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const when = (at) => new Date(at.replace(' ', 'T') + 'Z')
+    .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  $('replies-list').innerHTML = replyRows.map((r) => `<div class="reply-row">
+      <div><b>${esc(r.guardian_name || r.phone || 'Unknown number')}</b>
+        ${r.youth.length ? `<span class="hint">(${esc(r.youth.join(', '))})</span>` : ''}
+        <span class="hint">· ${when(r.at)}</span></div>
+      <div class="reply-body">${esc(r.body || '')}</div></div>`).join('');
+  $('replies-seen').dataset.ids = JSON.stringify(replyRows.map((r) => r.id));
+  openModal('modal-replies');
+};
+$('replies-later').onclick = closeModal;
+$('replies-seen').onclick = async () => {
+  try {
+    await jpost('/sms-replies/seen', { ids: JSON.parse($('replies-seen').dataset.ids || '[]') });
+    closeModal();
+    pollReplies();
+  } catch (e) { toast(e.message, true); }
+};
 
 // custom broadcast (ETA updates etc.) — to on-site youth's guardians, or to
 // everyone who attended the current event (even if already picked up)

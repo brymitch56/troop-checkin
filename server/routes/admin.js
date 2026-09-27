@@ -638,8 +638,12 @@ router.post('/txns/:id/void', (req, res) => {
 });
 
 // Close a lingering open sign-in without a guardian present (audited).
+// Like a kiosk sign-out, the TLC push carries the "completed all planned
+// requirements" answer: advancement=false records attendance WITHOUT
+// advancement credit. Omitted means yes (the kiosk default).
 router.post('/close-open', (req, res) => {
   const { person_id } = req.body || {};
+  const advancement = (req.body || {}).advancement !== false;
   const open = db.prepare(
     `SELECT tp.txn_id AS in_txn_id, t.event_id
        FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
@@ -659,9 +663,10 @@ router.post('/close-open', (req, res) => {
     return txnId;
   });
   const txnId = run();
-  // an admin close is still a departure — record TLC attendance (advancement
-  // defaults to yes; the write-back is off unless enabled in Admin → Import)
-  try { require('../lib/attendanceSync').enqueue(open.event_id, [person_id]); }
+  // an admin close is still a departure — record TLC attendance with the
+  // leader's advancement answer (the write-back is off unless enabled in
+  // Admin → Import)
+  try { require('../lib/attendanceSync').enqueue(open.event_id, [{ person_id, advancement }]); }
   catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
   require('../lib/webhook').emitTxnCreated(txnId);
   res.json({ ok: true, txn_id: txnId });
@@ -1304,6 +1309,21 @@ router.get('/sms-recipients', (req, res) => {
 router.put('/sms-recipients', (req, res) => {
   const mode = require('../lib/notifySweep').saveRecipientMode((req.body || {}).mode);
   res.json({ mode });
+});
+
+// Kiosk banner for guardian replies (lib/replyAlerts) — on by default.
+router.get('/sms-reply-alerts', (req, res) => {
+  res.json(require('../lib/replyAlerts').getSettings());
+});
+router.put('/sms-reply-alerts', (req, res) => {
+  res.json(require('../lib/replyAlerts').saveSettings(req.body || {}));
+});
+// Clear the unread markers (the same ones the kiosk banner shows).
+router.post('/messages/seen', (req, res) => {
+  const ra = require('../lib/replyAlerts');
+  const ids = (req.body || {}).ids;
+  const marked = Array.isArray(ids) ? ra.markSeen(ids, req.staff.staff_id) : ra.markAllSeen(req.staff.staff_id);
+  res.json({ ok: true, marked });
 });
 
 // Full SMS message log: broadcasts, alerts, and every inbound reply.

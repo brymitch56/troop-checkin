@@ -36,6 +36,9 @@
   </div>
 </section>
 
+<!-- guardian text replies: shown above whichever screen is up (replyAlerts) -->
+<button id="reply-alert" class="reply-alert" hidden></button>
+
 <!-- ============ MAIN / KIOSK ============ -->
 <section id="screen-main" class="screen" hidden>
   <header class="topbar">
@@ -79,7 +82,7 @@
   <header class="topbar">
     <button id="onsite-back" class="pill ghost-pill">‹ Back</button>
     <h2>Still on site</h2>
-    <button id="onsite-notify" class="pill ghost-pill">🔔 Text guardians</button>
+    <button id="onsite-notify" class="pill ghost-pill">🔔 Pickup reminder</button>
     <button id="onsite-message" class="pill ghost-pill">✉️ Message</button>
   </header>
   <div class="filter-row" id="onsite-filters">
@@ -162,6 +165,30 @@
       <div id="emergency-body"></div>
       <button id="emergency-add" class="btn primary" hidden>Add to checkout</button>
       <button id="emergency-close" class="btn ghost">Close</button>
+    </div>
+
+    <div id="modal-remind" class="modal-page" hidden>
+      <h3>Send the pickup reminder?</h3>
+      <p id="remind-scope" class="hint"></p>
+      <p class="hint" style="margin:6px 0 2px">Each family gets this text (names and event filled in per family):</p>
+      <blockquote id="remind-sample" class="remind-sample"></blockquote>
+      <p class="hint">Want to write your own text instead (an ETA update, a lost water bottle)?
+        Cancel and use <b>✉️ Message</b>.</p>
+      <div id="remind-error" class="error" role="alert"></div>
+      <div class="row">
+        <button id="remind-cancel" class="btn ghost">Cancel</button>
+        <button id="remind-send" class="btn primary">Send reminder</button>
+      </div>
+    </div>
+
+    <div id="modal-replies" class="modal-page" hidden>
+      <h3>💬 Guardian replies</h3>
+      <div id="replies-list"></div>
+      <p class="hint">Replying happens from Admin → Messages.</p>
+      <div class="row">
+        <button id="replies-later" class="btn ghost">Later</button>
+        <button id="replies-seen" class="btn primary">Got it</button>
+      </div>
     </div>
 
     <div id="modal-notify" class="modal-page" hidden>
