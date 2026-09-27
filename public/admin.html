@@ -120,6 +120,13 @@
         <div id="msg-compose-error" class="error"></div>
       </div>
       <div class="row wrap">
+        <label class="check"><input id="sms-reply-alerts" type="checkbox"> Show new guardian replies on the check-in stations</label>
+        <button id="msg-seen-all" class="btn ghost small">Mark all replies seen</button>
+      </div>
+      <p class="hint left">When on, every station shows a banner for an unseen reply (last 48 hours). Tapping
+      <b>Got it</b> there, or <b>Mark all replies seen</b> here, clears it everywhere. Replies still marked
+      <span class="tag warn">new</span> below have not been seen at the door.</p>
+      <div class="row wrap">
         <label>Who gets texted for each youth
           <select id="sms-recipients">
             <option value="primary">Primary guardian only (one text per family)</option>
@@ -486,6 +493,27 @@
         <button id="tx-modal-close" class="btn ghost small" aria-label="Close">✕ Close</button>
       </div>
       <div id="tx-detail" hidden></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ADMIN CLOSE MODAL ============ -->
+<div id="close-modal" class="modal-root" hidden>
+  <div class="modal adm-modal">
+    <div class="modal-page">
+      <div class="fam-head">
+        <h3 id="close-modal-title">Admin close</h3>
+        <button id="close-modal-x" class="btn ghost small" aria-label="Close">✕ Close</button>
+      </div>
+      <p class="hint left">Signs this person out without a guardian signature. This is recorded as an admin action.</p>
+      <label class="check"><input id="close-advancement" type="checkbox" checked>
+        Completed all planned requirements for this event</label>
+      <p class="hint left">Unchecked still records attendance on the member portal, but WITHOUT advancement credit
+      (only applies when attendance write-back is on for this event).</p>
+      <div class="row wrap">
+        <button id="close-confirm" class="btn primary small">Close sign-in</button>
+        <button id="close-cancel" class="btn ghost small">Cancel</button>
+      </div>
     </div>
   </div>
 </div>

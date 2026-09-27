@@ -165,6 +165,14 @@ async function notifyLingering(rows, opts = {}) {
   return { sent: r.sent, skipped: [...skipped, ...r.failed], recorded: r.recorded, sentCount: r.sentCount };
 }
 
+// What notifyLingering(rows) WOULD send, without sending — the kiosk shows
+// this before a leader confirms, so the exact text and reach are on screen.
+function previewLingering(rows, opts = {}) {
+  const { groups, skipped } = groupByGuardian(rows, { dedupe: true, mode: opts.mode });
+  const first = groups.values().next().value;
+  return { families: groups.size, skipped: skipped.length, sample: first ? lingeringBody(first) : null };
+}
+
 // Custom broadcast (ETA updates etc.) — repeatable, no dedupe, never closes
 // sign-ins. One text per guardian regardless of how many youth they cover.
 // opts.mode overrides the global recipient mode for this one broadcast.
@@ -234,5 +242,5 @@ function scheduleSweep() {
 module.exports = {
   sweep, findLingering, pickGuardian, eligibleGuardians, recipientsFor,
   getRecipientMode, saveRecipientMode,
-  notifyLingering, messageGuardians, messageAdults, scheduleSweep,
+  notifyLingering, previewLingering, messageGuardians, messageAdults, scheduleSweep,
 };

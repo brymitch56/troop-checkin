@@ -289,6 +289,19 @@ test('notify-onsite: one text per guardian covering all their youth; skips + ded
     assert.equal(r.status, 200);
   }
 
+  // the kiosk confirmation dialog's dry run: reach + exact wording, sends nothing
+  const msgsBefore = db.prepare('SELECT COUNT(*) c FROM sms_message').get().c;
+  const pv = await req('POST', '/api/notify-onsite/preview', { cookie: doorCookie, body: {} });
+  assert.equal(pv.status, 200);
+  assert.equal(pv.json.onsite_youth, 3);
+  assert.equal(pv.json.families, 1, 'Bob covers Emma + Frank in one text');
+  assert.equal(pv.json.skipped, 1, 'Danny has no opted-in guardian');
+  assert.match(pv.json.sample, /still checked in after "Notify Test" ended/);
+  assert.match(pv.json.sample, /Reply Y once picked up/);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM sms_message').get().c, msgsBefore, 'preview sends nothing');
+  assert.equal(db.prepare(`SELECT COUNT(*) c FROM notification WHERE event_id = ?`).get(evId).c, 0,
+    'preview records nothing (so it cannot trip the dedupe)');
+
   const r = await req('POST', '/api/notify-onsite', { cookie: doorCookie, body: {} });
   assert.equal(r.status, 200);
   assert.equal(r.json.onsite_youth, 3);
@@ -366,6 +379,48 @@ test('message log: all traffic stored; broadcast replies logged, not robo-answer
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
   });
   assert.equal(forged.status, 403);
+});
+
+test('guardian replies surface on the kiosk until seen; keywords never do; admin switch', async () => {
+  const bob = person('Bob');
+  // the previous test left Bob's reply unseen
+  const u = await req('GET', '/api/sms-replies/unread', { cookie: doorCookie });
+  assert.equal(u.status, 200);
+  const mine = u.json.find((m) => m.body === 'Sounds good, we are 10 min out');
+  assert.ok(mine, 'an unseen reply is listed for door staff');
+  assert.equal(mine.guardian_id, bob.id);
+  assert.ok(mine.guardian_name.includes('Bob'));
+  assert.ok(mine.youth.some((n) => n.includes('Emma')), 'lists the youth the sender is linked to');
+  // keywords (Y, STOP, ...) are handled automatically — never a banner
+  await twilioPost('/api/sms/inbound', { From: '5550102', Body: 'Y' });
+  const u2 = await req('GET', '/api/sms-replies/unread', { cookie: doorCookie });
+  assert.ok(!u2.json.some((m) => m.body === 'Y'));
+  // signed-out kiosks see nothing
+  assert.equal((await req('GET', '/api/sms-replies/unread')).status, 401);
+
+  // "Got it" clears it for every station, records who, and is idempotent
+  assert.equal((await req('POST', '/api/sms-replies/seen', { cookie: doorCookie, body: {} })).status, 400);
+  const seen = await req('POST', '/api/sms-replies/seen', { cookie: doorCookie, body: { ids: [mine.id] } });
+  assert.equal(seen.json.marked, 1);
+  const again = await req('POST', '/api/sms-replies/seen', { cookie: doorCookie, body: { ids: [mine.id] } });
+  assert.equal(again.json.marked, 0);
+  const row = db.prepare('SELECT seen_at, seen_by FROM sms_message WHERE id = ?').get(mine.id);
+  assert.ok(row.seen_at && row.seen_by);
+  const u3 = await req('GET', '/api/sms-replies/unread', { cookie: doorCookie });
+  assert.ok(!u3.json.some((m) => m.id === mine.id));
+
+  // on by default; switching it off empties the kiosk list without losing state
+  assert.equal((await req('GET', '/api/admin/sms-reply-alerts', { cookie: adminCookie })).json.enabled, true);
+  await twilioPost('/api/sms/inbound', { From: '5550102', Body: 'Can he ride home with a friend?' });
+  await req('PUT', '/api/admin/sms-reply-alerts', { cookie: adminCookie, body: { enabled: false } });
+  assert.deepEqual((await req('GET', '/api/sms-replies/unread', { cookie: doorCookie })).json, []);
+  await req('PUT', '/api/admin/sms-reply-alerts', { cookie: adminCookie, body: { enabled: true } });
+  assert.ok((await req('GET', '/api/sms-replies/unread', { cookie: doorCookie })).json
+    .some((m) => m.body === 'Can he ride home with a friend?'));
+  // admin "Mark all replies seen"
+  const all = await req('POST', '/api/admin/messages/seen', { cookie: adminCookie, body: {} });
+  assert.ok(all.json.marked >= 1);
+  assert.deepEqual((await req('GET', '/api/sms-replies/unread', { cookie: doorCookie })).json, []);
 });
 
 test('attended-scope broadcast reaches guardians of already-picked-up youth; admin reply honors STOP', async () => {

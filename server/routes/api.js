@@ -610,6 +610,30 @@ router.post('/notify-onsite', express.json(), async (req, res) => {
   res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
 });
 
+// Dry run of /notify-onsite for the kiosk confirmation dialog: how many
+// families would be texted and a sample of the exact wording. Sends nothing.
+router.post('/notify-onsite/preview', express.json(), (req, res) => {
+  const sms = require('../lib/sms');
+  if (!sms.configured()) {
+    return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
+  }
+  const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
+  const level = req.body && req.body.level ? String(req.body.level) : null;
+  const rows = onsiteYouthRows(patrol, level);
+  res.json({ onsite_youth: rows.length, ...require('../lib/notifySweep').previewLingering(rows) });
+});
+
+// Guardian text replies for door staff (lib/replyAlerts). Kiosks poll the
+// unread list and show a banner; "Got it" marks them seen for every station.
+router.get('/sms-replies/unread', (req, res) => {
+  res.json(require('../lib/replyAlerts').unread());
+});
+router.post('/sms-replies/seen', express.json(), (req, res) => {
+  const ids = (req.body || {}).ids;
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No replies given.' });
+  res.json({ ok: true, marked: require('../lib/replyAlerts').markSeen(ids, req.staff.staff_id) });
+});
+
 // Custom broadcast (ETA updates, "left a water bottle", etc.). Repeatable;
 // never closes sign-ins. Two scopes:
 //   onsite (default)  — guardians of youth currently checked in

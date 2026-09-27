@@ -270,3 +270,20 @@ details.past-events button { opacity: .75; }
   .modal { animation: up .18s ease-out; }
   @keyframes up { from { transform: translateY(24px); opacity: .6; } }
 }
+
+/* ---------- guardian text replies (banner + modal) ---------- */
+.reply-alert {
+  display: block; width: calc(100% - 28px); max-width: 692px; margin: 10px auto 0; /* the .screen column */
+  border: none; border-radius: var(--radius); padding: 14px 16px;
+  background: var(--blaze); color: #fff; font-size: 17px; font-weight: 700;
+  text-align: left; cursor: pointer; animation: reply-pulse 2s ease-in-out infinite;
+}
+.reply-alert[hidden] { display: none; }
+@keyframes reply-pulse { 50% { filter: brightness(1.15); } }
+@media (prefers-reduced-motion: reduce) { .reply-alert { animation: none; } }
+.reply-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.reply-body { font-size: 17px; margin-top: 4px; white-space: pre-wrap; }
+.remind-sample {
+  margin: 6px 0 10px; padding: 10px 12px; border-left: 4px solid var(--pine);
+  background: var(--card); border-radius: 6px; font-size: 15px;
+}

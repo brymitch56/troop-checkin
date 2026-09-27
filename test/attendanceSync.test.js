@@ -625,6 +625,17 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   assert.equal(close.status, 200);
   assert.equal(rowFor(ev, adult2).status, 'pending');
   assert.equal(rowFor(ev, adult2).use_lesson_plans, 1);
+  // ...and honors the dialog's unchecked box like a kiosk sign-out does
+  const adult3 = mkPerson('Ada', 'Adult', { is_youth: 0 });
+  await req('POST', '/api/txn', {
+    cookie: doorCookie,
+    body: { client_uuid: 'tlca-uuid-3b', direction: 'in', event_id: ev, entries: [{ person_id: adult3 }] },
+  });
+  const close3 = await req('POST', '/api/admin/close-open',
+    { body: { person_id: adult3, advancement: false }, cookie: adminCookie });
+  assert.equal(close3.status, 200);
+  assert.equal(rowFor(ev, adult3).status, 'pending');
+  assert.equal(rowFor(ev, adult3).use_lesson_plans, 0); // attendance only
 
   // ---- tlc_user_id via PATCH: shape + uniqueness enforced
   const dad = mkPerson('Sam', 'Sameson', { is_youth: 0 });
