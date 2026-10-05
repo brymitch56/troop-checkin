@@ -170,6 +170,10 @@ a.pill { text-decoration: none; display: inline-flex; align-items: center; }
   margin: 16px 0 6px; font-size: 13px; letter-spacing: .1em;
   text-transform: uppercase; color: var(--muted);
 }
+/* youth/adult counts: the summary line, and the split inside each heading */
+.onsite-list .onsite-summary { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
+.onsite-list .group h4 .onsite-split { text-transform: none; letter-spacing: 0; }
+#screen-onsite .topbar .pill:disabled { opacity: .45; cursor: not-allowed; }
 .onsite-list .person {
   display: flex; justify-content: space-between; align-items: center;
   background: var(--card); border: 1px solid var(--line);

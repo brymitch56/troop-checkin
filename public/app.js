@@ -24,6 +24,7 @@ const state = {
   pendingLink: null,     // {code, person}
   patrol: null,          // on-site view filters (default to the station scope)
   level: null,
+  who: null,             // on-site youth/adult filter: null | 'youth' | 'adult'
   station: localStorage.getItem('station-patrol') || null,     // per-device patrol scope
   stationLevel: localStorage.getItem('station-level') || null, // per-device level scope
 };
@@ -1159,7 +1160,8 @@ $('onsite-message').onclick = () => {
   // adults option only where it can apply: an adult-tracked selected event
   // (off by default every time — including adults is an explicit choice)
   $('msg-adults').checked = false;
-  $('msg-adults-wrap').hidden = !(state.event && state.event.track_adults);
+  // …and never from a youth-only view: those adults aren't on the screen
+  $('msg-adults-wrap').hidden = !(state.event && state.event.track_adults) || state.who === 'youth';
   // recipient choice defaults to the admin's global setting every time
   $('msg-recip-all').checked = state.smsRecipients === 'all';
   $('msg-recip-primary').checked = state.smsRecipients !== 'all';
@@ -1225,6 +1227,25 @@ function onsiteComparator(key) {
 }
 $('onsite-patrol').onchange = (e) => { state.patrol = e.target.value || null; renderOnsite(); };
 $('onsite-level').onchange = (e) => { state.level = e.target.value || null; renderOnsite(); };
+$('onsite-who').onchange = (e) => { state.who = e.target.value || null; renderOnsite(); };
+
+// Youth/adult split, client-side so it works offline too. "N · 18 youth,
+// 5 adults" wording is shared by the summary line and each event heading.
+const matchesWho = (r) => !state.who || (state.who === 'youth' ? !!r.is_youth : !r.is_youth);
+const splitLabel = (rows) => {
+  const youth = rows.filter((r) => r.is_youth).length;
+  const adults = rows.length - youth;
+  return `${youth} youth, ${adults} adult${adults === 1 ? '' : 's'}`;
+};
+// Both broadcasts reach YOUTH's guardians, and a broadcast must match what
+// the leader is looking at — so an adults-only view cannot send either.
+function syncOnsiteBroadcasts() {
+  const adultsOnly = state.who === 'adult';
+  for (const id of ['onsite-notify', 'onsite-message']) {
+    $(id).disabled = adultsOnly;
+    $(id).title = adultsOnly ? 'Texts go to youth guardians — switch Who to Youth or Youth & adults' : '';
+  }
+}
 
 function renderOnsiteSortPills() {
   const box = $('onsite-sort'); box.innerHTML = '';
@@ -1245,15 +1266,19 @@ function renderOnsiteSortPills() {
 
 async function renderOnsite() {
   let offlineData = false;
-  const rows = await api('/onsite' + onsiteQuery(state.patrol, state.level))
+  const all = await api('/onsite' + onsiteQuery(state.patrol, state.level))
     .catch(async (e) => {
       if (e.status) throw e;
       offlineData = true; // network down/slow: snapshot + queued (field lesson, 2026-08)
       return onsiteRowsOffline();
     });
+  const rows = all.filter(matchesWho);
   const { patrols, levels } = await rosterFacets();
   fillFilterSelect($('onsite-patrol'), patrols, state.patrol, 'All patrols');
   fillFilterSelect($('onsite-level'), levels, state.level, 'All levels');
+  $('onsite-who').value = state.who || '';
+  $('onsite-who').classList.toggle('active', !!state.who);
+  syncOnsiteBroadcasts();
   renderOnsiteSortPills();
 
   const wrap = $('onsite-list'); wrap.innerHTML = '';
@@ -1263,7 +1288,19 @@ async function renderOnsite() {
     note.textContent = 'Offline — showing the saved roster plus anything recorded on this device.';
     wrap.appendChild(note);
   }
-  if (!rows.length) { wrap.innerHTML += '<p class="hint">Nobody is signed in right now.</p>'; return; }
+  if (!rows.length) {
+    wrap.innerHTML += state.who === 'adult' && (state.patrol || state.level)
+      ? '<p class="hint">No adults match — adults have no patrol or level, so clear those filters to see them.</p>'
+      : `<p class="hint">${state.who ? `No ${state.who === 'youth' ? 'youth' : 'adults'} signed in right now.` : 'Nobody is signed in right now.'}</p>`;
+    return;
+  }
+  // The whole-list split, always for EVERYONE matching patrol/level (not just
+  // the Who filter) — the at-a-glance "how many of each are here" answer.
+  const summary = document.createElement('p');
+  summary.className = 'onsite-summary';
+  summary.textContent = `On site: ${all.length} — ${splitLabel(all)}` +
+    (state.who ? ` · showing ${state.who === 'youth' ? 'youth' : 'adults'} only` : '');
+  wrap.appendChild(summary);
   const byEvent = new Map();
   for (const r of rows) {
     if (!byEvent.has(r.event_id)) byEvent.set(r.event_id, { title: r.event_title, rows: [] });
@@ -1273,7 +1310,7 @@ async function renderOnsite() {
   for (const g of byEvent.values()) {
     const div = document.createElement('div');
     div.className = 'group';
-    div.innerHTML = `<h4>${g.title} · ${g.rows.length}</h4>`;
+    div.innerHTML = `<h4>${g.title} · ${g.rows.length}${state.who ? '' : ` <span class="onsite-split">(${splitLabel(g.rows)})</span>`}</h4>`;
     wrap.appendChild(div);
     for (const r of [...g.rows].sort(cmp)) {
       const el = document.createElement('button');

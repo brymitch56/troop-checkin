@@ -1,6 +1,6 @@
 {
   "name": "troop-checkin",
-  "version": "0.4.62",
+  "version": "0.4.63",
   "description": "Self-hosted youth sign-in/out kiosk for troops (Raspberry Pi, Windows, or Docker)",
   "private": true,
   "type": "commonjs",
@@ -14,7 +14,9 @@
     "backup": "node server/lib/backup.js",
     "sync-ical": "node -e \"require('./server/lib/icalSync').syncIcal().then(console.log, (e) => { console.error(e.message); process.exit(1); })\""
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "express": "^5.2.1",
