@@ -14,9 +14,7 @@
     "backup": "node server/lib/backup.js",
     "sync-ical": "node -e \"require('./server/lib/icalSync').syncIcal().then(console.log, (e) => { console.error(e.message); process.exit(1); })\""
   },
-  "engines": {
-    "node": ">=22"
-  },
+  "engines": { "node": ">=22" },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "express": "^5.2.1",
