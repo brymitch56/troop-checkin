@@ -521,8 +521,9 @@ async function runPush({ manual = false, env = process.env } = {}) {
       if (state.auth_failed_at || state.code_required_at) patchState({ auth_failed_at: null, code_required_at: null });
     } catch (e) {
       // Auth latch: NEVER retry a rejected login on a timer. code 2 = login
-      // rejected (fetch-roster semantics); anything else is transient network.
-      const auth = e && e.code === 2;
+      // rejected (fetch-roster semantics), 8 = the account has not enrolled in
+      // two-step sign-in — both need a person; anything else is transient.
+      const auth = e && (e.code === 2 || e.code === 8);
       const needsCode = e && e.code === 6;
       patchState({
         last_run: new Date().toISOString(), last_status: needsCode ? 'code_required' : 'failed',

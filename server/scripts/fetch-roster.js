@@ -38,6 +38,7 @@
  *             · 5 staging (file saved but pending-import creation failed)
  *             · 6 sign-in code required (a human must enter it in the admin)
  *             · 7 sign-in code rejected
+ *             · 8 the account must enroll in two-step sign-in first (browser)
  */
 
 const fs = require('fs');
@@ -92,11 +93,18 @@ function makeConfig(env = process.env) {
 }
 
 // ------------------------------------------------------------ cookie jar ---
+// Device-trust cookie names: AHGfamily sets "trusted_device"; the pattern is
+// loose on purpose so a sibling portal's "remember_device"/"mfa_trust" also
+// counts. Only ever matched against cookies that carry a future expiry.
+const TRUST_COOKIE_RE = /trust|device/i;
+
 // Hand-rolled: keep every cookie the site sets, honor deletions (empty value,
 // Max-Age<=0, or an Expires date in the past — Yii uses 1970 but any past
-// date must count), last write wins.
+// date must count), last write wins. Expiry times are remembered (ms, or
+// absent for a browser-session cookie) so a long-lived "trusted device"
+// cookie can be told apart from the session it rode in with.
 class CookieJar {
-  constructor() { this.map = new Map(); }
+  constructor() { this.map = new Map(); this.expires = new Map(); }
   absorbLines(lines) {
     for (const line of lines || []) {
       if (!line) continue;
@@ -106,18 +114,25 @@ class CookieJar {
       const name = pair.slice(0, i).trim();
       const value = pair.slice(i + 1).trim();
       let del = value === '';
+      let until = null;
       for (const attr of attrs) {
         const j = attr.indexOf('=');
         const key = (j < 0 ? attr : attr.slice(0, j)).trim().toLowerCase();
         const val = j < 0 ? '' : attr.slice(j + 1).trim();
-        if (key === 'max-age' && Number(val) <= 0) del = true;
+        if (key === 'max-age') {
+          if (Number(val) <= 0) del = true;
+          else until = Date.now() + Number(val) * 1000; // Max-Age beats Expires
+        }
         if (key === 'expires') {
           const d = new Date(val);
           if (!isNaN(d) && d.getTime() < Date.now()) del = true;
+          else if (!isNaN(d) && until === null) until = d.getTime();
         }
       }
-      if (del) this.map.delete(name);
-      else this.map.set(name, value);
+      if (del) { this.map.delete(name); this.expires.delete(name); continue; }
+      this.map.set(name, value);
+      if (until !== null) this.expires.set(name, until);
+      else if (attrs.length) this.expires.delete(name); // re-set as a session cookie
     }
   }
   absorb(res) {
@@ -129,7 +144,21 @@ class CookieJar {
   header() { return [...this.map].map(([k, v]) => `${k}=${v}`).join('; '); }
   // "name=value" lines — what portalSession stores and absorbLines() takes.
   lines() { return [...this.map].map(([k, v]) => `${k}=${v}`); }
-  clear() { this.map.clear(); }
+  // The cookies that mark THIS server as a trusted browser — the portal's
+  // "Trust this browser for 30 days" box. Persistent (an expiry in the
+  // future) and named for what they are. Returned with their Expires so a
+  // restore keeps the date. These must outlive the session they came with:
+  // dropping one means the next sign-in texts the account holder again.
+  trustLines() {
+    const out = [];
+    for (const [k, v] of this.map) {
+      const until = this.expires.get(k);
+      if (!until || until <= Date.now() || !TRUST_COOKIE_RE.test(k)) continue;
+      out.push(`${k}=${v}; Expires=${new Date(until).toUTCString()}`);
+    }
+    return out;
+  }
+  clear() { this.map.clear(); this.expires.clear(); }
   get size() { return this.map.size; }
 }
 
@@ -192,7 +221,13 @@ function csrfFrom(html) {
 //     (TLC_MFA_FIELD pins the name if a portal ever names it something
 //     unrecognisable), and
 //   - its hidden inputs (Yii's _csrf among them) are carried along verbatim,
-//     because reposting the form is exactly what a browser would do.
+//     because reposting the form is exactly what a browser would do, and
+//   - a "trust this browser" / "remember me" option is switched ON, and when
+//     the form has several named submit buttons the verify one is pressed.
+//     AHGfamily's form needs both: trust_device=1 (a checkbox widget backed
+//     by a plain text input) earns a 30-day trusted_device cookie, and
+//     sms_action=verify tells it apart from sms_action=resend. Without the
+//     trust option every later sign-in texts the account holder again.
 // Everything else on the page is ignored.
 
 // Minimal tag scanners — the file already parses HTML with regexes rather
@@ -220,6 +255,41 @@ function inputsIn(body) {
     out.push({ name, type: (attrOf(m[1], 'type') || 'text').toLowerCase(), value: attrOf(m[1], 'value') || '' });
   }
   return out;
+}
+// Named submit controls: <button name=… value=…>label</button> (type defaults
+// to submit) and <input type="submit|image" name=… value=…>.
+function submitsIn(body) {
+  const out = [];
+  const re = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
+  let m;
+  while ((m = re.exec(body))) {
+    const type = (attrOf(m[1], 'type') || 'submit').toLowerCase();
+    const name = attrOf(m[1], 'name');
+    if (type !== 'submit' || !name) continue;
+    const label = decodeHtml(m[2].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    out.push({ name, value: attrOf(m[1], 'value') || '', label });
+  }
+  for (const i of body.match(/<input\b[^>]*>/gi) || []) {
+    const type = (attrOf(i, 'type') || '').toLowerCase();
+    const name = attrOf(i, 'name');
+    if ((type === 'submit' || type === 'image') && name) out.push({ name, value: attrOf(i, 'value') || '', label: attrOf(i, 'value') || '' });
+  }
+  return out;
+}
+
+const TRUST_FIELD_RE = /trust|remember/i;
+const VERIFY_BUTTON_RE = /verify|confirm|continue|submit|sign.?in|log.?in/i;
+const NOT_VERIFY_RE = /resend|send.*(new|again|another)|new code|back|cancel/i;
+
+// The button a person would press to send the code: the one that reads as
+// verify/continue, never resend/back. null when the form has no named
+// submit (then nothing extra is posted, as a browser would do).
+function pickSubmit(body) {
+  const named = submitsIn(body);
+  const looks = (b) => `${b.value} ${b.label}`;
+  return named.find((b) => VERIFY_BUTTON_RE.test(looks(b)) && !NOT_VERIFY_RE.test(looks(b)))
+    || named.find((b) => !NOT_VERIFY_RE.test(looks(b)))
+    || null;
 }
 
 // Names seen or plausible for a one-time-code input across this platform and
@@ -260,18 +330,44 @@ function parseChallenge(html, atPath, cfg = {}) {
     if (!field) continue;
     const hidden = {};
     for (const i of ins) if (i.type === 'hidden') hidden[i.name] = i.value;
+    // "Trust this browser" / "remember me": on. A checkbox posts its own
+    // value (browsers default it to "on"); any other control posts "1".
+    const options = {};
+    for (const i of ins) {
+      if (i === field || i.type === 'hidden' || i.type === 'password' || !TRUST_FIELD_RE.test(i.name)) continue;
+      if (i.type === 'radio') continue; // no way to know which choice is "yes"
+      options[i.name] = i.type === 'checkbox' ? (i.value || 'on') : '1';
+    }
     const action = cfg.mfaPath || attrOf(f.attrs, 'action') || atPath || '';
     return {
       action,
       method: (attrOf(f.attrs, 'method') || 'POST').toUpperCase(),
       field: field.name,
       hidden,
+      options,
+      submit: pickSubmit(f.body),
       csrf: hidden._csrf || csrfFrom(page) || null,
       prompt: challengePrompt(page),
     };
   }
   return null;
 }
+
+// The other second-factor screen: "Security setup required — your role
+// requires Multi-Factor Authentication". AHGfamily (2026-10) answers a good
+// password for a NOT-YET-ENROLLED account by redirecting every page, the
+// export included, to /user/mfa-setup — a consent checkbox and AJAX buttons,
+// no form at all. It looks signed in (no password field), so without this
+// check the stored jar would be treated as live and the export would fail
+// on an HTML page. Enrollment means agreeing to SMS terms and choosing a
+// phone: a person does that in a browser, never this script.
+function isEnrollmentGate(html, url) {
+  if (/\bid=["']mfa-is-gated["']/i.test(String(html || ''))) return true;
+  try { return /\/(mfa|2fa|two-?factor)[-_]?setup\b/i.test(new URL(url).pathname); } catch { return false; }
+}
+const failEnrollmentGate = () => fail(8,
+  'The portal account must turn on two-step sign-in (text-message codes) before the app can use it. ' +
+  'Sign in to the portal in a browser with this account, finish the security setup, then press Connect here.');
 
 // ------------------------------------------------------- session storage ---
 // lib/portalSession keeps the signed-in cookie jar (and any parked code
@@ -310,6 +406,7 @@ async function probeSession(cfg, jar) {
   const html = await res.text();
   if (/LoginForm\[password\]/.test(html)) return null;    // bounced to the form
   if (parseChallenge(html, at, cfg)) return null;          // half-authenticated
+  if (isEnrollmentGate(html, res.url)) return null;        // signed in but fenced off
   return csrfFrom(html);
 }
 
@@ -332,6 +429,13 @@ async function login(cfg, jar, opts = {}) {
   }
 
   if (!cfg.email || !cfg.password) fail(1, 'TLC_EMAIL / TLC_PASSWORD not set.');
+
+  // …except the trusted-device cookie, which is what lets the portal skip
+  // the texted code on this sign-in. It is kept apart from the session
+  // (portalSession.loadTrust) precisely so a dead session does not take it
+  // with it, and it is only offered back for the same account.
+  const trust = tryStore((s) => s.loadTrust(cfg.base, cfg.email));
+  if (trust) jar.absorbLines(trust);
 
   const page = await request(cfg, jar, cfg.loginPath);
   const html = await page.text();
@@ -377,10 +481,12 @@ async function login(cfg, jar, opts = {}) {
   if (/LoginForm\[password\]/.test(after)) {
     fail(2, 'Login rejected. Check credentials — do NOT retry in a loop, TLC may lock the account.');
   }
+  if (isEnrollmentGate(after, res.url)) failEnrollmentGate();
   // A password-only sign-in still produces a session worth keeping: the next
   // run skips the round trip, and on a portal WITH a second factor this is
   // the line that makes "enter the code once" mean once.
   tryStore((s) => s.saveCookies(jar, cfg.base));
+  tryStore((s) => s.saveTrust(jar, cfg.base, cfg.email)); // the portal may have renewed it
   // fresh token from the signed-in page for the XHR polling step
   return csrfFrom(after) || token;
 }
@@ -393,9 +499,13 @@ async function submitChallenge(cfg, jar, challenge, code) {
   const value = String(code || '').trim();
   if (!value) fail(7, 'Enter the code the portal sent.');
 
+  // Field order mirrors the form a browser would send. options/submit are
+  // absent on a challenge parked by an older release — then just the code.
   const fields = { ...(challenge.hidden || {}) };
   if (challenge.csrf && !fields._csrf) fields._csrf = challenge.csrf;
   fields[challenge.field] = value;
+  Object.assign(fields, challenge.options || {});
+  if (challenge.submit && challenge.submit.name) fields[challenge.submit.name] = challenge.submit.value;
 
   const action = challenge.action || cfg.loginPath;
   const res = await request(cfg, jar, action, {
@@ -423,7 +533,9 @@ async function submitChallenge(cfg, jar, challenge, code) {
   if (/LoginForm\[password\]/.test(html)) {
     fail(2, 'The portal sent us back to the sign-in form — start the sign-in again.');
   }
+  if (isEnrollmentGate(html, res.url)) failEnrollmentGate();
   tryStore((s) => s.saveCookies(jar, cfg.base));
+  tryStore((s) => s.saveTrust(jar, cfg.base, cfg.email));
   tryStore((s) => s.clearChallenge());
   return csrfFrom(html);
 }
@@ -597,7 +709,8 @@ async function runFetch(env = process.env) {
 // ------------------------------------------------------------------- CLI ---
 module.exports = {
   FetchError, makeConfig, CookieJar, request, csrfFrom, decodeHtml,
-  attrOf, formsIn, inputsIn, parseChallenge, challengePrompt, configWithSavedCredentials,
+  attrOf, formsIn, inputsIn, submitsIn, pickSubmit, parseChallenge, challengePrompt,
+  isEnrollmentGate, configWithSavedCredentials,
   probeSession, submitChallenge,
   login, pollUntilReady, fetchExport, detectFormat, sanityCheck,
   readState, writeState, pruneOldExports, localStamp, runFetch,
