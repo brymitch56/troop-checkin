@@ -124,6 +124,41 @@ Notes that matter:
   standing there with a phone. The admin panel shows "signed in <when>, last
   used <when>", which is the measurement.
 
+### Trusted browser and the enrollment fence (added 2026-10-05, tc-v80)
+
+The sibling portal (AHGfamily) rolled out mandatory text-message MFA with two
+differences from the flow above, both now handled by the same code:
+
+- **A code only from untrusted browsers.** After a good password it redirects
+  to a real form (`/site/sms-verify`: `_csrf`, `code`, a "Trust this browser
+  for 30 days" checkbox backed by a *text* input named `trust_device`, and two
+  submit buttons sharing `sms_action` = `verify` / `resend`). A verified
+  sign-in with trust on sets a persistent `trusted_device` cookie (30 days,
+  Secure, HttpOnly) and **deletes** the remember-me identity cookie, so the
+  session itself is short-lived while the trust is long-lived.
+  - `parseChallenge()` now also returns `options` (any trust/remember control,
+    switched on) and `submit` (the named verify button, never resend), and
+    `submitChallenge()` posts both. A challenge parked by an older release
+    lacks them and still posts just the code.
+  - `CookieJar` remembers each cookie's expiry; `trustLines()` returns the
+    persistent cookies named like trust/device. `portalSession.saveTrust()`
+    stores them **apart from the session** (meta `portal_trust`, encrypted,
+    bound to portal *and* account email) so a dead session cannot drag the
+    trust out with it. Every password sign-in loads them back first, so
+    re-logins inside the 30 days need no code; Disconnect forgets the trust
+    too. `sessionInfo().trusted_until` reports the expiry (no cookie values).
+- **The enrollment fence.** An account that has not set up MFA yet still
+  signs in, but every page — the export included — redirects to
+  `/user/mfa-setup` (marker `#mfa-is-gated`; consent checkbox + AJAX
+  buttons, no form). It has no password field, so it used to read as
+  "signed in". `isEnrollmentGate()` now catches it: the probe treats it as
+  dead and a sign-in fails with **exit 8**, which the attendance sweep
+  latches like a rejected password. Enrolling means agreeing to SMS terms
+  and choosing a phone, so a person does it in a browser — never this code.
+
+Trail Life Connect is unaffected: it has no trust option and no named submit
+buttons, so `options` comes back empty and nothing extra is posted.
+
 ### Lending the session (added 2026-09-11, tc-v69)
 
 **One owner.** Every password sign-in texts a human a code, so a second

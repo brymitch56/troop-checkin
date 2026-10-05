@@ -365,6 +365,8 @@
   <ul>
     <li><b>Doing it:</b> Import tab → <b>Trail Life Connect sign-in</b> → <b>Connect</b>. Within a few seconds the panel turns orange and repeats what Trail Life Connect said (usually which phone it texted). Type the code, press <b>Submit code</b>, and the panel reads <b>Connected</b>. <b>Have your phone in hand before you press Connect</b> — the code is only good for a few minutes.</li>
     <li><b>After that, nothing asks you again.</b> The weekly roster fetch, <b>Sync now</b>, the attendance write-back and the permission-form sync all reuse that one session.</li>
+    <li><b>If the sign-in page offers "Trust this browser"</b>, the server ticks it for you. Until that trust runs out (30 days on portals that offer it), the server can sign itself back in without texting you, even after the session itself ends.</li>
+    <li><b>"must turn on two-step sign-in"</b> means the account the server uses hasn't finished the portal's security setup yet. Sign in to Trail Life Connect in a normal browser with that account, finish the text-message setup there, then press <b>Connect</b> here.</li>
     <li><b>When it eventually expires</b> (Trail Life Connect decides when — it may be weeks), the panel says <b>Not connected</b>, the sync status line reads "stopped for a sign-in code", and the write-back pauses. Nothing retries on its own, on purpose: every attempt would text you again and repeated failures can lock the account. Press <b>Connect</b> and enter one code.</li>
     <li><b>Mistyped the code?</b> Just retype it — the same text message stays valid, and you won't be sent a new one.</li>
     <li><b>Disconnect</b> forgets the stored session (useful if you changed the Trail Life Connect password). The next sync will ask for a code.</li>

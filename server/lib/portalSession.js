@@ -42,6 +42,7 @@ const credCrypto = require('./credCrypto');
 
 const SESSION_KEY = 'portal_session';
 const CHALLENGE_KEY = 'portal_challenge';
+const TRUST_KEY = 'portal_trust';
 const CHALLENGE_TTL_MS = 15 * 60 * 1000;
 
 // ------------------------------------------------------------- meta i/o ---
@@ -119,12 +120,56 @@ function touch() {
   return now;
 }
 
-const clearSession = () => ({ cleared: dropMeta(SESSION_KEY) });
+// Disconnect forgets everything, the browser trust included: the next
+// Connect will ask for a code, which is what "forget" should mean.
+const clearSession = () => {
+  const trust = dropMeta(TRUST_KEY);
+  return { cleared: dropMeta(SESSION_KEY) || trust };
+};
+
+// ------------------------------------------------------- trusted browser --
+// A portal's "Trust this browser for 30 days" cookie (AHGfamily:
+// trusted_device). It lets a password sign-in skip the texted code, and it
+// outlives the session cookies by weeks — so it is stored on its own, where
+// an expired session cannot drag it out with it. Bound to the account email
+// as well as the portal, so changing the saved credentials never presents
+// one person's trust token while signing in as another.
+const normEmail = (e) => String(e || '').trim().toLowerCase();
+
+function saveTrust(jar, base, email) {
+  const lines = typeof jar.trustLines === 'function' ? jar.trustLines() : [];
+  if (!lines.length) return null;
+  const until = Math.max(...lines.map((l) => Date.parse((/;\s*Expires=([^;]+)/i.exec(l) || [])[1]) || 0));
+  try {
+    writeMeta(TRUST_KEY, {
+      base, saved_at: new Date().toISOString(),
+      expires_at: until ? new Date(until).toISOString() : null,
+      box: seal({ lines, email: normEmail(email) }),
+    });
+  } catch (e) {
+    console.error('[portalSession] could not store the trusted-browser cookie:', e.message);
+    return null;
+  }
+  return until ? new Date(until).toISOString() : null;
+}
+
+// Set-Cookie-style lines (with Expires) for this portal + account, or null.
+function loadTrust(base, email) {
+  const t = readMeta(TRUST_KEY);
+  if (!t || (base && t.base && t.base !== base)) return null;
+  if (t.expires_at && Date.parse(t.expires_at) <= Date.now()) { dropMeta(TRUST_KEY); return null; }
+  const payload = unseal(t.box);
+  if (!payload || !Array.isArray(payload.lines) || !payload.lines.length) return null;
+  if (payload.email !== normEmail(email)) return null;
+  return payload.lines;
+}
 
 // Never includes cookies — this is what the admin page renders.
 function sessionInfo() {
+  const t = readMeta(TRUST_KEY);
+  const trusted_until = t && t.expires_at && Date.parse(t.expires_at) > Date.now() ? t.expires_at : null;
   const s = readMeta(SESSION_KEY);
-  if (!s) return { connected: false, base: null, connected_at: null, saved_at: null, last_ok_at: null, readable: false };
+  if (!s) return { connected: false, base: null, connected_at: null, saved_at: null, last_ok_at: null, readable: false, trusted_until };
   const readable = !!unseal(s.box);
   return {
     connected: readable, readable,
@@ -132,6 +177,7 @@ function sessionInfo() {
     connected_at: s.connected_at || s.saved_at || null,
     saved_at: s.saved_at || null,
     last_ok_at: s.last_ok_at || null,
+    trusted_until,
   };
 }
 
@@ -178,6 +224,6 @@ const clearChallenge = () => ({ cleared: dropMeta(CHALLENGE_KEY) });
 
 module.exports = {
   CHALLENGE_TTL_MS,
-  saveCookies, loadCookies, touch, clearSession, sessionInfo,
+  saveCookies, loadCookies, touch, clearSession, sessionInfo, saveTrust, loadTrust,
   putChallenge, getChallenge, challengeInfo, clearChallenge,
 };
