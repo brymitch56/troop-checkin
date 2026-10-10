@@ -25,6 +25,8 @@ const state = {
   patrol: null,          // on-site view filters (default to the station scope)
   level: null,
   who: null,             // on-site youth/adult filter: null | 'youth' | 'adult'
+  onsiteEvent: null,     // on-site event filter {id, title} — required to text when 2+ events are on site
+  onsiteEventCount: 0,   // how many events have people on site (last render, before the event filter)
   station: localStorage.getItem('station-patrol') || null,     // per-device patrol scope
   stationLevel: localStorage.getItem('station-level') || null, // per-device level scope
 };
@@ -1031,6 +1033,7 @@ const onsiteQuery = (patrol, level) => {
 // Human wording for the active on-site filters — used wherever a broadcast
 // asks the leader to confirm who it will reach.
 const scopeLabel = () => [
+  state.onsiteEvent ? state.onsiteEvent.title : null,
   state.patrol ? `patrol ${state.patrol}` : null,
   state.level ? `level ${state.level}` : null,
 ].filter(Boolean).join(' + ');
@@ -1078,8 +1081,16 @@ function renderNotifyResults(r) {
 // text. So the confirmation is a real dialog that says "pickup reminder",
 // shows the exact wording and reach (a dry run — nothing sent), and points
 // at ✉️ Message for anything else.
+// With concurrent events, a broadcast must name ONE event (the server refuses
+// otherwise — it would text both events' families). Say so before asking.
+const needsEventPick = () => state.onsiteEventCount > 1 && !state.onsiteEvent;
+const PICK_EVENT_MSG = 'More than one event has people on site — pick an event in the Event filter first, so only that event\'s families are texted.';
 $('onsite-notify').onclick = async () => {
-  const scope = { patrol: state.patrol || undefined, level: state.level || undefined };
+  if (needsEventPick()) return toast(PICK_EVENT_MSG, true);
+  const scope = {
+    patrol: state.patrol || undefined, level: state.level || undefined,
+    event_id: state.onsiteEvent ? state.onsiteEvent.id : undefined,
+  };
   let p;
   try { p = await jpost('/notify-onsite/preview', scope); }
   catch (e) { return toast(e.message, true); }
@@ -1152,11 +1163,20 @@ $('onsite-message').onclick = () => {
   $('msg-text').value = '';
   $('msg-error').textContent = '';
   $('msg-scope-onsite').checked = true;
+  // "Still on site" can't go out across concurrent events without a pick;
+  // "Everyone who attended" is already one event (the kiosk's selected one)
+  $('msg-scope-onsite').disabled = needsEventPick();
+  if (needsEventPick()) {
+    $('msg-scope-onsite').checked = false;
+    $('msg-scope-attended').checked = !!state.event;
+  }
   $('msg-scope-attended').disabled = !state.event;
   $('msg-scope-attended-label').textContent = state.event
     ? `Everyone who attended: ${state.event.title}`
     : 'Everyone who attended (pick an event first)';
-  $('msg-scope').textContent = scopeLabel() ? `Limited to ${scopeLabel()}.` : '';
+  $('msg-scope').textContent = needsEventPick()
+    ? '"Still on site" needs one event — more than one has people on site. Pick it in the Event filter, or message everyone who attended the selected event.'
+    : (scopeLabel() ? `Limited to ${scopeLabel()}.` : '');
   // adults option only where it can apply: an adult-tracked selected event
   // (off by default every time — including adults is an explicit choice)
   $('msg-adults').checked = false;
@@ -1172,13 +1192,17 @@ $('msg-send').onclick = async () => {
   const message = $('msg-text').value.trim();
   if (!message) return ($('msg-error').textContent = 'Type the message first.');
   const attended = $('msg-scope-attended').checked;
+  if (!attended && !$('msg-scope-onsite').checked) return ($('msg-error').textContent = 'Choose who to message.');
+  if (!attended && needsEventPick()) return ($('msg-error').textContent = PICK_EVENT_MSG);
   try {
     renderNotifyResults(await jpost('/message-onsite', {
       message,
       patrol: state.patrol || undefined,
       level: state.level || undefined,
       scope: attended ? 'attended' : 'onsite',
-      event_id: attended && state.event ? state.event.id : undefined,
+      // attended: the kiosk's selected event; on site: the Event filter's
+      event_id: attended ? (state.event ? state.event.id : undefined)
+        : (state.onsiteEvent ? state.onsiteEvent.id : undefined),
       include_adults: !$('msg-adults-wrap').hidden && $('msg-adults').checked ? 1 : undefined,
       recipients: $('msg-recip-all').checked ? 'all' : 'primary',
     }));
@@ -1228,6 +1252,30 @@ function onsiteComparator(key) {
 $('onsite-patrol').onchange = (e) => { state.patrol = e.target.value || null; renderOnsite(); };
 $('onsite-level').onchange = (e) => { state.level = e.target.value || null; renderOnsite(); };
 $('onsite-who').onchange = (e) => { state.who = e.target.value || null; renderOnsite(); };
+$('onsite-event').onchange = (e) => {
+  const opt = e.target.selectedOptions[0];
+  state.onsiteEvent = e.target.value ? { id: Number(e.target.value), title: opt ? opt.textContent : '' } : null;
+  renderOnsite();
+};
+
+// The Event filter appears only while 2+ events have people on site (or one
+// is still picked). Built from the rows themselves, so it works offline.
+function fillOnsiteEvents(all) {
+  const events = new Map();
+  for (const r of all) if (!events.has(r.event_id)) events.set(r.event_id, r.event_title);
+  state.onsiteEventCount = events.size;
+  // a picked event that has emptied out is dropped (unless it is the only one left)
+  if (state.onsiteEvent && !events.has(state.onsiteEvent.id)) state.onsiteEvent = null;
+  if (events.size <= 1) state.onsiteEvent = null; // one event: nothing to choose
+  const sel = $('onsite-event');
+  sel.textContent = '';
+  const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
+  add('', 'All events');
+  for (const [id, title] of events) add(String(id), title);
+  sel.value = state.onsiteEvent ? String(state.onsiteEvent.id) : '';
+  sel.classList.toggle('active', !!state.onsiteEvent);
+  $('onsite-event-wrap').hidden = events.size <= 1;
+}
 
 // Youth/adult split, client-side so it works offline too. "N · 18 youth,
 // 5 adults" wording is shared by the summary line and each event heading.
@@ -1272,7 +1320,10 @@ async function renderOnsite() {
       offlineData = true; // network down/slow: snapshot + queued (field lesson, 2026-08)
       return onsiteRowsOffline();
     });
-  const rows = all.filter(matchesWho);
+  fillOnsiteEvents(all);
+  // event scope first (it is what a broadcast reaches), then the Who view
+  const scoped = state.onsiteEvent ? all.filter((r) => r.event_id === state.onsiteEvent.id) : all;
+  const rows = scoped.filter(matchesWho);
   const { patrols, levels } = await rosterFacets();
   fillFilterSelect($('onsite-patrol'), patrols, state.patrol, 'All patrols');
   fillFilterSelect($('onsite-level'), levels, state.level, 'All levels');
@@ -1294,11 +1345,11 @@ async function renderOnsite() {
       : `<p class="hint">${state.who ? `No ${state.who === 'youth' ? 'youth' : 'adults'} signed in right now.` : 'Nobody is signed in right now.'}</p>`;
     return;
   }
-  // The whole-list split, always for EVERYONE matching patrol/level (not just
-  // the Who filter) — the at-a-glance "how many of each are here" answer.
+  // The split for EVERYONE in scope (event + patrol/level — not narrowed by
+  // the Who filter): the at-a-glance "how many of each are here" answer.
   const summary = document.createElement('p');
   summary.className = 'onsite-summary';
-  summary.textContent = `On site: ${all.length} — ${splitLabel(all)}` +
+  summary.textContent = `On site${state.onsiteEvent ? ` at ${state.onsiteEvent.title}` : ''}: ${scoped.length} — ${splitLabel(scoped)}` +
     (state.who ? ` · showing ${state.who === 'youth' ? 'youth' : 'adults'} only` : '');
   wrap.appendChild(summary);
   const byEvent = new Map();
