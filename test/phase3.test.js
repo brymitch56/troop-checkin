@@ -573,3 +573,78 @@ test("webhook: an adult's STOP/START also flips their own consent (form-gated)",
   await twilioPost('/api/sms/inbound', { From: '5550103', Body: 'START' });
   assert.equal(db.prepare('SELECT sms_opt_in FROM person WHERE id = ?').get(carol.id).sms_opt_in, 'unknown');
 });
+
+// Concurrent events (2026-10-10): the on-site broadcasts used to filter only
+// by patrol/level, so with two events running a Pickup reminder texted BOTH
+// events' families — and its wording says "<event> ended", wrong for the one
+// still running. Now an event must be named once youth span two events.
+test('concurrent events: on-site broadcasts refuse without an event, and reach only the named one', async () => {
+  const danny = person('Danny'), emma = person('Emma'), frank = person('Frank'), alice = person('Alice');
+  const mkEvent = (title, adults = 0) => Number(db.prepare(
+    `INSERT INTO event (source, title, start_at, end_at, track_adults)
+     VALUES ('manual', ?, datetime('now','-2 hours'), datetime('now','+1 hour'), ?)`).run(title, adults).lastInsertRowid);
+  const campout = mkEvent('Concurrent Campout', 1);
+  const meeting = mkEvent('Concurrent Meeting', 1);
+  const txnIds = [];
+  const signIn = (pid, evId) => {
+    const t = Number(db.prepare(
+      `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id)
+       VALUES (?, ?, 'in', datetime('now'), 1)`).run(uuid(), evId).lastInsertRowid);
+    db.prepare('INSERT INTO txn_person (txn_id, person_id, open) VALUES (?, ?, 1)').run(t, pid);
+    txnIds.push(t);
+  };
+  signIn(emma.id, campout); signIn(frank.id, campout);
+  signIn(danny.id, meeting); signIn(alice.id, meeting); // an adult at the OTHER event
+  try {
+    // no event named → refused, with the events listed; nothing sent or recorded
+    const sentBefore = db.prepare('SELECT COUNT(*) c FROM sms_message').get().c;
+    for (const [path, body] of [
+      ['/api/notify-onsite/preview', {}],
+      ['/api/notify-onsite', {}],
+      ['/api/message-onsite', { message: 'Running late.' }],
+    ]) {
+      const r = await req('POST', path, { cookie: doorCookie, body });
+      assert.equal(r.status, 409, `${path} must refuse across events`);
+      assert.match(r.json.error, /pick one event/);
+      assert.deepEqual(r.json.events.map((e) => e.title).sort(), ['Concurrent Campout', 'Concurrent Meeting']);
+    }
+    assert.equal(db.prepare('SELECT COUNT(*) c FROM sms_message').get().c, sentBefore, 'nothing was sent');
+
+    // the campout named → only its youth, and the wording names the campout
+    const pv = await req('POST', '/api/notify-onsite/preview', { cookie: doorCookie, body: { event_id: campout } });
+    assert.equal(pv.status, 200);
+    assert.equal(pv.json.onsite_youth, 2, 'Emma + Frank, not Danny');
+    assert.match(pv.json.sample, /"Concurrent Campout" ended/);
+    const r = await req('POST', '/api/notify-onsite', { cookie: doorCookie, body: { event_id: campout } });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.onsite_youth, 2);
+    assert.ok(![...r.json.sent, ...r.json.skipped].some((x) => (x.youth || '').includes('Dan') || (x.youths || []).some((n) => n.includes('Dan'))),
+      'the meeting\'s youth is not in the campout reminder');
+    assert.equal(db.prepare(`SELECT COUNT(*) c FROM notification WHERE person_id = ? AND event_id = ?`).get(danny.id, meeting).c, 0);
+
+    // a "still on site" message to the campout, adults included: the meeting's adult is NOT texted
+    const aliceBefore = db.prepare(`SELECT COUNT(*) c FROM sms_message WHERE guardian_id = ? AND direction = 'out'`).get(alice.id).c;
+    const m = await req('POST', '/api/message-onsite', {
+      cookie: doorCookie, body: { message: 'Campout pickup at 6.', event_id: campout, include_adults: 1 },
+    });
+    assert.equal(m.status, 200);
+    assert.equal(m.json.youth, 2);
+    // not merely unsent (an earlier test left her opted out) — not even considered
+    assert.ok(![...m.json.sent, ...m.json.skipped].some((x) => (x.adult || '').includes('Alice')),
+      'an adult at the other event is not part of the campout broadcast at all');
+    assert.equal(db.prepare(`SELECT COUNT(*) c FROM sms_message WHERE guardian_id = ? AND direction = 'out'`).get(alice.id).c, aliceBefore);
+
+    // a patrol/level filter that leaves youth from only ONE event needs no pick
+    // (the reach is unambiguous): narrow to one youth's patrol
+    const only = db.prepare('SELECT patrol FROM person WHERE id = ?').get(danny.id).patrol;
+    const others = [emma, frank].map((p) => db.prepare('SELECT patrol FROM person WHERE id = ?').get(p.id).patrol);
+    if (only && !others.includes(only)) {
+      const pv2 = await req('POST', '/api/notify-onsite/preview', { cookie: doorCookie, body: { patrol: only } });
+      assert.equal(pv2.status, 200);
+      assert.equal(pv2.json.onsite_youth, 1);
+    }
+  } finally {
+    // leave nobody on site for later tests
+    for (const t of txnIds) db.prepare('UPDATE txn_person SET open = 0 WHERE txn_id = ?').run(t);
+  }
+});

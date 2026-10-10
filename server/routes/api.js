@@ -585,7 +585,9 @@ router.get('/onsite', (req, res) => {
 // Broadcast scope MUST match what the leader is looking at on the on-site
 // screen: both filters apply, or a level-filtered view would text families
 // the leader never saw.
-const onsiteYouthRows = (patrol, level) => db.prepare(
+// eventId narrows to one event — REQUIRED once youth from two or more events
+// are on site (concurrent events): see onsiteScope below.
+const onsiteYouthRows = (patrol, level, eventId = null) => db.prepare(
   `SELECT p.id AS person_id, p.first_name, p.last_name, p.nickname,
           e.id AS event_id, e.title
      FROM txn_person tp
@@ -594,8 +596,38 @@ const onsiteYouthRows = (patrol, level) => db.prepare(
      JOIN event e ON e.id = t.event_id
     WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL AND p.is_youth = 1
       AND (? IS NULL OR p.patrol = ?)
-      AND (? IS NULL OR p.level = ?)`
-).all(patrol, patrol, level, level);
+      AND (? IS NULL OR p.level = ?)
+      AND (? IS NULL OR e.id = ?)`
+).all(patrol, patrol, level, level, eventId, eventId);
+
+// Scope of an on-site broadcast (Pickup reminder, "still on site" message).
+// With two events running at once, a broadcast without an event would text
+// the families of BOTH — and the pickup reminder says "<event> ended", so the
+// still-running event's families would be told their event is over. So when
+// the targeted youth span more than one event, an event must be named.
+// Returns { rows, eventId } or { error, events } (HTTP 409 for the kiosk).
+function onsiteScope(body) {
+  const b = body || {};
+  const patrol = b.patrol ? String(b.patrol) : null;
+  const level = b.level ? String(b.level) : null;
+  const eventId = b.event_id != null && b.event_id !== '' ? Number(b.event_id) : null;
+  const rows = onsiteYouthRows(patrol, level, eventId);
+  if (eventId == null) {
+    const byEvent = new Map();
+    for (const r of rows) {
+      const e = byEvent.get(r.event_id) || { id: r.event_id, title: r.title, youth: 0 };
+      e.youth += 1;
+      byEvent.set(r.event_id, e);
+    }
+    if (byEvent.size > 1) {
+      return {
+        error: `Youth from ${byEvent.size} events are on site — pick one event in the On-site Event filter first, so only that event's families are texted.`,
+        events: [...byEvent.values()],
+      };
+    }
+  }
+  return { rows, eventId };
+}
 
 router.post('/notify-onsite', express.json(), async (req, res) => {
   const sms = require('../lib/sms');
@@ -603,11 +635,10 @@ router.post('/notify-onsite', express.json(), async (req, res) => {
   if (!sms.configured()) {
     return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
   }
-  const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
-  const level = req.body && req.body.level ? String(req.body.level) : null;
-  const rows = onsiteYouthRows(patrol, level);
-  const r = await notifyLingering(rows);
-  res.json({ onsite_youth: rows.length, sent: r.sent, skipped: r.skipped });
+  const scope = onsiteScope(req.body);
+  if (scope.error) return res.status(409).json({ error: scope.error, events: scope.events });
+  const r = await notifyLingering(scope.rows);
+  res.json({ onsite_youth: scope.rows.length, sent: r.sent, skipped: r.skipped });
 });
 
 // Dry run of /notify-onsite for the kiosk confirmation dialog: how many
@@ -617,10 +648,9 @@ router.post('/notify-onsite/preview', express.json(), (req, res) => {
   if (!sms.configured()) {
     return res.status(503).json({ error: 'SMS is not set up yet — contact families directly.' });
   }
-  const patrol = req.body && req.body.patrol ? String(req.body.patrol) : null;
-  const level = req.body && req.body.level ? String(req.body.level) : null;
-  const rows = onsiteYouthRows(patrol, level);
-  res.json({ onsite_youth: rows.length, ...require('../lib/notifySweep').previewLingering(rows) });
+  const scope = onsiteScope(req.body);
+  if (scope.error) return res.status(409).json({ error: scope.error, events: scope.events });
+  res.json({ onsite_youth: scope.rows.length, ...require('../lib/notifySweep').previewLingering(scope.rows) });
 });
 
 // Guardian text replies for door staff (lib/replyAlerts). Kiosks poll the
@@ -652,6 +682,7 @@ router.post('/message-onsite', express.json(), async (req, res) => {
   const patrol = b.patrol ? String(b.patrol) : null;
   const level = b.level ? String(b.level) : null;
   let rows;
+  let onsiteEvent = null; // the one event an on-site broadcast is scoped to
   if (b.scope === 'attended') {
     if (!b.event_id) return res.status(400).json({ error: 'Pick an event for an all-attendees message.' });
     rows = db.prepare(
@@ -666,7 +697,10 @@ router.post('/message-onsite', express.json(), async (req, res) => {
           AND (? IS NULL OR p.level = ?)`
     ).all(b.event_id, patrol, patrol, level, level);
   } else {
-    rows = onsiteYouthRows(patrol, level);
+    const scope = onsiteScope(b);
+    if (scope.error) return res.status(409).json({ error: scope.error, events: scope.events });
+    rows = scope.rows;
+    onsiteEvent = scope.eventId ?? (rows[0] ? rows[0].event_id : null);
   }
   // per-broadcast recipient choice (primary guardian only / all opted-in
   // guardians); omitted = the global setting
@@ -699,8 +733,9 @@ router.post('/message-onsite', express.json(), async (req, res) => {
            JOIN person p ON p.id = tp.person_id
            JOIN event e ON e.id = t.event_id
           WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
-            AND p.is_youth = 0 AND e.track_adults = 1`
-      ).all().map((x) => x.id);
+            AND p.is_youth = 0 AND e.track_adults = 1
+            AND (? IS NULL OR e.id = ?)`
+      ).all(onsiteEvent, onsiteEvent).map((x) => x.id); // the same single event as the youth
     }
     adults = await messageAdults(adultIds, message);
   }
