@@ -153,18 +153,54 @@ function suggestLinks(people) {
  * file row to the wrong person is far worse than creating a duplicate, so
  * every tier that cannot be sure declines and lets the next one try.
  */
+// The portal's member export shows an adult's member number only while their
+// registration is current (fee paid, training and background check valid).
+// So the SAME adult crosses the registered/unregistered line both ways:
+//   - lapsed: the row arrives with NO number for a person we hold WITH one —
+//     which used to read as "1 added, 1 deactivated", then a duplicate to merge;
+//   - newly registered: the row arrives with a number we've never seen for a
+//     person we hold without one — another duplicate.
+// The bridge: among the adults using this e-mail, exactly ONE has this exact
+// first AND last name. The exact first name is what keeps a spouse on a
+// shared family address apart — both may use it, only one is "Ira Vale". A
+// lapsed adult keeps the member number we hold (UPDATABLE never touches
+// member_id); a new registrant gains theirs (diffFields).
+const adultsByEmail = (email) => db.prepare(
+  `SELECT * FROM person
+    WHERE is_youth = 0 AND status != 'merged' AND email IS NOT NULL AND lower(email) = ?`
+).all(email);
+
+function sameAdultByEmail(p, { registered }) {
+  const email = lower(p.email);
+  if (!email) return null;
+  const named = adultsByEmail(email).filter((r) =>
+    lower(r.first_name) === lower(p.first_name) && lower(r.last_name) === lower(p.last_name));
+  if (named.length !== 1) return null;
+  const r = named[0];
+  if (registered ? !r.member_id : r.member_id) return null;
+  return r;
+}
+
 function findExisting(p) {
   if (p.member_id) {
-    return db.prepare('SELECT * FROM person WHERE member_id = ?').get(p.member_id) || null;
+    const byId = db.prepare('SELECT * FROM person WHERE member_id = ?').get(p.member_id);
+    if (byId) return byId;
+    // a number we've never seen: an adult we may hold as unregistered
+    return p.is_youth ? null : sameAdultByEmail(p, { registered: false });
+  }
+  // no number: a registered adult whose registration lapsed?
+  if (!p.is_youth) {
+    const lapsed = sameAdultByEmail(p, { registered: true });
+    if (lapsed) return lapsed;
   }
   const email = lower(p.email);
   if (email) {
-    const byEmail = db.prepare(
-      `SELECT * FROM person
-        WHERE is_youth = 0 AND member_id IS NULL AND status != 'merged'
-          AND email IS NOT NULL AND lower(email) = ?`
-    ).all(email);
-    if (byEmail.length === 1 && lower(byEmail[0].last_name) === lower(p.last_name)) return byEmail[0];
+    // a renamed unregistered adult (Rob → Robert): surname-only, so the e-mail
+    // must belong to exactly ONE adult of ANY kind — a registered spouse on the
+    // same address (who may now arrive without a number, lapsed) makes it
+    // ambiguous, and it abstains rather than marry them up
+    const all = adultsByEmail(email);
+    if (all.length === 1 && !all[0].member_id && lower(all[0].last_name) === lower(p.last_name)) return all[0];
   }
   // unregistered adult: match by type + name among rows without a member number
   return db.prepare(
@@ -228,14 +264,19 @@ function diffFields(existing, p) {
     if (nv !== null && nv !== ov) changes[f] = nv; // never blank out data with empty cells
   }
   if (existing.status === 'inactive') changes.status = 'active'; // returning member
+  // a newly registered adult gains the number; a held number is never
+  // changed or blanked by a file (a lapsed row simply has none)
+  if (!existing.member_id && p.member_id) changes.member_id = p.member_id;
   return changes;
 }
 
 function computePreview(people) {
   const adds = [], updates = [], unchanged = [];
+  const matched = new Set(); // people this file describes — never deactivated by it
   for (const p of people) {
     const ex = findExisting(p);
     if (!ex) { adds.push(p); continue; }
+    matched.add(ex.id);
     const ch = diffFields(ex, p);
     (Object.keys(ch).length ? updates : unchanged).push({ p, ex, ch });
   }
@@ -251,7 +292,8 @@ function computePreview(people) {
   for (const c of candidates) {
     if (c.is_youth && !hasYouth) continue;
     if (!c.is_youth && !hasAdults) continue;
-    if (!fileMemberIds.has(c.member_id)) deactivate.push(c);
+    // a lapsed adult is in the file without their number — still here
+    if (!fileMemberIds.has(c.member_id) && !matched.has(c.id)) deactivate.push(c);
   }
   return { adds, updates, unchanged, deactivate, possibleDuplicates: possibleDuplicates(adds) };
 }

@@ -316,3 +316,66 @@ test('applyImport stamps who the file described, and leaves hand-added people NU
   assert.equal(still.last_seen_in_import, null,
     'an adult a leader added by hand is not in the export and must stay unstamped');
 });
+
+// ================== the registered / unregistered line (2026-10-11) ==========
+// The member export shows an adult's member number only while their
+// registration is current. A lapse (fee, training, background check) used to
+// read as "1 added, 1 deactivated" and then a duplicate to merge; a new
+// registration did the same in reverse. Invented people only.
+const mkRegistered = (num, first, last, email) => db.prepare(
+  `INSERT INTO person (is_youth, member_id, first_name, last_name, email, status)
+   VALUES (0, ?, ?, ?, ?, 'active') RETURNING *`).get(num, first, last, email);
+const adultRow = (over) => ({
+  is_youth: 0, member_id: null, first_name: '', last_name: '', nickname: null, role: 'Parent', patrol: null,
+  level: null, email: null, tlc_username: null, phone_mobile: null, phone_home: null, phone_work: null,
+  birthdate: null, membership_expires: null, health_form_date: null, high_risk_form_date: null, ...over,
+});
+
+test('findExisting: a lapsed registered adult (no number in the file) is still the same person', () => {
+  const held = mkRegistered('2021-900001', 'Lena', 'Quist', 'lena.quist@example.com');
+  const hit = roster.findExisting(adultRow({ first_name: 'Lena', last_name: 'Quist', email: 'LENA.QUIST@example.com' }));
+  assert.ok(hit, 'matched by the one adult using that e-mail, exact name');
+  assert.equal(hit.id, held.id);
+});
+
+test('findExisting: a lapse never crosses to a spouse on a shared address', () => {
+  const ira = mkRegistered('2021-900002', 'Ira', 'Vale', 'vale.family@example.com');
+  mkAdult('Ada', 'Vale', 'vale.family@example.com', '555-0701');
+  // Ira lapses. Both use the address; only one of them is "Ira Vale". (Before
+  // the fix the surname-only rename tier saw only Ada as unregistered on that
+  // address and matched Ira's row onto HER record.)
+  const hit = roster.findExisting(adultRow({ first_name: 'Ira', last_name: 'Vale', email: 'vale.family@example.com' }));
+  assert.equal(hit && hit.id, ira.id, 'Ira is Ira — never his spouse');
+  // a renamed Ada ("Adaline") on the shared address: ambiguous, abstains
+  assert.equal(roster.findExisting(adultRow({ first_name: 'Adaline', last_name: 'Vale', email: 'vale.family@example.com' })), null);
+  // and a different first name on a one-person address is never him either
+  mkRegistered('2021-900003', 'Bo', 'Trent', 'bo.trent@example.com');
+  assert.equal(roster.findExisting(adultRow({ first_name: 'Beth', last_name: 'Trent', email: 'bo.trent@example.com' })), null);
+});
+
+test('findExisting: a newly registered adult (a number we have never seen) is the unregistered person we hold', () => {
+  const held = mkAdult('Noor', 'Haddad', 'noor.haddad@example.com', '555-0801');
+  const hit = roster.findExisting(adultRow({ member_id: '2026-900004', first_name: 'Noor', last_name: 'Haddad', email: 'noor.haddad@example.com' }));
+  assert.equal(hit && hit.id, held.id);
+});
+
+test('applyImport: a lapse is one person — no add, no deactivation, number kept; a registration gains its number', () => {
+  const lapsed = mkRegistered('2022-900005', 'Theo', 'Marsh', 'theo.marsh@example.com');
+  const joining = mkAdult('June', 'Pell', 'june.pell@example.com', '555-0901');
+  const file = [
+    adultRow({ first_name: 'Theo', last_name: 'Marsh', email: 'theo.marsh@example.com', membership_expires: '2026-09-30' }),
+    adultRow({ member_id: '2026-900006', first_name: 'June', last_name: 'Pell', email: 'june.pell@example.com' }),
+  ];
+  const prev = roster.computePreview(file);
+  assert.equal(prev.adds.length, 0, 'nobody new');
+  assert.ok(!prev.deactivate.some((d) => d.id === lapsed.id), 'the lapsed adult is in the file — not deactivated');
+  roster.applyImport(file, [], null, 'lapse.xlsx', null);
+  const t = db.prepare('SELECT * FROM person WHERE id = ?').get(lapsed.id);
+  assert.equal(t.status, 'active');
+  assert.equal(t.member_id, '2022-900005', 'the held number is kept');
+  assert.equal(t.membership_expires, '2026-09-30', 'and the lapse is visible');
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM person WHERE lower(email) = 'theo.marsh@example.com'").get().c, 1, 'no duplicate');
+  const j = db.prepare('SELECT * FROM person WHERE id = ?').get(joining.id);
+  assert.equal(j.member_id, '2026-900006', 'the new registrant gains the number');
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM person WHERE lower(email) = 'june.pell@example.com'").get().c, 1);
+});
