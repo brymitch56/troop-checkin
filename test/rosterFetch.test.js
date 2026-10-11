@@ -94,11 +94,16 @@ test('sanityCheck: rejects tiny files and HTML pages', () => {
   expectFail(() => F.sanityCheck(Buffer.from('<!doctype html>' + 'x'.repeat(600))), 4, /HTML/);
 });
 
-test('sanity failures name the multi-role possibility (TLC resumes last-used role)', () => {
-  // wrong role most likely surfaces as one of these — each must say so
-  expectFail(() => F.sanityCheck(Buffer.from('<!doctype html>' + 'x'.repeat(600))), 4, /LAST-USED role/);
-  expectFail(() => F.sanityCheck(Buffer.from('a,b,c\n'.repeat(200))), 4, /LAST-USED role/);
-  expectFail(() => F.sanityCheck(buildWorkbookBuffer(), { prevRows: 113, rowTolerance: 0.2 }), 4, /LAST-USED role/);
+test('sanity failures name the wrong-role possibility, in portal-neutral words', () => {
+  // A wrong active role (account-wide) surfaces as one of these — each must
+  // say so, without naming roles: they differ between portals. 2026-10-11:
+  // the 0-byte case is the one actually seen, and it had no hint.
+  const ROLE = /set to the wrong role.*switch to a role with permission/;
+  expectFail(() => F.sanityCheck(Buffer.from('')), 4, ROLE);
+  expectFail(() => F.sanityCheck(Buffer.from('<!doctype html>' + 'x'.repeat(600))), 4, ROLE);
+  expectFail(() => F.sanityCheck(Buffer.from('a,b,c\n'.repeat(200))), 4, ROLE);
+  expectFail(() => F.sanityCheck(buildWorkbookBuffer(), { prevRows: 113, rowTolerance: 0.2 }), 4, ROLE);
+  for (const v of [F.ROLE_HINT]) assert.doesNotMatch(v, /TLC|Troopmaster|Trail Life|AHG/i, 'no portal or role names');
 });
 
 test('sanityCheck: accepts the synthetic xlsx and counts data rows', () => {

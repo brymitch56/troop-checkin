@@ -563,13 +563,13 @@ async function pollUntilReady(cfg, jar, token) {
 async function fetchExport(cfg, jar, token) {
   const first = await request(cfg, jar, cfg.exportPath);
   if (first.status === 200) return Buffer.from(await first.arrayBuffer()); // already warm
-  if (first.status !== 503) fail(3, `Unexpected status ${first.status} kicking off the export.`);
+  if (first.status !== 503) fail(3, `Unexpected status ${first.status} kicking off the export.` + ROLE_HINT);
 
   if (!await pollUntilReady(cfg, jar, token)) {
     fail(3, 'Export never reported "finished" within the poll window.');
   }
   const res = await request(cfg, jar, cfg.exportPath);
-  if (res.status !== 200) fail(3, `Export not served after "finished" (status ${res.status}).`);
+  if (res.status !== 200) fail(3, `Export not served after "finished" (status ${res.status}).` + ROLE_HINT);
   return Buffer.from(await res.arrayBuffer());
 }
 
@@ -583,21 +583,21 @@ function detectFormat(buf) {
   return 'csv';
 }
 
-// TLC multi-role accounts resume their LAST-USED role at login, and the
-// member export needs a role with member-list access (e.g. Troopmaster).
-// We have no verified way to detect/switch the active role over HTTP, so a
-// wrong role surfaces as one of the sanity failures below — every message
-// points at it as a likely cause.
-const ROLE_HINT = ' If the TLC account has multiple roles: TLC signs in under the LAST-USED role, ' +
-  'and the export needs one with member-list access (e.g. Troopmaster) — log into TLC in a browser, ' +
-  'switch to that role, and try again.';
+// A portal account can hold several roles (troop leader, area/regional
+// roles, …), and the ACTIVE role is account-wide: switching it in a browser
+// switches it for this server's session too (seen 2026-10-11 — an area role
+// made the member export come back empty while sign-in was fine). Role names
+// differ between portals and we don't read them; the failure itself is the
+// evidence, so every "data came back empty or wrong" message names this cause.
+const ROLE_HINT = ' The signed-in portal account may be set to the wrong role: sign in to the portal in a browser, ' +
+  'switch to a role with permission to see the troop\'s members, then sync again.';
 
 // Throws FetchError(4) on anything suspicious. prevRows comes from the last
 // successful fetch; the guard exists because the realistic failure mode is a
 // PARTIAL export (stale TLC filter) parsing cleanly and mass-deactivating
 // the roster — not a crash.
 function sanityCheck(buf, { prevRows = null, rowTolerance = 0.2 } = {}) {
-  if (buf.length < 512) fail(4, `File is only ${buf.length} bytes — almost certainly an error page.`);
+  if (buf.length < 512) fail(4, `File is only ${buf.length} bytes — almost certainly an error page.` + ROLE_HINT);
 
   const format = detectFormat(buf);
   if (format === 'html') fail(4, 'Got HTML, not a roster — the session probably expired or the login flow changed.' + ROLE_HINT);
@@ -713,7 +713,7 @@ module.exports = {
   isEnrollmentGate, configWithSavedCredentials,
   probeSession, submitChallenge,
   login, pollUntilReady, fetchExport, detectFormat, sanityCheck,
-  readState, writeState, pruneOldExports, localStamp, runFetch,
+  readState, writeState, pruneOldExports, localStamp, runFetch, ROLE_HINT,
 };
 
 if (require.main === module) {
