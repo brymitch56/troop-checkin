@@ -118,6 +118,11 @@ router.post('/inbound', express.urlencoded({ extended: false }), (req, res) => {
         db.prepare(`UPDATE notification SET status = 'replied_y' WHERE id = ?`).run(notified.id);
         closed.push(open.nickname || open.first_name);
         tlcQueue.push({ event_id: open.event_id, person_id: r.youth_id, txn_id: Number(t.lastInsertRowid) });
+        // picked up is picked up: linked sign-ins (On-site "also sign into") close too
+        for (const c of require('../lib/onsiteCorrections').closeLinked(r.youth_id, open.in_txn_id, {
+          client_uuid: `sms-${r.youth_id}-${Date.now()}`, signed_at: new Date().toISOString(),
+          staff_id: open.staff_id, signer_person_id: r.guardian_id, close_method: 'sms_confirm',
+        })) tlcQueue.push(c);
       }
     });
     run();

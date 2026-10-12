@@ -660,16 +660,24 @@ router.post('/close-open', (req, res) => {
       .run(txnId, person_id, open.in_txn_id);
     db.prepare('UPDATE txn_person SET open = 0 WHERE txn_id = ? AND person_id = ?')
       .run(open.in_txn_id, person_id);
+    // linked sign-ins (On-site "also sign into") close with it
+    linked = require('../lib/onsiteCorrections').closeLinked(person_id, open.in_txn_id, {
+      client_uuid: `admin-close-${person_id}-${Date.now()}`, signed_at: new Date().toISOString(),
+      staff_id: req.staff.staff_id, close_method: 'admin_close',
+    });
     return txnId;
   });
+  let linked = [];
   const txnId = run();
   // an admin close is still a departure — record TLC attendance with the
   // leader's advancement answer (the write-back is off unless enabled in
   // Admin → Import)
-  try { require('../lib/attendanceSync').enqueue(open.event_id, [{ person_id, advancement }]); }
-  catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
-  require('../lib/webhook').emitTxnCreated(txnId);
-  res.json({ ok: true, txn_id: txnId });
+  for (const c of [{ event_id: open.event_id, txn_id: txnId }, ...linked]) {
+    try { require('../lib/attendanceSync').enqueue(c.event_id, [{ person_id, advancement }]); }
+    catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
+    require('../lib/webhook').emitTxnCreated(c.txn_id);
+  }
+  res.json({ ok: true, txn_id: txnId, linked_closed: linked.length });
 });
 
 // -------------------------------------------------------- visitor merge ----

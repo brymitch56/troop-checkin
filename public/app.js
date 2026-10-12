@@ -1046,7 +1046,7 @@ async function refreshOnsiteCount() {
     const local = await Offline.onsite().catch(() => []); // offline: snapshot + queued
     return local.filter((p) => matchesScope(p, state.station, state.stationLevel));
   });
-  $('onsite-pill').textContent = `On site: ${rows.length}`;
+  $('onsite-pill').textContent = `On site: ${uniquePeople(rows).length}`;
 }
 $('onsite-pill').onclick = async () => {
   // the station scope is this view's starting point (either dimension)
@@ -1280,6 +1280,9 @@ function fillOnsiteEvents(all) {
 // Youth/adult split, client-side so it works offline too. "N · 18 youth,
 // 5 adults" wording is shared by the summary line and each event heading.
 const matchesWho = (r) => !state.who || (state.who === 'youth' ? !!r.is_youth : !r.is_youth);
+// Someone signed into two concurrent events has a row per event; the
+// headcounts count PEOPLE (each event heading still lists its own rows).
+function uniquePeople(rows) { return [...new Map(rows.map((r) => [r.id, r])).values()]; }
 const splitLabel = (rows) => {
   const youth = rows.filter((r) => r.is_youth).length;
   const adults = rows.length - youth;
@@ -1349,7 +1352,7 @@ async function renderOnsite() {
   // the Who filter): the at-a-glance "how many of each are here" answer.
   const summary = document.createElement('p');
   summary.className = 'onsite-summary';
-  summary.textContent = `On site${state.onsiteEvent ? ` at ${state.onsiteEvent.title}` : ''}: ${scoped.length} — ${splitLabel(scoped)}` +
+  summary.textContent = `On site${state.onsiteEvent ? ` at ${state.onsiteEvent.title}` : ''}: ${uniquePeople(scoped).length} — ${splitLabel(uniquePeople(scoped))}` +
     (state.who ? ` · showing ${state.who === 'youth' ? 'youth' : 'adults'} only` : '');
   wrap.appendChild(summary);
   const byEvent = new Map();
@@ -1429,6 +1432,66 @@ async function showEmergencyInfo(personId, onsiteRow) {
     toast(`${displayName(person)} added to checkout — scan, search, or open On site to add more.`);
   };
   openModal('modal-emergency');
+  if (onsiteRow) renderEventCorrections(p, onsiteRow);
+  else $('emergency-events').hidden = true;
+}
+
+// Concurrent events (Bryan, 2026-10-12): a sign-in filed under the wrong
+// event (the kiosk had the other one selected) is MOVED to the right one; a
+// youth who belongs in both is ALSO signed into the other — linked, so one
+// sign-out later closes both and records attendance for each. "Remove from"
+// undoes that. Online only: these change the record, not just the view.
+async function renderEventCorrections(p, row) {
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const box = $('emergency-events');
+  box.hidden = true;
+  if (state.offline || !row.in_txn_id) return; // offline rows carry no sign-in id
+  let o;
+  try { o = await api(`/onsite/${p.id}/options`); } catch { return; } // quiet: contacts still work
+  const here = o.opens.find((x) => x.in_txn_id === row.in_txn_id);
+  if (!here) return; // signed out meanwhile
+  const others = o.opens.filter((x) => x !== here);
+  const targets = o.targets;
+  if (!targets.length && !here.linked) return; // one event running, nothing to correct
+  const name = displayName(p);
+  box.innerHTML = `<h4>Event</h4>
+    <p class="hint">Signed into <b>${esc(here.event_title)}</b>${others.length
+      ? ` and also <b>${others.map((x) => esc(x.event_title)).join(', ')}</b>${here.linked ? ' (linked — one sign-out closes both)' : ''}` : ''}.</p>
+    ${targets.map((t) => `<div class="event-fix">
+      <span>${esc(t.title)}</span>
+      ${t.allowed
+        ? `<button class="pill ghost-pill" data-fix="move" data-ev="${t.id}">Move here</button>
+           <button class="pill ghost-pill" data-fix="copy" data-ev="${t.id}">Also sign in</button>`
+        : '<span class="hint">does not track adults</span>'}
+    </div>`).join('')}
+    ${here.linked ? `<div class="event-fix"><button class="pill ghost-pill" data-fix="remove">Remove from ${esc(here.event_title)}</button></div>` : ''}`;
+  box.hidden = false;
+  box.querySelectorAll('[data-fix]').forEach((btn) => { btn.onclick = async () => {
+    const kind = btn.dataset.fix;
+    const target = targets.find((t) => String(t.id) === btn.dataset.ev);
+    const ask = kind === 'move' ? `Move ${name}'s sign-in from ${here.event_title} to ${target.title}?\n\nSame arrival time and signature — it is simply filed under the right event.`
+      : kind === 'copy' ? `Also sign ${name} into ${target.title}?\n\nThey stay signed into ${here.event_title} too. One sign-out later closes both, and attendance is recorded for each event.`
+      : `Remove ${name} from ${here.event_title}?\n\nThey stay signed into ${others.map((x) => x.event_title).join(', ')}.`;
+    if (!confirm(ask)) return;
+    const body = { in_txn_id: here.in_txn_id, ...(target ? { event_id: target.id } : {}) };
+    const send = (extra = {}) => jpost(`/onsite/${p.id}/${kind}`, { ...body, ...extra });
+    try {
+      try { await send(); }
+      catch (e) {
+        // the target event requires a signed permission form: same override as at sign-in
+        if (e.status === 422 && e.body && e.body.permission_unsigned) {
+          if (!confirm(`${name} has no signed permission form for ${target.title}.\n\nContinue anyway? This is recorded as a staff override.`)) return;
+          await send({ force_permission: true });
+        } else throw e;
+      }
+      closeModal();
+      toast(kind === 'move' ? `${name} is now signed into ${target.title}.`
+        : kind === 'copy' ? `${name} is signed into both events.`
+        : `${name} removed from ${here.event_title}.`);
+      renderOnsite();
+      refreshOnsiteCount();
+    } catch (e) { toast(e.message, true); }
+  }; });
 }
 $('emergency-close').onclick = closeModal;
 

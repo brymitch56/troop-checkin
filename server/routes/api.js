@@ -7,6 +7,7 @@ const multer = require('multer');
 const { db, SIG_DIR, UPLOAD_DIR } = require('../db');
 const auth = require('../auth');
 const roster = require('../lib/rosterImport');
+const corrections = require('../lib/onsiteCorrections');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -405,6 +406,9 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
       const hinted = b.event_id && opens.find((o) => o.event_id === Number(b.event_id));
       if (hinted) chosenOpen.set(p.id, hinted);
       else if (opens.length === 1) chosenOpen.set(p.id, opens[0]);
+      // signed into several events only via On-site "also sign into": they
+      // are one stay, closed together below — nothing to choose
+      else if (corrections.opensAreOneGroup(p.id, opens)) chosenOpen.set(p.id, opens[0]);
       else ambiguous.push({ p, titles: opens.map((o) => o.event_title) });
     }
     if (closed.length) {
@@ -453,6 +457,7 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
     fs.writeFileSync(sigPath, Buffer.from(m[1], 'base64'));
   }
 
+  const linkedClosed = []; // linked sign-ins closed alongside (On-site "also sign into")
   const write = db.transaction(() => {
     const t = db.prepare(
       `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id,
@@ -482,6 +487,14 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
       if (b.direction === 'out' && open) {
         db.prepare('UPDATE txn_person SET open = 0 WHERE txn_id = ? AND person_id = ?')
           .run(open.in_txn_id, e.person_id);
+        // one sign-out closes every linked sign-in (Bryan, 2026-10-12): same
+        // time, signer and signature, attendance recorded for each event
+        for (const c of corrections.closeLinked(e.person_id, open.in_txn_id, {
+          client_uuid: b.client_uuid, signed_at: b.signed_at || new Date().toISOString(),
+          staff_id: req.staff.staff_id, signer_person_id: b.signer_person_id, signer_name_override: b.signer_name_override,
+          signature_path: sigPath ? path.basename(sigPath) : null,
+          close_method: youthEntries.length ? 'signature' : null, forced: b.force,
+        })) linkedClosed.push({ ...c, advancement: e.advancement !== false });
       }
       if (b.direction === 'in' && (e.emerg_phone_1 || e.emerg_phone_2)) {
         db.prepare(
@@ -521,8 +534,14 @@ router.post('/txn', express.json({ limit: '2mb' }), (req, res) => {
   // Integration webhook (off by default): queued after the commit, delivered
   // by a background sweep — a slow consumer can never slow the door.
   require('../lib/webhook').emitTxnCreated(txnId);
+  // linked sign-ins closed alongside: attendance + webhook per event
+  for (const c of linkedClosed) {
+    try { require('../lib/attendanceSync').enqueue(c.event_id, [{ person_id: c.person_id, advancement: c.advancement }]); }
+    catch (e) { console.error('[tlc-attendance] enqueue failed:', e.message); }
+    require('../lib/webhook').emitTxnCreated(c.txn_id);
+  }
 
-  res.json({ ok: true, txn_id: txnId });
+  res.json({ ok: true, txn_id: txnId, linked_closed: linkedClosed.length });
 });
 
 // offline-first roster snapshot (Phase 4): everything a kiosk needs to keep
@@ -566,7 +585,7 @@ router.get('/onsite', (req, res) => {
   const level = req.query.level ? String(req.query.level) : null;
   const rows = db.prepare(
     `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol, p.level, p.is_youth,
-            e.id AS event_id, e.title AS event_title, t.signed_at
+            e.id AS event_id, e.title AS event_title, t.signed_at, t.id AS in_txn_id
        FROM txn_person tp
        JOIN txn t ON t.id = tp.txn_id
        JOIN person p ON p.id = tp.person_id
@@ -578,6 +597,38 @@ router.get('/onsite', (req, res) => {
   ).all(patrol, patrol, level, level);
   res.json(rows);
 });
+
+// On-site corrections across concurrent events (lib/onsiteCorrections): move
+// an open sign-in to the right event, also sign into a second one (linked —
+// one sign-out closes both), or leave one of two linked sign-ins.
+const correctionRoute = (fn) => (req, res) => {
+  try { return res.json({ ok: true, ...fn(req, req.body || {}) }); }
+  catch (e) {
+    if (e instanceof corrections.CorrectionError) {
+      const { status, ...extra } = e; // extra: e.g. permission_unsigned for the kiosk's override prompt
+      return res.status(status).json({ error: e.message, ...extra });
+    }
+    throw e;
+  }
+};
+router.get('/onsite/:personId/options', correctionRoute((req) => corrections.optionsFor(Number(req.params.personId))));
+router.post('/onsite/:personId/move', express.json(), correctionRoute((req, b) => {
+  const r = corrections.move(Number(req.params.personId), Number(b.in_txn_id), Number(b.event_id),
+    req.staff.staff_id, { forcePermission: !!b.force_permission });
+  require('../lib/webhook').emitTxnCreated(r.txn_id); // integrations see it arrive in the right event
+  return r;
+}));
+router.post('/onsite/:personId/copy', express.json(), correctionRoute((req, b) => {
+  const r = corrections.copy(Number(req.params.personId), Number(b.in_txn_id), Number(b.event_id),
+    req.staff.staff_id, { forcePermission: !!b.force_permission });
+  require('../lib/webhook').emitTxnCreated(r.txn_id);
+  return r;
+}));
+router.post('/onsite/:personId/remove', express.json(), correctionRoute((req, b) => {
+  const r = corrections.remove(Number(req.params.personId), Number(b.in_txn_id), req.staff.staff_id);
+  if (r.voided_txn_id) require('../lib/webhook').emitTxnVoided(r.voided_txn_id, r.void_txn_id);
+  return r;
+}));
 
 // Kiosk guardian texting. Strictly opt-in; ONE text per guardian even when
 // they cover several on-site youth; the response tells the leader exactly who
