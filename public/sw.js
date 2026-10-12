@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v82'; // v82: on-site Event filter; broadcasts need one event when several are on site
+const VERSION = 'tc-v83'; // v83: on-site move / also-sign-into another concurrent event
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the

@@ -291,3 +291,7 @@ details.past-events button { opacity: .75; }
   margin: 6px 0 10px; padding: 10px 12px; border-left: 4px solid var(--pine);
   background: var(--card); border-radius: 6px; font-size: 15px;
 }
+/* On-site person window: move / also-sign-into another current event */
+.emergency-events { margin-top: 10px; }
+.event-fix { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.event-fix > span:first-child { flex: 1 1 140px; font-weight: 600; }
