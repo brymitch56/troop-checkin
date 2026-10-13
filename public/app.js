@@ -568,16 +568,38 @@ $('search-input').addEventListener('input', () => {
   searchTimer = setTimeout(async () => {
     const raw = await api('/search?q=' + encodeURIComponent(q))
       .catch((e) => (e.status ? [] : Offline.searchPeople(q))); // offline: snapshot
-    const rows = stationFilter(await raw);
+    // people already in the cart don't come back on the next search
+    const rows = stationFilter(await raw).filter((p) => !state.cart.some((c) => c.person.id === p.id));
     const box = $('search-results'); box.innerHTML = '';
     for (const p of rows) {
+      // checkbox = add and keep the list open to pick more from the same
+      // search; tapping the name = add and close (the original behavior)
+      const row = document.createElement('div');
+      row.className = 'result-row';
+      row.dataset.pid = p.id;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.setAttribute('aria-label', `Add ${displayName(p)} and keep searching`);
+      cb.onchange = async () => {
+        if (cb.checked) {
+          if (!(await addToCart(p))) cb.checked = false; // refused (wrong direction, adults…)
+        } else {
+          state.cart = state.cart.filter((c) => c.person.id !== p.id);
+          if (!state.cart.length) state.direction = null;
+          renderCart();
+        }
+      };
       const b = document.createElement('button');
       b.innerHTML = `<span>${displayName(p)}</span>
         <span class="sub">${p.is_youth
           ? ([p.patrol, p.level].filter(Boolean).join(' · ') || 'Youth')
           : 'Adult'}${p.open ? ' · ON SITE' : ''}</span>`;
-      b.onclick = () => { addToCart(p); $('search-input').value = ''; box.hidden = true; };
-      box.appendChild(b);
+      b.onclick = () => {
+        if (!cb.checked) addToCart(p);
+        $('search-input').value = ''; box.hidden = true;
+      };
+      row.append(cb, b);
+      box.appendChild(row);
     }
     box.hidden = !rows.length;
   }, 200);
@@ -680,6 +702,10 @@ async function addToCart(person) {
 }
 
 function renderCart() {
+  // an open multi-select search mirrors the cart (✕ in the cart unticks it)
+  for (const row of document.querySelectorAll('#search-results .result-row')) {
+    row.querySelector('input').checked = state.cart.some((c) => String(c.person.id) === row.dataset.pid);
+  }
   const list = $('cart-list'); list.innerHTML = '';
   $('cart-empty').hidden = !!state.cart.length;
   $('btn-clear').hidden = !state.cart.length;
@@ -794,7 +820,12 @@ function openSignModal() {
 function selectSigner(btn, id, otherVal) {
   state.signerId = id; state.signerOther = otherVal;
   for (const b of $('signer-list').children) b.classList.toggle('selected', b === btn);
-  if (id != null) $('signer-other').hidden = true;
+  if (id != null) {
+    $('signer-other').hidden = true;
+    // bring the signature pad and Submit into view — no scrolling the sheet
+    const sheet = btn.closest('.modal');
+    if (sheet) sheet.scrollTop = sheet.scrollHeight;
+  }
 }
 $('sign-cancel').onclick = closeModal;
 $('sign-submit').onclick = async () => {
