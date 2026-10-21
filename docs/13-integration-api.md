@@ -102,7 +102,9 @@ do not share this database.
 `ical_uid` + `start_at` is unique at any moment (the schema has
 `UNIQUE (ical_uid, start_at)`) but it is **not stable**: a portal UID is
 `<head>-<event id>-<tail>`, and the tail changes every time the event is
-edited in the portal, even when nothing visible changed. An integration that
+edited in the portal, even when nothing visible changed (AHGfamily has used
+`<head>-<event id>@ahgfamily.org` since 2026-10-20 — the portal event id is the
+part that survives both). An integration that
 keys on it will see an edit as one event vanishing and another appearing.
 Match on `id` first and treat `ical_uid` + `start_at` as a fallback for rows
 you have never seen — and refresh your stored `ical_uid`/`start_at` from each
