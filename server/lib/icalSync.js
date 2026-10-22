@@ -84,8 +84,8 @@ function applyFeed(vevents) {
   const feedPortalIds = new Map();
   for (const e of vevents) { const p = portalIdOf(e.uid); if (p) feedPortalIds.set(p, (feedPortalIds.get(p) || 0) + 1); }
   const rowsForPortalId = (pid) => db.prepare(
-    `SELECT * FROM event WHERE source = 'ical' AND (tlc_event_id = ? OR ical_uid LIKE ?) ORDER BY id`)
-    .all(pid, `%-${pid}-%`).filter((r) => r.tlc_event_id === pid || portalIdOf(r.ical_uid) === pid);
+    `SELECT * FROM event WHERE source = 'ical' AND (tlc_event_id = ? OR ical_uid LIKE ? OR ical_uid LIKE ?) ORDER BY id`)
+    .all(pid, `%-${pid}-%`, `%-${pid}@%`).filter((r) => r.tlc_event_id === pid || portalIdOf(r.ical_uid) === pid);
   const run = db.transaction(() => {
     const seen = new Set();
     const upd = db.prepare(
@@ -165,6 +165,20 @@ async function syncIcal(url = env.ICAL_URL) {
   const vevents = Object.values(data).filter(
     (e) => e.type === 'VEVENT' && e.uid && e.start && e.end
   );
+  // A feed with NO events is a portal hiccup, not a troop that cancelled its
+  // whole calendar: on 2026-10-20 AHGfamily served one empty (but valid) feed
+  // during a change on its side, and applying it deleted every event without
+  // sign-ins and flagged the rest "gone from feed". Refuse it; the next sync
+  // retries, and a refused sync never updates last_ical_sync, so the daily
+  // freshness check notices if it keeps happening.
+  if (!vevents.length) {
+    const upcoming = db.prepare(`SELECT COUNT(*) n FROM event WHERE source = 'ical' AND removed_from_feed = 0
+                                   AND datetime(end_at) > datetime('now')`).get().n;
+    if (upcoming) {
+      throw new Error(`Calendar feed returned no events while ${upcoming} upcoming event(s) are listed — ` +
+        'not applied (looks like a portal outage). Nothing was changed; the next sync will try again.');
+    }
+  }
   const result = applyFeed(vevents);
   db.prepare(`INSERT INTO meta (key, value) VALUES ('last_ical_sync', ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`)

@@ -25,8 +25,11 @@ linked. Two shapes exist on the platform — Trail Life Connect
 `<16>-<hashid 12>-<15>` (verified against `/databuilder/search-events` for
 events across 2024–2026) and AHGfamily `<9 letters>-<hashid 12>-<YYYYMMDDTHHMMSS>`
 (found 2026-09-07 when a 10-character floor on the first segment left every
-AHG event unlinked). The parser accepts a 9–24-character head; the 10–14
-middle group is what keeps manual events and foreign feeds from mis-parsing.
+AHG event unlinked). On 2026-10-20 AHGfamily switched every UID to a third
+shape, `<9 letters>-<hashid 12>@ahgfamily.org` (no tail); that form is
+accepted only for the two portals' own domains. The parser accepts a
+9–24-character head; the 10–14 middle group is what keeps manual events and
+foreign feeds from mis-parsing.
 Advancement un-marking was verified manually on TLC (2026-08-11): removing
 attendance also removes requirement checkmarks, so the app NEVER sends
 `value=0` — undo stays a human action on the TLC site.

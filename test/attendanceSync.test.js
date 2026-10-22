@@ -177,6 +177,14 @@ test('tlcEventIdFromUid: middle segment of a TLC feed UID, null otherwise', () =
   assert.equal(A.tlcEventIdFromUid(`ABCDEFGHI-short9-20260907T190000`), null); // middle guard unchanged
   assert.equal(A.tlcEventIdFromUid('not-a-tlc-uid'), null);
   assert.equal(A.tlcEventIdFromUid('caldav-3f2a9@google.com'), null);
+  // AHGfamily's shape since 2026-10-20: no tail, the portal's domain instead
+  assert.equal(A.tlcEventIdFromUid(`ABCDEFGHI-${EV}@ahgfamily.org`), EV);
+  assert.equal(A.tlcEventIdFromUid(`ABCDEFGHI-${EV}@www.ahgfamily.org`), EV);
+  assert.equal(A.tlcEventIdFromUid(`feed163264ab00cd-${EV}@traillifeconnect.com`), EV);
+  // ...but only the portals' domains: a foreign feed of the same shape is not a portal event
+  assert.equal(A.tlcEventIdFromUid(`googlecalendar-${EV}@google.com`), null);
+  assert.equal(A.tlcEventIdFromUid(`ABCDEFGHI-${EV}@notahgfamily.org`), null);
+  assert.equal(A.tlcEventIdFromUid(`ABCDEFGHI-${EV}@`), null);
   assert.equal(A.tlcEventIdFromUid(''), null);
   assert.equal(A.tlcEventIdFromUid(null), null);
 });

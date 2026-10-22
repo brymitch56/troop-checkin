@@ -99,9 +99,18 @@ const clearAuthFailure = () => patchState({ auth_failed_at: null, code_required_
 //     so no AHG event could ever link)
 // The head accepts 9–24; the middle group stays {10,14} — it is the guard
 // against mis-parsing a manual event or a foreign feed's UID.
+// A third shape replaced AHGfamily's on 2026-10-20, for every event at once:
+//   AHGfamily (new):    <9 letters>-<12 hashid>@ahgfamily.org
+// Unrecognized, it re-added the whole feed as unlinked duplicates. The
+// domain form is accepted only for the two portals' own domains, so a foreign
+// feed's "name-xxxxxxxxxx@example.com" still cannot pass for a portal event.
+const PORTAL_UID_DOMAIN = /^(?:[a-z0-9-]+\.)*(?:ahgfamily\.org|traillifeconnect\.com)$/i;
 function tlcEventIdFromUid(uid) {
-  const m = /^([a-z0-9]{9,24})-([a-z0-9]{10,14})-([a-z0-9]{10,24})$/i.exec(String(uid || '').trim());
-  return m ? m[2] : null;
+  const s = String(uid || '').trim();
+  const m = /^([a-z0-9]{9,24})-([a-z0-9]{10,14})(?:-([a-z0-9]{10,24})|@([^@\s]+))$/i.exec(s);
+  if (!m) return null;
+  if (m[4] !== undefined && !PORTAL_UID_DOMAIN.test(m[4])) return null;
+  return m[2];
 }
 
 // Resolve (and cache) the TLC event hashid for an app event row.

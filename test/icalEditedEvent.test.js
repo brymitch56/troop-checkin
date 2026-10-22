@@ -141,6 +141,55 @@ test('the old row has sign-ins and the live row is NOT empty: no merge, and abov
   assert.equal(db.prepare('SELECT COUNT(*) n FROM txn WHERE event_id = ?').get(old).n, 1);
 });
 
+// 2026-10-20: AHGfamily changed every UID at once from <head>-<id>-<tail> to
+// <head>-<id>@ahgfamily.org. Unrecognized, the whole feed was re-added as
+// unlinked duplicates and every past event's sign-ins stranded on a "gone" row.
+const newUid = (eventId) => `FAKEHEADX-${eventId}@ahgfamily.org`;
+
+test('a feed that switches to the @domain UID shape keeps every event on its own row', () => {
+  const oldA = `FAKEHEADX-evfake000021-20260720t162540`;
+  const oldB = `FAKEHEADX-evfake000022-20260720t162541`;
+  applyFeed([
+    ev(oldA, 'Weekly Meeting', '2026-10-12T22:15:00Z', '2026-10-13T00:15:00Z'),
+    ev(oldB, 'Weekly Meeting', '2026-10-19T22:15:00Z', '2026-10-20T00:15:00Z'),
+  ]);
+  const a = db.prepare('SELECT id FROM event WHERE ical_uid = ?').get(oldA).id;
+  const b = db.prepare('SELECT id FROM event WHERE ical_uid = ?').get(oldB).id;
+  db.prepare(`INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id) VALUES ('uidshape-1', ?, 'in', ?, ?)`)
+    .run(a, new Date().toISOString(), staff);
+
+  const r = applyFeed([
+    ev(newUid('evfake000021'), 'Weekly Meeting', '2026-10-12T22:15:00Z', '2026-10-13T00:15:00Z'),
+    ev(newUid('evfake000022'), 'Weekly Meeting', '2026-10-19T22:15:00Z', '2026-10-20T00:15:00Z'),
+  ]);
+  assert.deepEqual({ added: r.added, updated: r.updated, flagged: r.flagged, deleted: r.deleted }, { added: 0, updated: 2, flagged: 0, deleted: 0 });
+  for (const [id, pid] of [[a, 'evfake000021'], [b, 'evfake000022']]) {
+    const row = db.prepare('SELECT * FROM event WHERE id = ?').get(id);
+    assert.equal(row.ical_uid, newUid(pid), 'same row, new UID');
+    assert.equal(row.removed_from_feed, 0);
+  }
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM event WHERE ical_uid LIKE '%evfake00002%'`).get().n, 2, 'no duplicates');
+});
+
+test('the split the old parser already caused (unlinked @domain row + flagged row with sign-ins) folds back', () => {
+  // exactly what production held: the original row, linked and carrying the
+  // sign-ins, flagged gone; a bare new row for the same portal event, unlinked
+  const ins = db.prepare(`INSERT INTO event (source, ical_uid, title, start_at, end_at, all_day, removed_from_feed, tlc_event_id)
+                          VALUES ('ical', ?, 'Weekly Meeting', '2026-10-26T22:15:00.000Z', '2026-10-27T00:15:00.000Z', 0, ?, ?)`);
+  const orig = ins.run('FAKEHEADX-evfake000023-20260720t162542', 1, 'evfake000023').lastInsertRowid;
+  const dup = ins.run(newUid('evfake000023'), 0, null).lastInsertRowid;
+  db.prepare(`INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id) VALUES ('uidshape-2', ?, 'in', ?, ?)`)
+    .run(orig, new Date().toISOString(), staff);
+
+  const r = applyFeed([ev(newUid('evfake000023'), 'Weekly Meeting', '2026-10-26T22:15:00Z', '2026-10-27T00:15:00Z')]);
+  assert.equal(r.merged, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM event WHERE id = ?').get(dup).n, 0, 'the bare duplicate is gone');
+  const row = db.prepare('SELECT * FROM event WHERE id = ?').get(orig);
+  assert.deepEqual({ uid: row.ical_uid, gone: row.removed_from_feed, tlc: row.tlc_event_id },
+    { uid: newUid('evfake000023'), gone: 0, tlc: 'evfake000023' }, 'the original row is current again, still linked');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM txn WHERE event_id = ?').get(orig).n, 1);
+});
+
 test('UIDs with no portal id (manual or foreign feeds) keep the exact-match rule', () => {
   const r1 = applyFeed([ev('plain-uid-1', 'Open House', '2026-11-01T18:00:00Z', '2026-11-01T20:00:00Z')]);
   assert.equal(r1.added, 1);
