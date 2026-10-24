@@ -986,7 +986,15 @@ function openEvent(e) {
         <select id="evf-tlc" ${e.tlc_event_id ? '' : 'disabled'}>
           <option value="" ${e.tlc_push == null ? 'selected' : ''}>Follow global setting</option>
           <option value="0" ${e.tlc_push === 0 ? 'selected' : ''}>Never push this event</option>
-          <option value="1" ${e.tlc_push === 1 ? 'selected' : ''}>Always push this event</option></select></div>` : ''}
+          <option value="1" ${e.tlc_push === 1 ? 'selected' : ''}>Always push this event</option></select></div>
+      <div><label title="E.g. Navigators or Adventurers at a meeting whose activity plan covers only the Woodlands levels">Attendees whose level has no activity plan here</label>
+        <select id="evf-uncovered" ${e.tlc_event_id ? '' : 'disabled'}>
+          <option value="" ${e.tlc_uncovered == null ? 'selected' : ''}>Follow global setting</option>
+          <option value="hold" ${e.tlc_uncovered === 'hold' ? 'selected' : ''}>Hold until a plan covers them</option>
+          <option value="push" ${e.tlc_uncovered === 'push' ? 'selected' : ''}>No advancement expected — push attendance only</option></select></div>
+      ${e.tlc_event_id ? `<div><label>Advancement already pushed</label>
+        <button class="btn ghost small" id="evf-recredit" type="button" data-plan-recredit="${esc(e.tlc_event_id)}"
+          title="After adding or fixing this event's activity plan on TLC: re-mark the attendees still owed an item so TLC applies the plan">Re-apply credit</button></div>` : ''}` : ''}
     </div>
     ${e ? '<div id="evf-forms"></div>' : ''}
     <div class="row wrap">
@@ -1030,6 +1038,9 @@ function openEvent(e) {
     }
     if (e && $('evf-tlc')) {
       body.tlc_push = $('evf-tlc').value === '' ? null : Number($('evf-tlc').value);
+    }
+    if (e && $('evf-uncovered') && !$('evf-uncovered').disabled) {
+      body.tlc_uncovered = $('evf-uncovered').value || null;
     }
     try {
       if (e) await jpatch(`/admin/events/${e.id}`, body);
@@ -1710,6 +1721,7 @@ async function loadTlca() {
   if (document.activeElement !== $('tlca-plan-check')) $('tlca-plan-check').value = s.settings.plan_check || 'off';
   if (document.activeElement !== $('tlca-hold-hours')) $('tlca-hold-hours').value = s.settings.hold_release_hours ?? 72;
   if (document.activeElement !== $('tlca-plan-fix')) $('tlca-plan-fix').value = s.settings.plan_fix || 'off';
+  if (document.activeElement !== $('tlca-uncovered')) $('tlca-uncovered').value = s.settings.uncovered_levels || 'hold';
 
   const bits = [];
   if (!s.credentials_configured) bits.push('Needs the Trail Life Connect credentials saved above.');
@@ -1845,6 +1857,7 @@ async function saveTlcaSettings() {
       enabled: $('tlca-enabled').checked, use_lesson_plans: $('tlca-lessons').checked,
       plan_check: $('tlca-plan-check').value,
       plan_fix: $('tlca-plan-fix').value,
+      uncovered_levels: $('tlca-uncovered').value,
       hold_release_hours: Number($('tlca-hold-hours').value) || 72,
     });
     toast('Saved'); loadTlca();
@@ -1862,6 +1875,7 @@ $('tlca-enabled').onchange = () => {
 $('tlca-lessons').onchange = saveTlcaSettings;
 $('tlca-plan-check').onchange = saveTlcaSettings;
 $('tlca-hold-hours').onchange = saveTlcaSettings;
+$('tlca-uncovered').onchange = saveTlcaSettings;
 $('tlca-plan-fix').onchange = () => {
   if ($('tlca-plan-fix').value === 'auto' &&
       !confirm(Portal.t('Fix broken activity plans automatically?\n\nWhen a push finds a plan that would lose ' +

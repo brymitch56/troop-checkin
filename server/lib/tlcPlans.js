@@ -178,6 +178,21 @@ async function fetchPlans(fetcher, session, tlcEventId) {
   return parsePlans(html);
 }
 
+// Is this member outside the event's plans BY LEVEL — a Navigator at a
+// meeting whose only plan is for the Woodlands levels? Only then can "push
+// attendance only" be safe. Deliberately narrow: any plan scoped by patrol
+// makes it false (a patrol's level is not known here, so the member might be
+// one the plan meant to cover), and so does any plan with a credit-losing
+// problem (that is a broken plan to fix, not a level with nothing planned).
+function outsidePlanLevels(plans, user) {
+  if (!user || !user.level_id || !plans.plans.length) return false;
+  for (const p of plans.plans) {
+    if (p.patrols.length || p.blankPatrol || planProblems(p, plans.wtIds).length) return false;
+    if (p.levels.includes(user.level_id)) return false;
+  }
+  return true;
+}
+
 // ---- repair (the one place this module WRITES to TLC) ----------------------
 // POST /calendar/update-lesson?useJson=1&id=<lessonId> with the JSON body from
 // repairBody — the same request TLC's own Manage Event page sends when a leader
@@ -332,5 +347,5 @@ module.exports = {
   UMBRELLA, readBlob, displayName, normalisePlan,
   parsePlans, parseUsers, fetchPlans,
   matchKind, planWarnings, coverageFor,
-  planProblems, repairBody, updateLesson, repairPlans,
+  planProblems, repairBody, updateLesson, repairPlans, outsidePlanLevels,
 };

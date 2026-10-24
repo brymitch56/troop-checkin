@@ -438,6 +438,15 @@ router.patch('/events/:id', (req, res) => {
     sets.push('tlc_push = ?');
     vals.push(b.tlc_push === null || b.tlc_push === '' ? null : (b.tlc_push ? 1 : 0));
   }
+  // attendees whose level has no activity plan here: null = follow the global
+  // setting, 'hold' or 'push' (attendance only, no hold)
+  if ('tlc_uncovered' in b) {
+    if (b.tlc_uncovered != null && b.tlc_uncovered !== '' && !attendanceSync.UNCOVERED_MODES.includes(b.tlc_uncovered)) {
+      return res.status(400).json({ error: 'tlc_uncovered must be hold, push or empty.' });
+    }
+    sets.push('tlc_uncovered = ?');
+    vals.push(b.tlc_uncovered || null);
+  }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
   db.prepare(`UPDATE event SET ${sets.join(', ')} WHERE id = ?`).run(...vals, ev.id);
   res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(ev.id));
