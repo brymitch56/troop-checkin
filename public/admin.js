@@ -1438,7 +1438,7 @@ async function loadOptin() {
 
 document.addEventListener('change', async (e) => {
   if (['il-from', 'il-to', 'il-limit'].includes(e.target.id)) loadImport();
-  if (['pl-from', 'pl-to', 'pl-limit'].includes(e.target.id)) loadPushLog();
+  if (['pl-from', 'pl-to', 'pl-limit', 'pl-status'].includes(e.target.id)) loadPushLog();
   if (e.target.id === 'mx-days') loadExpiring();
   if (e.target.id === 'hf-form' || e.target.id === 'hf-view') loadHealthForms();
   if (e.target.id === 'ov-view') loadOptin();
@@ -1709,6 +1709,7 @@ async function loadTlca() {
   if (document.activeElement !== $('tlca-lessons')) $('tlca-lessons').checked = !!s.settings.use_lesson_plans;
   if (document.activeElement !== $('tlca-plan-check')) $('tlca-plan-check').value = s.settings.plan_check || 'off';
   if (document.activeElement !== $('tlca-hold-hours')) $('tlca-hold-hours').value = s.settings.hold_release_hours ?? 72;
+  if (document.activeElement !== $('tlca-plan-fix')) $('tlca-plan-fix').value = s.settings.plan_fix || 'off';
 
   const bits = [];
   if (!s.credentials_configured) bits.push('Needs the Trail Life Connect credentials saved above.');
@@ -1723,13 +1724,16 @@ async function loadTlca() {
   }
   bits.push(`Queue: <b>${s.queue.pending}</b> pending · ${s.queue.sent} sent · ` +
     (s.queue.held ? `<b>${s.queue.held} held</b> · ` : '') +
-    (s.queue.failed ? `<b class="error">${s.queue.failed} failed</b> <button id="tlca-retry" class="btn ghost small">Retry failed</button>` : '0 failed'));
+    (s.queue.failed ? `<b class="error">${s.queue.failed} failed</b> ` +
+      '<button id="tlca-show-failed" class="btn ghost small">Show them</button> ' +
+      '<button id="tlca-retry" class="btn ghost small">Retry failed</button>' : '0 failed'));
   $('tlca-status').innerHTML = bits.join('<br>');
   $('tlca-push').disabled = !!s.running || !s.credentials_configured || !s.queue.pending;
 
   renderPlanWarnings(s.state.plan_warnings || []);
+  renderPlanCheck(s.state.plan_check_run, s.state.plan_fixes || []);
   renderSkipped(s.skipped || []);
-  renderPushLog(s.recent);
+  loadPushLog(); // honours the log's own filters instead of resetting to the newest 30
 
   clearTimeout(tlcaTimer);
   if ((s.running || s.queue.pending) && !$('tab-import').hidden) tlcaTimer = setTimeout(loadTlca, 5000);
@@ -1737,11 +1741,35 @@ async function loadTlca() {
 
 // Problems with the event's activity plan itself — the thing to go and fix
 // on TLC. Shown whenever the last push found any, in warn or hold mode.
+// Weekly meetings share one title, so an event is always named with its date.
+const fmtEvDay = (s) => (s ? new Date(s).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '');
+const evName = (r) => `<b>${esc(r.event)}</b>${r.event_start ? ` — ${esc(fmtEvDay(r.event_start))}` : ''}`;
+const fixBtn = (r) => (r.fixable && r.tlc_event_id
+  ? ` <button class="btn ghost small" data-plan-fix="${esc(r.tlc_event_id)}">Fix this plan</button>` : '');
 function renderPlanWarnings(rows) {
   $('tlca-plan-warnings').innerHTML = rows.length
-    ? `<div class="callout warn"><b>Activity plans needing attention</b><ul>` +
-      rows.map((r) => `<li><b>${esc(r.event)}</b>: ${esc(r.warning)}</li>`).join('') + '</ul></div>'
+    ? `<div class="callout warn"><b>Activity plans needing attention</b> <span class="hint">(found by the last push)</span><ul>` +
+      rows.map((r) => `<li>${evName(r)}: ${esc(r.warning)}${fixBtn(r)}</li>`).join('') + '</ul></div>'
     : '';
+}
+// "Check plans" results plus the latest repairs (automatic or by button).
+function renderPlanCheck(run, fixes) {
+  let html = '';
+  if (run) {
+    html += run.events.length
+      ? `<div class="callout warn"><b>Plan check ${esc(fmtDT(run.at))}</b> — ${run.events.length} of ${run.checked} event(s) need attention<ul>` +
+        run.events.map((r) => `<li>${evName(r)}<ul>${r.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>${fixBtn(r)}</li>`).join('') +
+        '</ul></div>'
+      : `<p class="hint left">✅ Plan check ${esc(fmtDT(run.at))}: all ${run.checked} event(s) look right.</p>`;
+  }
+  if (fixes.length) {
+    html += '<details class="left"><summary>Recent plan repairs</summary><ul>' +
+      fixes.map((f) => `<li>${esc(fmtDT(f.at))} · ${evName(f)}: ` +
+        (f.fixed.length ? `✅ fixed ${esc(f.fixed.join(', '))}` : '') +
+        (f.failed.length ? ` <b class="error">❌ ${esc(f.failed.map((x) => `${x.title}: ${x.error}`).join('; '))}</b>` : '') +
+        '</li>').join('') + '</ul></details>';
+  }
+  $('tlca-plans-result').innerHTML = html;
 }
 
 // Advancement the auto-release gave up. Deliberately loud and deliberately
@@ -1781,11 +1809,13 @@ function renderPushLog(rows) {
   $('tlca-log').innerHTML = rows.length
     ? `<table><tr><th>When</th><th>Person</th><th>Event</th><th>Status</th><th>Detail</th></tr>` +
       rows.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
-        <td>${esc(r.event_title)}</td>
+        <td data-sort="${esc(r.event_start || '')}">${esc(r.event_title)}${r.event_start ? `<br><span class="hint">${esc(fmtEvDay(r.event_start))}</span>` : ''}</td>
         <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed'
           : r.hold_reason ? '⏸ held' : '⏳ pending'}</td>
         <td>${esc(r.detail || r.hold_reason || '')}</td></tr>`).join('') + '</table>'
-    : '<p class="hint left">Nothing queued yet — sign-ins appear here once the push is enabled (or an event is set to “Always push”).</p>';
+    : ($('pl-status').value || $('pl-from').value || $('pl-to').value
+      ? '<p class="hint left">Nothing matches these filters.</p>'
+      : '<p class="hint left">Nothing queued yet — sign-ins appear here once the push is enabled (or an event is set to “Always push”).</p>');
   enhanceTable('tlca-log');
 }
 
@@ -1795,6 +1825,7 @@ function pushLogQuery() {
   if ($('pl-from').value) q.set('from', $('pl-from').value);
   if ($('pl-to').value) q.set('to', $('pl-to').value + 'T23:59:59');
   q.set('limit', $('pl-limit').value);
+  if ($('pl-status').value) q.set('status', $('pl-status').value);
   return q.toString();
 }
 async function loadPushLog() {
@@ -1807,6 +1838,7 @@ async function saveTlcaSettings() {
     await jput('/admin/tlc-attendance/settings', {
       enabled: $('tlca-enabled').checked, use_lesson_plans: $('tlca-lessons').checked,
       plan_check: $('tlca-plan-check').value,
+      plan_fix: $('tlca-plan-fix').value,
       hold_release_hours: Number($('tlca-hold-hours').value) || 72,
     });
     toast('Saved'); loadTlca();
@@ -1824,6 +1856,16 @@ $('tlca-enabled').onchange = () => {
 $('tlca-lessons').onchange = saveTlcaSettings;
 $('tlca-plan-check').onchange = saveTlcaSettings;
 $('tlca-hold-hours').onchange = saveTlcaSettings;
+$('tlca-plan-fix').onchange = () => {
+  if ($('tlca-plan-fix').value === 'auto' &&
+      !confirm(Portal.t('Fix broken activity plans automatically?\n\nWhen a push finds a plan that would lose ' +
+        'credit, the app re-saves it on Trail Life Connect with the individual levels in place of the combined ' +
+        'one and blank entries removed — nothing else in the plan changes.'))) {
+    $('tlca-plan-fix').value = 'off';
+    return;
+  }
+  saveTlcaSettings();
+};
 $('pf-enabled').onchange = async () => {
   try {
     const s = await jput('/admin/permission-forms', { enabled: $('pf-enabled').checked ? 1 : 0 });
@@ -1868,6 +1910,32 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-push') {
     try { await jpost('/admin/tlc-attendance/push', {}); toast('Push started'); loadTlca(); }
     catch (err) { toast(err.message, true); }
+  }
+  if (e.target.id === 'tlca-show-failed') {
+    $('pl-status').value = 'failed'; $('pl-from').value = ''; $('pl-to').value = ''; $('pl-limit').value = '1000';
+    await loadPushLog();
+    $('tlca-log').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if (e.target.id === 'tlca-plans-check') {
+    e.target.disabled = true; const label = e.target.textContent; e.target.textContent = 'Checking…';
+    try {
+      const r = await jpost('/admin/tlc-attendance/plans/check', {});
+      toast(r.events.length ? `${r.events.length} event(s) need attention` : `All ${r.checked} event(s) look right`, !!r.events.length);
+    } catch (err) { toast(err.message, true); }
+    e.target.disabled = false; e.target.textContent = label;
+    loadTlca();
+  }
+  const fixId = e.target.dataset && e.target.dataset.planFix;
+  if (fixId) {
+    if (!confirm(Portal.t('Fix this event’s activity plan on Trail Life Connect?\n\nIt is re-saved with the individual ' +
+      'levels instead of the combined one and blank entries removed. Nothing else changes.'))) return;
+    e.target.disabled = true; e.target.textContent = 'Fixing…';
+    try {
+      const r = await jpost('/admin/tlc-attendance/plans/fix', { tlc_event_id: fixId });
+      if (r.failed.length) toast(r.failed.map((x) => `${x.title}: ${x.error}`).join('; '), true);
+      else toast(r.fixed.length ? `Fixed: ${r.fixed.join(', ')}` : 'Nothing needed fixing');
+    } catch (err) { toast(err.message, true); }
+    loadTlca();
   }
   if (e.target.id === 'tlca-retry') {
     try { const r = await jpost('/admin/tlc-attendance/retry', {}); toast(`${r.retried} row(s) queued again`); loadTlca(); }

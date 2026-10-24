@@ -195,6 +195,25 @@ now holds the plan's items, and `…/ack` refuses unless that verify came back
 A plan read that fails never makes the write-back worse than it was before
 the guard existed: the error is recorded on the row and the push proceeds.
 
+### Which plans count as broken, and repairing them (`plan_fix`)
+
+Only two shapes lose credit (`tlcPlans.planProblems`): the `"wt"` umbrella
+**without** every level in `$.wtIds`, and a patrol list that is only a blank
+entry. Since October 2026 TLC's editor saves the umbrella together with its
+levels (`["wt", fox, hawk, mountain lion]`) — the concrete ids credit, so that
+shape is not flagged, and neither is a blank entry beside real patrols.
+
+`plan_fix` (`off` by default; `auto` needs `plan_check` warn/hold) rewrites a
+broken plan before the push marks anyone: `POST
+/calendar/update-lesson?useJson=1&id=<lessonId>` with JSON `{title, badge_id,
+level_id, patrol_id, items_id}` — the umbrella replaced by `$.wtIds`, blank
+entries dropped, nothing else changed (`repairBody`). The plan is then read
+back and a repair counts only if TLC no longer reports the problem. Admin →
+Import also has **Check plans** (read-only scan, a week back to two months
+ahead) and a per-event **Fix this plan**; repairs are listed with their dates.
+Warnings always name the event with its date — a troop's weekly meetings share
+one title.
+
 ## Other UI parameters (for completeness)
 
 - `rsvpOnly` — "Show only users that have RSVP'd" filter on user-list.

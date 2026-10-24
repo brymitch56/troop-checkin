@@ -141,6 +141,18 @@ function makeMockTlc(opts = {}) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         return res.end(lessonPlansHtml(state.lessons, state.advancements));
       }
+      // the plan save the Manage Event page sends: JSON with exactly five fields
+      if (req.method === 'POST' && url.pathname === '/calendar/update-lesson') {
+        if (!authed || !csrfOk || url.searchParams.get('useJson') !== '1') { res.writeHead(403); return res.end(); }
+        const b = JSON.parse(body);
+        state.lessonUpdates = (state.lessonUpdates || []).concat([{ id: url.searchParams.get('id'), body: b }]);
+        if (opts.refuseLessonUpdate) { res.writeHead(500); return res.end('error'); }
+        state.lessons = state.lessons.map((l) => (l.id === url.searchParams.get('id')
+          ? { ...l, title: b.title, badge_id: b.badge_id, level_id: b.level_id, patrol_id: b.patrol_id, items_id: b.items_id,
+            type: b.patrol_id.length ? 'patrol' : 'level' } : l));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ lesson: state.lessons.find((l) => l.id === url.searchParams.get('id')) }));
+      }
       if (req.method === 'POST' && url.pathname === '/calendar/toggle-attendance') {
         if (!authed || !csrfOk) { res.writeHead(403); return res.end(); }
         const p = new URLSearchParams(body);
@@ -587,7 +599,7 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   const put = await req('PUT', '/api/admin/tlc-attendance/settings',
     { body: { enabled: true, use_lesson_plans: false }, cookie: adminCookie });
   assert.deepEqual(put.json.settings,
-    { enabled: 1, use_lesson_plans: 0, plan_check: 'off', hold_release_hours: 72 });
+    { enabled: 1, use_lesson_plans: 0, plan_check: 'off', hold_release_hours: 72, plan_fix: 'off' });
   const got = await req('GET', '/api/admin/tlc-attendance', { cookie: adminCookie });
   assert.equal(got.json.settings.enabled, 1);
   assert.equal(got.json.credentials_configured, true);
@@ -705,4 +717,134 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   assert.equal(db.prepare('SELECT tlc_user_id FROM person WHERE id = ?').get(newRec).tlc_user_id, 'pathash00001');
   assert.equal(rowFor(ev, newRec).status, 'pending'); // queue row re-pointed
   assert.equal(rowFor(ev, oldRec), undefined);
+});
+
+// ------------------------------------------------ plan problems & repair ----
+// Shapes observed on TLC 2026-10-24 (ids here are the fixture's fakes).
+test('planProblems: only shapes that lose credit — umbrella WITH its levels, or a blank next to real patrols, is fine', () => {
+  const parse = (lessons) => P.parsePlans(lessonPlansHtml(lessons));
+  const probs = (lesson) => { const pl = parse([lesson]); return P.planProblems(pl.plans[0], pl.wtIds); };
+  // the editor now saves the umbrella together with every level it stands for: credits fine
+  assert.deepEqual(probs(mkLesson({ level_id: ['wt', 'lvlfox000001', 'lvlhawk00001'] })), []);
+  // the umbrella alone (or missing one of its levels): credits nobody at those levels
+  assert.deepEqual(probs(mkLesson({ level_id: ['wt'] })), ['umbrella']);
+  assert.deepEqual(probs(mkLesson({ level_id: ['wt', 'lvlfox000001'] })), ['umbrella']);
+  // blank patrol entry with nothing else: read as patrol-scoped, credits only the unpatrolled
+  assert.deepEqual(probs(mkLesson({ level_id: ['wt'], patrol_id: [''] })), ['umbrella', 'blank-patrol']);
+  // blank entries beside real patrols still credit those patrols
+  assert.deepEqual(probs(mkLesson({ level_id: [''], patrol_id: ['', 'pathawk10001', 'pathawk20002'] })), []);
+  // and the warnings follow the same rule
+  assert.deepEqual(P.planWarnings(parse([mkLesson({ level_id: ['wt', 'lvlfox000001', 'lvlhawk00001'] })])), []);
+});
+
+test('repairBody: umbrella → its concrete levels, blanks dropped, everything else untouched; nothing when unfixable', () => {
+  const pl = P.parsePlans(lessonPlansHtml([
+    mkLesson({ id: 'lesbroken001', level_id: ['wt'], patrol_id: [''] }),
+    mkLesson({ id: 'lesfine00001', level_id: ['wt', 'lvlfox000001', 'lvlhawk00001'] }),
+    mkLesson({ id: 'lesempty0001', level_id: [''], patrol_id: [''] }),
+  ]));
+  assert.deepEqual(P.repairBody(pl.plans[0], pl.wtIds), {
+    title: 'Activity Plan #1', badge_id: ['bdgvalues001'],
+    level_id: ['lvlfox000001', 'lvlhawk00001'], patrol_id: [], items_id: ['itemhtty1001'],
+  });
+  assert.equal(P.repairBody(pl.plans[1], pl.wtIds), null, 'a working plan is never rewritten');
+  assert.equal(P.repairBody(pl.plans[2], pl.wtIds), null, 'nobody selected at all: a person decides');
+  assert.equal(P.repairBody(pl.plans[0], []), null, 'no $.wtIds: cannot expand the umbrella safely');
+});
+
+test('plan_fix auto: the push repairs a broken plan on TLC first, so the attendee is credited, not held', async () => {
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  const kid = mkPerson('Fixie', 'Planner');
+  const ev = mkEvent();
+  mock.state.users = [{ hash: 'fixhawk00001', name: 'Planner, Fixie', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' }];
+  mock.state.advancements = {}; mock.state.toggles = []; mock.state.lessonUpdates = [];
+  mock.state.lessons = [mkLesson({ id: 'lesbroken002', level_id: ['wt'], patrol_id: [''] })];
+  A.saveSettings({ enabled: 1, use_lesson_plans: 1, plan_check: 'hold', plan_fix: 'auto' });
+  A.enqueue(ev, [kid]);
+
+  const r = await A.runPush({ manual: true, env: pushEnv() });
+  assert.deepEqual({ sent: r.sent, held: r.held }, { sent: 1, held: 0 });
+  assert.equal(mock.state.lessonUpdates.length, 1);
+  assert.deepEqual(mock.state.lessonUpdates[0], { id: 'lesbroken002', body: {
+    title: 'Activity Plan #1', badge_id: ['bdgvalues001'], level_id: ['lvlfox000001', 'lvlhawk00001'],
+    patrol_id: [], items_id: ['itemhtty1001'] } });
+  assert.deepEqual(mock.state.toggles.at(-1), { userId: 'fixhawk00001', eventId: EV, value: '1', use_lesson_plans: '1' });
+  const st = A.getState();
+  assert.deepEqual(st.plan_warnings, [], 'nothing left to warn about');
+  assert.deepEqual(st.plan_fixes[0].fixed, ['Activity Plan #1']);
+  assert.match(st.plan_fixes[0].event_start, /^2026-08-10/, 'the repair is reported with the event date');
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  A.saveSettings({ plan_fix: 'off', plan_check: 'off' });
+});
+
+test('plan_fix: off by default reports only (dated, marked fixable); a refused update is a failure and the guard still holds', async () => {
+  assert.equal(A.getSettings().plan_fix, 'off');
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  const kid = mkPerson('Holdie', 'Planner');
+  const ev = mkEvent({ title: 'Regular Weekly Meeting' });
+  mock.state.users = [{ hash: 'holdhawk0001', name: 'Planner, Holdie', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' }];
+  mock.state.toggles = []; mock.state.lessonUpdates = [];
+  mock.state.lessons = [mkLesson({ id: 'lesbroken003', level_id: ['wt'], patrol_id: [''] })];
+  A.saveSettings({ enabled: 1, use_lesson_plans: 1, plan_check: 'hold' });
+  A.enqueue(ev, [kid]);
+  const r = await A.runPush({ manual: true, env: pushEnv() });
+  assert.equal(r.held, 1);
+  assert.equal(mock.state.lessonUpdates.length, 0, 'off means the plan is never written');
+  const w = A.getState().plan_warnings[0];
+  assert.equal(w.event, 'Regular Weekly Meeting');
+  assert.match(w.event_start, /^2026-08-10T/);
+  assert.equal(w.fixable, true);
+  assert.equal(w.tlc_event_id, EV);
+
+  // the TLC side refuses the save: reported, plan untouched
+  const refusing = makeMockTlc({ refuseLessonUpdate: true, users: mock.state.users, lessons: mock.state.lessons });
+  await new Promise((res) => refusing.server.listen(0, res));
+  const env2 = { ...process.env, TLC_BASE: `http://127.0.0.1:${refusing.server.address().port}` };
+  const fx = await A.fixEventPlans(EV, { env: env2 });
+  assert.deepEqual(fx.fixed, []);
+  assert.match(fx.failed[0].error, /refused the activity-plan update \(status 500\)/);
+  refusing.server.close();
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  A.saveSettings({ plan_check: 'off' });
+});
+
+test('checkPlans + fixEventPlans: scan upcoming events read-only, then repair one and read it back', async () => {
+  const soon = new Date(Date.now() + 3 * 86400000).toISOString();
+  db.prepare(`INSERT INTO event (source, ical_uid, title, start_at, end_at, tlc_event_id)
+              VALUES ('ical', ?, 'Regular Weekly Meeting', ?, ?, ?)`).run(`feed163264ab00cd-${EV}-tailcheck00001`, soon, soon, EV);
+  mock.state.lessonUpdates = [];
+  mock.state.lessons = [mkLesson({ id: 'lesbroken004', level_id: ['wt'], patrol_id: [''] })];
+  const chk = await A.checkPlans({ env: pushEnv() });
+  assert.ok(chk.checked >= 1);
+  const hit = chk.events.find((e) => e.tlc_event_id === EV);
+  assert.equal(hit.event, 'Regular Weekly Meeting');
+  assert.equal(hit.fixable, true);
+  assert.equal(mock.state.lessonUpdates.length, 0, 'checking never writes');
+  assert.ok(A.getState().plan_check_run.events.some((e) => e.tlc_event_id === EV));
+
+  const fx = await A.fixEventPlans(EV, { env: pushEnv() });
+  assert.deepEqual(fx.fixed, ['Activity Plan #1']);
+  assert.deepEqual(fx.warnings, []);
+  assert.equal(mock.state.lessonUpdates.length, 1);
+  assert.ok(!A.getState().plan_check_run.events.some((e) => e.tlc_event_id === EV), 'the fixed event leaves the list');
+});
+
+test('push log: status filter (failed / held / pending / sent), whitelisted', () => {
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  const ev = mkEvent();
+  const ins = db.prepare(`INSERT INTO tlc_attendance_push (event_id, person_id, tlc_event_id, use_lesson_plans, status, hold_reason)
+                          VALUES (?, ?, ?, 1, ?, ?)`);
+  ins.run(ev, mkPerson('Fa', 'Iled'), EV, 'failed', null);
+  ins.run(ev, mkPerson('Se', 'Nt'), EV, 'sent', null);
+  ins.run(ev, mkPerson('Pe', 'Nding'), EV, 'pending', null);
+  ins.run(ev, mkPerson('He', 'Ld'), EV, 'pending', 'plan does not cover them');
+  const names = (st) => A.recentRows(100, null, null, st).map((r) => r.person_name).sort();
+  assert.deepEqual(names('failed'), ['Fa Iled']);
+  assert.deepEqual(names('sent'), ['Se Nt']);
+  assert.deepEqual(names('pending'), ['Pe Nding']);
+  assert.deepEqual(names('held'), ['He Ld']);
+  assert.equal(names(null).length, 4);
+  assert.equal(names('__proto__').length, 4, 'unknown values mean no filter, never SQL');
+  assert.ok(A.recentRows(100)[0].event_start, 'rows carry the event date for the log');
+  db.prepare('DELETE FROM tlc_attendance_push').run();
 });
