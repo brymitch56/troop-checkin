@@ -1074,6 +1074,22 @@ router.post('/tlc-attendance/push', (req, res) => {
   res.json({ ok: true, started: true });
 });
 
+// Activity plans: scan linked events (read-only), or repair one event's plans
+// on TLC. Both need the TLC sign-in; neither runs while a push is running.
+const NO_CREDS = () => portal.t('Trail Life Connect credentials are not configured — save them under Automatic roster sync.');
+router.post('/tlc-attendance/plans/check', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
+  if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is running — try again in a minute.' });
+  try { res.json(await attendanceSync.checkPlans()); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+router.post('/tlc-attendance/plans/fix', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
+  if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is running — try again in a minute.' });
+  const tid = String((req.body || {}).tlc_event_id || '');
+  if (!/^[a-z0-9]{10,14}$/i.test(tid)) return res.status(400).json({ error: 'tlc_event_id is required' });
+  try { res.json(await attendanceSync.fixEventPlans(tid)); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 router.post('/tlc-attendance/retry', (req, res) => {
   res.json({ ok: true, ...attendanceSync.retryFailed() });
 });
@@ -1193,12 +1209,12 @@ router.get('/export/imports.csv', (req, res) => {
 
 router.get('/push-log', (req, res) => {
   const { limit, from, to } = historyRange(req.query, 30);
-  res.json(attendanceSync.recentRows(limit, from, to));
+  res.json(attendanceSync.recentRows(limit, from, to, req.query.status || null));
 });
 
 router.get('/export/push-log.csv', (req, res) => {
   const { limit, from, to } = historyRange(req.query, 1000);
-  const rows = attendanceSync.recentRows(limit, from, to).map((r) => [
+  const rows = attendanceSync.recentRows(limit, from, to, req.query.status || null).map((r) => [
     r.created_at, r.sent_at || '', r.status, r.attempts,
     r.person_name, r.event_title, r.event_start, r.detail || '',
   ]);

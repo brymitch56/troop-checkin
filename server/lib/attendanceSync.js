@@ -55,10 +55,15 @@ function writeMeta(key, obj) {
 // hold_release_hours — after this long a held row pushes anyway, so the
 // ATTENDANCE record is never lost; the forgone advancement is written to
 // tlc_advancement_skipped and stays there until a human verifies the fix.
+// plan_fix — while the guard reads a plan (plan_check warn/hold), rewrite a
+// plan with a credit-losing shape on TLC BEFORE anyone is marked attended:
+//   off   report it only (the default — this is the one setting that writes plans)
+//   auto  repair it (tlcPlans.repairPlans), re-read it, then push
 const PLAN_CHECK_MODES = ['off', 'warn', 'hold'];
-const getSettings = () => readMeta(SETTINGS_KEY, {
+const PLAN_FIX_MODES = ['off', 'auto'];
+const getSettings = () => ({ plan_fix: 'off', ...readMeta(SETTINGS_KEY, {
   enabled: 0, use_lesson_plans: 1, plan_check: 'off', hold_release_hours: 72,
-});
+}) });
 function saveSettings(patch) {
   const s = getSettings();
   if ('enabled' in patch) s.enabled = patch.enabled ? 1 : 0;
@@ -66,6 +71,7 @@ function saveSettings(patch) {
   if ('plan_check' in patch) {
     s.plan_check = PLAN_CHECK_MODES.includes(patch.plan_check) ? patch.plan_check : 'off';
   }
+  if ('plan_fix' in patch) s.plan_fix = PLAN_FIX_MODES.includes(patch.plan_fix) ? patch.plan_fix : 'off';
   if ('hold_release_hours' in patch) {
     const n = Number(patch.hold_release_hours);
     s.hold_release_hours = Number.isFinite(n) && n >= 1 && n <= 24 * 30 ? Math.round(n) : 72;
@@ -180,7 +186,14 @@ function queueSummary() {
   };
 }
 
-function recentRows(limit = 30, from = null, to = null) {
+// status: null = everything; 'failed' | 'sent' | 'pending' (queued, not held) | 'held'
+const STATUS_FILTER = {
+  failed: "q.status = 'failed'",
+  sent: "q.status = 'sent'",
+  pending: "q.status = 'pending' AND q.hold_reason IS NULL",
+  held: "q.status = 'pending' AND q.hold_reason IS NOT NULL",
+};
+function recentRows(limit = 30, from = null, to = null, status = null) {
   return db.prepare(
     `SELECT q.id, q.status, q.detail, q.attempts, q.created_at, q.sent_at,
             q.tlc_event_id, q.tlc_user_id, q.hold_reason, q.hold_since,
@@ -191,6 +204,7 @@ function recentRows(limit = 30, from = null, to = null) {
        JOIN event e  ON e.id = q.event_id
       WHERE (? IS NULL OR datetime(q.created_at) >= datetime(?))
         AND (? IS NULL OR datetime(q.created_at) <= datetime(?))
+        AND ${Object.hasOwn(STATUS_FILTER, status) ? STATUS_FILTER[status] : '1'}
       ORDER BY q.id DESC LIMIT ?`)
     .all(from || null, from || null, to || null, to || null, limit);
 }
@@ -472,17 +486,43 @@ function holdExpired(row, hours) {
 // One plan read per event per run, cached. A read that FAILS must never make
 // the write-back worse than it was before the guard existed, so the failure
 // is recorded and the push proceeds exactly as it always did.
-async function plansFor(session, tlcEventId, cache) {
+// With fix=true a plan with a credit-losing shape is repaired on TLC first
+// (plan_fix 'auto'), so the push that follows is judged — and credited —
+// against the corrected plan. A failed repair leaves the plan as it was and
+// the guard carries on exactly as without the setting.
+async function plansFor(session, tlcEventId, cache, { fix = false } = {}) {
   if (cache.has(tlcEventId)) return cache.get(tlcEventId);
   let v;
   try {
-    const plans = await tlcPlans.fetchPlans(fetcher(), session, tlcEventId);
-    v = { plans, warnings: tlcPlans.planWarnings(plans), error: null };
+    let plans = await tlcPlans.fetchPlans(fetcher(), session, tlcEventId);
+    let fixed = [], fixFailed = [];
+    if (fix && plans.plans.some((p) => tlcPlans.repairBody(p, plans.wtIds))) {
+      const r = await tlcPlans.repairPlans(fetcher(), session, tlcEventId, plans);
+      ({ fixed } = r); fixFailed = r.failed; plans = r.plans;
+    }
+    v = { plans, warnings: tlcPlans.planWarnings(plans), error: null, fixed, fixFailed };
   } catch (e) {
-    v = { plans: null, warnings: [], error: e.message };
+    v = { plans: null, warnings: [], error: e.message, fixed: [], fixFailed: [] };
   }
   cache.set(tlcEventId, v);
   return v;
+}
+
+// The app's own name for a TLC event — title AND date, because a troop's
+// weekly meetings all share one title.
+function eventLabel(tlcEventId) {
+  const ev = db.prepare(
+    'SELECT id, title, start_at FROM event WHERE tlc_event_id = ? ORDER BY start_at DESC LIMIT 1').get(tlcEventId);
+  return ev ? { event: ev.title, event_start: ev.start_at, event_id: ev.id } : { event: tlcEventId, event_start: null, event_id: null };
+}
+
+// Remember the last few automatic repairs for the admin panel.
+function recordPlanFixes(tlcEventId, fixed, failed) {
+  if (!fixed.length && !failed.length) return;
+  const st = getState();
+  const log = [{ at: new Date().toISOString(), tlc_event_id: tlcEventId, ...eventLabel(tlcEventId), fixed, failed },
+    ...(st.plan_fixes || [])].slice(0, 20);
+  patchState({ plan_fixes: log });
 }
 
 // ----------------------------------------------------------- the push ------
@@ -571,8 +611,10 @@ async function runPush({ manual = false, env = process.env } = {}) {
         // straight through, exactly as before the guard existed.
         let note = null;
         if (settings.plan_check !== 'off' && row.use_lesson_plans) {
-          const pf = await plansFor(session, row.tlc_event_id, planCache);
-          if (pf.warnings.length) planWarnings.set(row.tlc_event_id, pf.warnings);
+          const firstRead = !planCache.has(row.tlc_event_id);
+          const pf = await plansFor(session, row.tlc_event_id, planCache, { fix: settings.plan_fix === 'auto' });
+          if (firstRead) recordPlanFixes(row.tlc_event_id, pf.fixed, pf.fixFailed);
+          if (pf.warnings.length) planWarnings.set(row.tlc_event_id, { warnings: pf.warnings, plans: pf.plans });
           if (pf.plans) {
             const cov = tlcPlans.coverageFor(pf.plans, m.hash, list.users.get(m.hash));
             if (cov.applicable && !cov.covered) {
@@ -618,10 +660,10 @@ async function runPush({ manual = false, env = process.env } = {}) {
     // Plan problems are a property of the EVENT, not of one row — surface
     // them against the event title so the panel can name what to go and fix.
     const warnings = [];
-    for (const [tlcEventId, list] of planWarnings) {
-      const ev = db.prepare(
-        'SELECT title FROM event WHERE tlc_event_id = ? ORDER BY start_at DESC LIMIT 1').get(tlcEventId);
-      for (const w of list) warnings.push({ event: ev ? ev.title : tlcEventId, warning: w });
+    for (const [tlcEventId, { warnings: list, plans }] of planWarnings) {
+      const label = eventLabel(tlcEventId);
+      const fixable = !!(plans && plans.plans.some((p) => tlcPlans.repairBody(p, plans.wtIds)));
+      for (const w of list) warnings.push({ ...label, tlc_event_id: tlcEventId, warning: w, fixable });
     }
     patchState({
       last_run: new Date().toISOString(),
@@ -633,6 +675,56 @@ async function runPush({ manual = false, env = process.env } = {}) {
   } finally {
     running = false;
   }
+}
+
+// ------------------------------------------ on-demand plan check/fix -------
+// The push only reads a plan when someone signs out, which is too late to
+// fix an upcoming meeting ahead of time. "Check plans" reads every linked
+// event from a week back to two months ahead (read-only) and lists the ones
+// with problems; "Fix" repairs one event's plans on TLC and reads them back.
+async function checkPlans({ env = process.env, backDays = 7, aheadDays = 60 } = {}) {
+  const events = db.prepare(
+    `SELECT * FROM event WHERE source = 'ical' AND removed_from_feed = 0
+        AND datetime(start_at) BETWEEN datetime('now', ?) AND datetime('now', ?)
+      ORDER BY start_at`).all(`-${backDays} days`, `+${aheadDays} days`);
+  const session = await tlcSession(env);
+  const out = [];
+  let checked = 0;
+  for (const ev of events) {
+    const tid = resolveTlcEventId(ev);
+    if (!tid) continue;
+    checked++;
+    try {
+      const plans = await tlcPlans.fetchPlans(fetcher(), session, tid);
+      const warnings = tlcPlans.planWarnings(plans);
+      if (warnings.length) {
+        out.push({ event: ev.title, event_start: ev.start_at, event_id: ev.id, tlc_event_id: tid, warnings,
+          fixable: plans.plans.some((p) => tlcPlans.repairBody(p, plans.wtIds)) });
+      }
+    } catch (e) {
+      out.push({ event: ev.title, event_start: ev.start_at, event_id: ev.id, tlc_event_id: tid,
+        warnings: [portal.t('activity plan could not be read: ') + e.message], fixable: false });
+    }
+  }
+  patchState({ plan_check_run: { at: new Date().toISOString(), checked, events: out } });
+  return { checked, events: out };
+}
+
+async function fixEventPlans(tlcEventId, { env = process.env } = {}) {
+  const session = await tlcSession(env);
+  const plans = await tlcPlans.fetchPlans(fetcher(), session, tlcEventId);
+  const r = await tlcPlans.repairPlans(fetcher(), session, tlcEventId, plans);
+  recordPlanFixes(tlcEventId, r.fixed, r.failed);
+  const warnings = tlcPlans.planWarnings(r.plans);
+  // keep the last check's list honest without another full scan
+  const st = getState();
+  if (st.plan_check_run) {
+    const events = st.plan_check_run.events
+      .map((e) => (e.tlc_event_id === tlcEventId ? { ...e, warnings, fixable: false } : e))
+      .filter((e) => e.warnings.length);
+    patchState({ plan_check_run: { ...st.plan_check_run, events } });
+  }
+  return { fixed: r.fixed, failed: r.failed, warnings };
 }
 
 // ------------------------------------------- skipped-advancement log -------
@@ -738,7 +830,7 @@ module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
   enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
-  PLAN_CHECK_MODES, plansFor, holdExpired,
+  PLAN_CHECK_MODES, PLAN_FIX_MODES, plansFor, holdExpired, checkPlans, fixEventPlans,
   skippedRows, verifySkipped, acknowledgeSkipped,
   tlcIdFromBadge, adoptBadgeTlcId, backfillFromBadges,
   normName, nameKey, parseUserList, matchPerson,

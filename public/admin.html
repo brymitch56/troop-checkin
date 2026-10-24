@@ -404,11 +404,33 @@
           </select></label>
         <label>Release held pushes after
           <input id="tlca-hold-hours" type="number" min="1" max="720" step="1" style="width:6em"> hours</label>
+        <label>Broken plans
+          <select id="tlca-plan-fix">
+            <option value="off">Report only</option>
+            <option value="auto">Fix automatically on TLC</option>
+          </select></label>
       </div>
+      <p class="hint left"><b>Broken plans</b> are the two shapes that lose credit: the combined
+      “Woodlands Trail” level saved <i>without</i> the individual levels, and a patrol list that is only a
+      blank entry. Set to <b>Fix automatically</b>, the push rewrites such a plan on Trail Life Connect —
+      the individual levels instead of the combined one, blank entries removed, nothing else touched —
+      reads it back, and only then marks anyone attended, so they get the credit. Needs the
+      activity-plan check above on Warn or Hold. <b>Check plans</b> looks at every event from a week ago
+      to two months ahead, so you can fix them before the meeting.
+      <button id="tlca-plans-check" class="btn ghost small">Check plans</button></p>
+      <div id="tlca-plans-result"></div>
       <p id="tlca-status" class="hint left"></p>
       <div id="tlca-plan-warnings"></div>
       <div id="tlca-skipped"></div>
+      <h4 class="left">Push log</h4>
       <div class="row wrap">
+        <label>Show <select id="pl-status">
+          <option value="">Everything</option>
+          <option value="failed">Failed only</option>
+          <option value="held">Held only</option>
+          <option value="pending">Waiting to send</option>
+          <option value="sent">Sent</option>
+        </select></label>
         <label>From <input id="pl-from" type="date"></label>
         <label>To <input id="pl-to" type="date"></label>
         <select id="pl-limit">

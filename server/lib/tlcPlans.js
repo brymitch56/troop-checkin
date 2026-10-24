@@ -86,6 +86,45 @@ function normalisePlan(lesson) {
     blankPatrol: patrols.some((x) => x === ''),
     badges: (lesson.badge_id || []).map(String),
     items: (lesson.items_id || []).map(String),
+    raw: lesson, // what a repair rewrites (repairBody)
+  };
+}
+
+// The two shapes that really cost credit, as opposed to merely looking odd.
+// Since October 2026 TLC's plan editor saves the umbrella TOGETHER with the
+// levels it stands for (["wt", fox, hawk, mountain lion]); the concrete ids do
+// the crediting, so the extra "wt" is harmless and is not a problem. Likewise a
+// blank patrol entry next to real patrols still credits those patrols.
+//   umbrella      "wt" without every level it stands for
+//   blank-patrol  a blank patrol entry and no real patrol: the plan is read as
+//                 patrol-scoped and credits only members with no patrol
+function planProblems(p, wtIds = []) {
+  const out = [];
+  if (p.usesUmbrella && (!wtIds.length || wtIds.some((id) => !p.levels.includes(id)))) out.push('umbrella');
+  if (p.blankPatrol && !p.patrols.length) out.push('blank-patrol');
+  return out;
+}
+
+// The corrected save body for a plan with a problem, or null when there is
+// nothing to fix or nothing safe to fix it to: the umbrella becomes the
+// concrete levels behind it ($.wtIds) and blank entries are dropped. The save
+// endpoint takes exactly these five fields (observed 2026-09-19).
+function repairBody(p, wtIds = []) {
+  if (!planProblems(p, wtIds).length) return null;
+  const raw = p.raw || {};
+  const levels = [];
+  for (const id of (raw.level_id || []).map(String)) {
+    if (id === UMBRELLA) { for (const w of wtIds) if (!levels.includes(w)) levels.push(w); } else if (id && !levels.includes(id)) levels.push(id);
+  }
+  const patrols = (raw.patrol_id || []).map(String).filter(Boolean);
+  if (!levels.length && !patrols.length) return null; // nobody selected at all — a person has to decide
+  if (p.usesUmbrella && !wtIds.length) return null;   // cannot expand what the page did not list
+  return {
+    title: raw.title || p.title,
+    badge_id: (raw.badge_id || []).map(String),
+    level_id: levels,
+    patrol_id: patrols,
+    items_id: (raw.items_id || []).map(String),
   };
 }
 
@@ -139,6 +178,59 @@ async function fetchPlans(fetcher, session, tlcEventId) {
   return parsePlans(html);
 }
 
+// ---- repair (the one place this module WRITES to TLC) ----------------------
+// POST /calendar/update-lesson?useJson=1&id=<lessonId> with the JSON body from
+// repairBody — the same request TLC's own Manage Event page sends when a leader
+// re-saves a plan. Then the plans are read back: a repair counts only when TLC
+// itself no longer reports the problem.
+async function updateLesson(fetcher, session, lessonId, body) {
+  const res = await fetcher.request(session.cfg, session.jar,
+    '/calendar/update-lesson?useJson=1&id=' + encodeURIComponent(lessonId), {
+      method: 'POST',
+      headers: {
+        'X-CSRF-Token': session.token,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/javascript, */*',
+        Origin: session.cfg.base,
+        Referer: session.cfg.base + '/attendance',
+      },
+      body: JSON.stringify(body),
+    });
+  const text = await res.text();
+  if (res.status !== 200 || /LoginForm\[password\]/.test(text)) {
+    throw new Error(`TLC refused the activity-plan update (status ${res.status}).`);
+  }
+  return text;
+}
+
+// Repair every fixable plan on one event. Returns
+//   { fixed: [title…], failed: [{title, error}], plans }   plans = re-read state
+async function repairPlans(fetcher, session, tlcEventId, plans) {
+  const sent = new Map(); // lesson id -> title
+  const failed = [];
+  for (const p of plans.plans) {
+    const body = repairBody(p, plans.wtIds);
+    if (!body) continue;
+    try {
+      await updateLesson(fetcher, session, p.id, body);
+      sent.set(p.id, p.title);
+    } catch (e) {
+      failed.push({ title: p.title, error: e.message });
+    }
+  }
+  if (!sent.size) return { fixed: [], failed, plans };
+  const after = await fetchPlans(fetcher, session, tlcEventId);
+  // trust TLC's answer, not the request: anything still broken is a failure
+  const fixed = [];
+  for (const [id, title] of sent) {
+    const p = after.plans.find((x) => x.id === id);
+    if (p && !planProblems(p, after.wtIds).length) fixed.push(title);
+    else failed.push({ title, error: 'TLC still reports the problem after the update.' });
+  }
+  return { fixed, failed, plans: after };
+}
+
 // Which of a plan's rows apply to one member, and how. 'blank-patrol' is the
 // accidental match described at the top of the file: real credit, wrong
 // reason, and it disappears the moment the plan is fixed.
@@ -159,12 +251,13 @@ function matchKind(plan, user) {
 function planWarnings(plans) {
   const out = [];
   for (const p of plans.plans) {
-    if (p.usesUmbrella) {
+    const problems = planProblems(p, plans.wtIds);
+    if (problems.includes('umbrella')) {
       out.push(`Activity plan “${p.title}” uses the combined "${displayName(plans.levels[UMBRELLA]) || 'umbrella'}" level. ` +
         'That selection is expanded by the web page for display only — on the server it matches nobody. ' +
         'Select the individual levels (or the patrols) instead.');
     }
-    if (p.blankPatrol) {
+    if (problems.includes('blank-patrol')) {
       out.push(`Activity plan “${p.title}” has a blank entry in its patrol list. ` +
         'TLC then treats the plan as patrol-scoped and credits only members who have no patrol assigned. ' +
         'Re-save the plan with the patrol list either properly filled in or genuinely empty.');
@@ -239,4 +332,5 @@ module.exports = {
   UMBRELLA, readBlob, displayName, normalisePlan,
   parsePlans, parseUsers, fetchPlans,
   matchKind, planWarnings, coverageFor,
+  planProblems, repairBody, updateLesson, repairPlans,
 };
