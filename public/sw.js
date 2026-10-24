@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v86'; // v86: Check plans look-back (1 week / 1 month / 3 months)
+const VERSION = 'tc-v87'; // v87: admin page assets network-first (no new-HTML/old-script mix after a deploy)
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
@@ -66,6 +66,26 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       }).catch(() => caches.match('/admin.html'))
+    );
+    return;
+  }
+
+  // Everything the ADMIN page loads (admin.js/css, tabletools, the shared
+  // theme/portal files): NETWORK-FIRST too. The admin document above always
+  // comes fresh, but its scripts came from this cache — so on the first load
+  // after a deploy the old worker served NEW admin.html with OLD admin.js
+  // (field bug 2026-10-24: the "Look back" choice was on screen, the script
+  // behind it never sent it, and every Check plans ran the 1-week default).
+  // Unlike the kiosk, admin has no update-when-idle reload to repair that.
+  // no-cache = revalidate with the origin, so a CDN-stretched browser cache
+  // cannot hand back stale bytes either; offline, the cached copy still serves.
+  // Nothing is written back: theme/portal files are shared with the kiosk,
+  // and a fresher copy there would hand the KIOSK the same new-file/old-script
+  // mix. Each version's install fills the cache with a matching set.
+  const fromAdmin = (() => { try { return new URL(e.request.referrer).pathname.startsWith('/admin'); } catch { return false; } })();
+  if (fromAdmin && url.origin === self.location.origin) {
+    e.respondWith(
+      fetch(e.request, { cache: 'no-cache' }).catch(() => caches.match(e.request))
     );
     return;
   }
