@@ -31,8 +31,14 @@ accepted only for the two portals' own domains. The parser accepts a
 9–24-character head; the 10–14 middle group is what keeps manual events and
 foreign feeds from mis-parsing.
 Advancement un-marking was verified manually on TLC (2026-08-11): removing
-attendance also removes requirement checkmarks, so the app NEVER sends
-`value=0` — undo stays a human action on the TLC site.
+attendance also removes requirement checkmarks, so the push NEVER sends
+`value=0` — undo stays a human action on the TLC site. The one exception is
+the admin **Re-apply credit** button (`reapplyCredit`, after a plan was
+repaired): for attendees the app marked who are still owed an item under the
+corrected plan it sends `value=0` with `use_lesson_plans=0` and immediately
+`value=1` with `use_lesson_plans=1` (retried once — nobody is left un-marked),
+then re-reads the plan and reports each person as confirmed or not. Anyone
+already holding everything, or not marked attended on TLC, is not touched.
 
 Observed TLC behaviour, captured live 2026-08-11 against the production Track
 Attendance page (`/attendance`) while marking/unmarking a member on a test
@@ -209,8 +215,8 @@ broken plan before the push marks anyone: `POST
 level_id, patrol_id, items_id}` — the umbrella replaced by `$.wtIds`, blank
 entries dropped, nothing else changed (`repairBody`). The plan is then read
 back and a repair counts only if TLC no longer reports the problem. Admin →
-Import also has **Check plans** (read-only scan, a week back to two months
-ahead) and a per-event **Fix this plan**; repairs are listed with their dates.
+Import also has **Check plans** (read-only scan from a chosen look-back — 1 week, 1 month or 3 months, capped
+at 120 days — to two months ahead) and a per-event **Fix this plan**; repairs are listed with their dates.
 Warnings always name the event with its date — a troop's weekly meetings share
 one title.
 

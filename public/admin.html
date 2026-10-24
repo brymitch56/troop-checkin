@@ -415,8 +415,13 @@
       blank entry. Set to <b>Fix automatically</b>, the push rewrites such a plan on Trail Life Connect —
       the individual levels instead of the combined one, blank entries removed, nothing else touched —
       reads it back, and only then marks anyone attended, so they get the credit. Needs the
-      activity-plan check above on Warn or Hold. <b>Check plans</b> looks at every event from a week ago
-      to two months ahead, so you can fix them before the meeting.
+      activity-plan check above on Warn or Hold. <b>Check plans</b> looks at every event from the chosen
+      look-back to two months ahead, so you can fix them before the meeting (or repair a past one).
+      <label>Look back <select id="tlca-plans-back">
+        <option value="7">1 week</option>
+        <option value="31">1 month</option>
+        <option value="92">3 months</option>
+      </select></label>
       <button id="tlca-plans-check" class="btn ghost small">Check plans</button></p>
       <div id="tlca-plans-result"></div>
       <p id="tlca-status" class="hint left"></p>

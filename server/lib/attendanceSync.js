@@ -341,10 +341,12 @@ async function fetchUserList(s, tlcEventId) {
   return parseUserList(html, tlcEventId);
 }
 
-async function toggleAttendance(s, { userId, eventId, useLessonPlans }) {
+// value '0' (un-mark) is sent ONLY by reapplyCredit, behind its own button —
+// the push itself never un-marks anyone.
+async function toggleAttendance(s, { userId, eventId, useLessonPlans, value = '1' }) {
   const F = fetcher();
   const body = new URLSearchParams({
-    userId, eventId, value: '1', use_lesson_plans: useLessonPlans ? '1' : '0',
+    userId, eventId, value: value === '0' ? '0' : '1', use_lesson_plans: useLessonPlans ? '1' : '0',
   });
   const res = await F.request(s.cfg, s.jar, '/calendar/toggle-attendance', {
     method: 'POST', headers: ajaxHeaders(s), body: body.toString(),
@@ -727,6 +729,73 @@ async function fixEventPlans(tlcEventId, { env = process.env } = {}) {
   return { fixed: r.fixed, failed: r.failed, warnings };
 }
 
+// ------------------------------------------------- re-apply credit ---------
+// TLC records advancement only at the moment someone is marked attended, so a
+// plan fixed AFTER the push credits nobody already marked. This re-toggles the
+// people the app marked for this event who, against the corrected plan, are
+// still owed an item: un-mark (attendance only, the gentlest form — removing
+// attendance can remove checkmarks) and immediately re-mark with advancement,
+// so each ends up holding everything the plan grants. Then TLC is read back
+// and each person is reported. The ONLY place the app ever sends value=0, and
+// only from its own admin button. Refused while the plan still has a problem.
+async function reapplyCredit(tlcEventId, { env = process.env } = {}) {
+  const session = await tlcSession(env);
+  const plans = await tlcPlans.fetchPlans(fetcher(), session, tlcEventId);
+  if (!plans.plans.length) throw Object.assign(new Error('This event has no activity plan on TLC.'), { code: 409 });
+  if (plans.plans.some((p) => tlcPlans.planProblems(p, plans.wtIds).length)) {
+    throw Object.assign(new Error('The activity plan still has a problem — fix the plan first.'), { code: 409 });
+  }
+  const list = await fetchUserList(session, tlcEventId);
+  const rows = db.prepare(
+    `SELECT q.*, p.first_name || ' ' || p.last_name AS person_name FROM tlc_attendance_push q
+       JOIN person p ON p.id = q.person_id
+      WHERE q.tlc_event_id = ? AND q.status = 'sent' AND q.use_lesson_plans = 1`).all(tlcEventId);
+  const result = { recredited: [], verified: 0, nothing_owed: 0, not_marked: 0, failed: [] };
+  const owed = new Map(); // hash -> {row, gain}
+  for (const row of rows) {
+    const person = db.prepare('SELECT * FROM person WHERE id = ?').get(row.person_id);
+    const m = matchPerson(person, list);
+    if (m.error) { result.failed.push({ name: row.person_name, error: m.error }); continue; }
+    const entry = list.byHash.get(m.hash);
+    if (!entry || entry.attended !== 1) { result.not_marked++; continue; } // nothing to re-toggle
+    const cov = tlcPlans.coverageFor(plans, m.hash, list.users.get(m.hash));
+    if (!cov.covered || !cov.gain.length) { result.nothing_owed++; continue; }
+    owed.set(m.hash, { row, gain: cov.gain });
+  }
+  const mark = db.prepare(`UPDATE tlc_attendance_push SET detail = ? WHERE id = ?`);
+  for (const [hash, { row }] of owed) {
+    try {
+      await toggleAttendance(session, { userId: hash, eventId: tlcEventId, useLessonPlans: false, value: '0' });
+      try {
+        await toggleAttendance(session, { userId: hash, eventId: tlcEventId, useLessonPlans: true, value: '1' });
+      } catch {
+        // never leave someone un-marked: one more try, then shout
+        await toggleAttendance(session, { userId: hash, eventId: tlcEventId, useLessonPlans: true, value: '1' });
+      }
+      result.recredited.push(row.person_name);
+    } catch (e) {
+      result.failed.push({ name: row.person_name, error: `${e.message} — check this person on TLC's Track Attendance page` });
+    }
+  }
+  if (owed.size) {
+    // read back: who now holds what the plan offered them?
+    const after = await tlcPlans.fetchPlans(fetcher(), session, tlcEventId);
+    const stamp = new Date().toISOString().slice(0, 10);
+    for (const [hash, { row, gain }] of owed) {
+      if (!result.recredited.includes(row.person_name)) continue;
+      const held = after.held.get(hash) || new Set();
+      if (gain.every((it) => held.has(it))) {
+        result.verified++;
+        mark.run(portal.t(`advancement re-applied ${stamp} (confirmed on TLC)`), row.id);
+      } else {
+        result.failed.push({ name: row.person_name, error: 'Re-marked, but TLC does not show the plan items yet.' });
+        mark.run(portal.t(`advancement re-applied ${stamp} — NOT confirmed on TLC`), row.id);
+      }
+    }
+  }
+  return { ...eventLabel(tlcEventId), ...result };
+}
+
 // ------------------------------------------- skipped-advancement log -------
 // Everything the auto-release gave up, kept until a human says otherwise.
 // Dismissal is two-step ON PURPOSE: step one re-reads TLC and checks the
@@ -830,7 +899,7 @@ module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
   enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
-  PLAN_CHECK_MODES, PLAN_FIX_MODES, plansFor, holdExpired, checkPlans, fixEventPlans,
+  PLAN_CHECK_MODES, PLAN_FIX_MODES, plansFor, holdExpired, checkPlans, fixEventPlans, reapplyCredit,
   skippedRows, verifySkipped, acknowledgeSkipped,
   tlcIdFromBadge, adoptBadgeTlcId, backfillFromBadges,
   normName, nameKey, parseUserList, matchPerson,

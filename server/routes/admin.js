@@ -1080,7 +1080,10 @@ const NO_CREDS = () => portal.t('Trail Life Connect credentials are not configur
 router.post('/tlc-attendance/plans/check', async (req, res) => {
   if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
   if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is running — try again in a minute.' });
-  try { res.json(await attendanceSync.checkPlans()); } catch (e) { res.status(502).json({ error: e.message }); }
+  // how far back to look: a past event's plan can still be repaired (it only
+  // affects pushes not yet sent); capped so one click never walks the whole calendar
+  const back = Math.min(Math.max(Math.round(Number((req.body || {}).back_days) || 7), 1), 120);
+  try { res.json(await attendanceSync.checkPlans({ backDays: back })); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 router.post('/tlc-attendance/plans/fix', async (req, res) => {
   if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
@@ -1088,6 +1091,16 @@ router.post('/tlc-attendance/plans/fix', async (req, res) => {
   const tid = String((req.body || {}).tlc_event_id || '');
   if (!/^[a-z0-9]{10,14}$/i.test(tid)) return res.status(400).json({ error: 'tlc_event_id is required' });
   try { res.json(await attendanceSync.fixEventPlans(tid)); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// After a plan is fixed: un-mark and re-mark the attendees still owed credit
+// so TLC applies the corrected plan (the one place the app un-marks anyone).
+router.post('/tlc-attendance/plans/recredit', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
+  if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is running — try again in a minute.' });
+  const tid = String((req.body || {}).tlc_event_id || '');
+  if (!/^[a-z0-9]{10,14}$/i.test(tid)) return res.status(400).json({ error: 'tlc_event_id is required' });
+  try { res.json(await attendanceSync.reapplyCredit(tid)); } catch (e) { res.status(e.code === 409 ? 409 : 502).json({ error: e.message }); }
 });
 
 router.post('/tlc-attendance/retry', (req, res) => {

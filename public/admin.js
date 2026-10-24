@@ -1763,9 +1763,15 @@ function renderPlanCheck(run, fixes) {
       : `<p class="hint left">✅ Plan check ${esc(fmtDT(run.at))}: all ${run.checked} event(s) look right.</p>`;
   }
   if (fixes.length) {
-    html += '<details class="left"><summary>Recent plan repairs</summary><ul>' +
+    // open while a repair is fresh: that is when credit still needs re-applying
+    const fresh = Date.now() - new Date(fixes[0].at).getTime() < 3 * 86400000;
+    html += `<details class="left"${fresh ? ' open' : ''}><summary>Recent plan repairs</summary>` +
+      '<p class="hint left">Fixing a plan does not credit anyone already marked attended — TLC applies a plan only ' +
+      'at the moment someone is marked. <b>Re-apply credit</b> un-marks and re-marks just the attendees still owed ' +
+      'something, then checks TLC shows it.</p><ul>' +
       fixes.map((f) => `<li>${esc(fmtDT(f.at))} · ${evName(f)}: ` +
-        (f.fixed.length ? `✅ fixed ${esc(f.fixed.join(', '))}` : '') +
+        (f.fixed.length ? `✅ fixed ${esc(f.fixed.join(', '))}` +
+          ` <button class="btn ghost small" data-plan-recredit="${esc(f.tlc_event_id)}">Re-apply credit</button>` : '') +
         (f.failed.length ? ` <b class="error">❌ ${esc(f.failed.map((x) => `${x.title}: ${x.error}`).join('; '))}</b>` : '') +
         '</li>').join('') + '</ul></details>';
   }
@@ -1919,7 +1925,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-plans-check') {
     e.target.disabled = true; const label = e.target.textContent; e.target.textContent = 'Checking…';
     try {
-      const r = await jpost('/admin/tlc-attendance/plans/check', {});
+      const r = await jpost('/admin/tlc-attendance/plans/check', { back_days: Number($('tlca-plans-back').value) || 7 });
       toast(r.events.length ? `${r.events.length} event(s) need attention` : `All ${r.checked} event(s) look right`, !!r.events.length);
     } catch (err) { toast(err.message, true); }
     e.target.disabled = false; e.target.textContent = label;
@@ -1936,6 +1942,24 @@ document.addEventListener('click', async (e) => {
       else toast(r.fixed.length ? `Fixed: ${r.fixed.join(', ')}` : 'Nothing needed fixing');
     } catch (err) { toast(err.message, true); }
     loadTlca();
+  }
+  const rcId = e.target.dataset && e.target.dataset.planRecredit;
+  if (rcId) {
+    if (!confirm(Portal.t('Re-apply advancement for this event?\n\nFor each attendee the app marked who is still owed ' +
+      'an item under the corrected plan, Trail Life Connect is told “not attended” and then “attended” again, so the ' +
+      'plan is applied. Nobody who already holds everything is touched. TLC is read back afterwards and each person ' +
+      'is reported.'))) return;
+    e.target.disabled = true; e.target.textContent = 'Re-applying…';
+    try {
+      const r = await jpost('/admin/tlc-attendance/plans/recredit', { tlc_event_id: rcId });
+      const msg = `${r.verified} credited and confirmed on TLC` +
+        (r.nothing_owed ? ` · ${r.nothing_owed} already had everything` : '') +
+        (r.not_marked ? ` · ${r.not_marked} not marked attended on TLC (left alone)` : '');
+      if (r.failed.length) alert(`${msg}\n\nProblems:\n` + r.failed.map((x) => `• ${x.name}: ${x.error}`).join('\n'));
+      else toast(msg);
+    } catch (err) { toast(err.message, true); }
+    e.target.disabled = false; e.target.textContent = 'Re-apply credit';
+    loadPushLog();
   }
   if (e.target.id === 'tlca-retry') {
     try { const r = await jpost('/admin/tlc-attendance/retry', {}); toast(`${r.retried} row(s) queued again`); loadTlca(); }

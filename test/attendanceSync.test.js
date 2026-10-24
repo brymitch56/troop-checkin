@@ -160,6 +160,16 @@ function makeMockTlc(opts = {}) {
           value: p.get('value'), use_lesson_plans: p.get('use_lesson_plans') });
         const u = state.users.find((x) => x.hash === p.get('userId'));
         if (u) u.attended = p.get('value');
+        // like TLC: credit is applied at the moment of marking, by the plan as it is NOW
+        if (u && p.get('value') === '1' && p.get('use_lesson_plans') === '1') {
+          for (const l of state.lessons) {
+            if ((l.level_id || []).includes(u.level_id) || (u.patrol_id && (l.patrol_id || []).includes(u.patrol_id))) {
+              const have = new Set(state.advancements[u.hash] || []);
+              for (const it of l.items_id || []) have.add(it);
+              state.advancements[u.hash] = [...have];
+            }
+          }
+        }
         res.writeHead(200, { 'Content-Type': 'text/html' }); // empty 200 = success (captured)
         return res.end('');
       }
@@ -847,4 +857,63 @@ test('push log: status filter (failed / held / pending / sent), whitelisted', ()
   assert.equal(names('__proto__').length, 4, 'unknown values mean no filter, never SQL');
   assert.ok(A.recentRows(100)[0].event_start, 'rows carry the event date for the log');
   db.prepare('DELETE FROM tlc_attendance_push').run();
+});
+
+test('checkPlans: the look-back reaches past events (a past plan can still be repaired)', async () => {
+  const EV2 = 'evlookback01';
+  const past = new Date(Date.now() - 19 * 86400000).toISOString();
+  db.prepare(`INSERT INTO event (source, ical_uid, title, start_at, end_at, tlc_event_id)
+              VALUES ('ical', ?, 'Regular Weekly Meeting', ?, ?, ?)`).run(`feed163264ab00cd-${EV2}-taillookback1`, past, past, EV2);
+  mock.state.lessons = [mkLesson({ id: 'lesbroken005', level_id: ['wt'], patrol_id: [''] })];
+  const week = await A.checkPlans({ env: pushEnv(), backDays: 7 });
+  assert.ok(!week.events.some((e) => e.tlc_event_id === EV2), '19 days ago is outside a 1-week look-back');
+  const month = await A.checkPlans({ env: pushEnv(), backDays: 31 });
+  assert.ok(month.events.some((e) => e.tlc_event_id === EV2 && e.fixable), 'and inside a 1-month one');
+});
+
+test('reapplyCredit: after a plan fix, re-toggles only attendees still owed credit, and confirms it on TLC', async () => {
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  const EV3 = 'evrecredit01';
+  const ev = mkEvent({ tlc_event_id: EV3, ical_uid: `feed163264ab00cd-${EV3}-tailrecredit1` });
+  const owed = mkPerson('Owed', 'Credit');
+  const full = mkPerson('Already', 'Credited');
+  const absent = mkPerson('Not', 'Marked');
+  mock.state.users = [
+    { hash: 'owedhawk0001', name: 'Credit, Owed', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' },
+    { hash: 'fullhawk0001', name: 'Credited, Already', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' },
+    { hash: 'abshawk00001', name: 'Marked, Not', attended: '', level_id: 'lvlhawk00001', patrol_id: 'pathawk10001' },
+  ];
+  mock.state.toggles = [];
+  mock.state.advancements = { fullhawk0001: ['itemhtty1001'] }; // got it elsewhere
+  // pushed under the BROKEN plan (warn mode): marked attended, credited nothing
+  mock.state.lessons = [mkLesson({ id: 'lesbroken006', level_id: ['wt'], patrol_id: [''] })];
+  A.saveSettings({ enabled: 1, use_lesson_plans: 1, plan_check: 'warn' });
+  A.enqueue(ev, [owed, full]);
+  await A.runPush({ manual: true, env: pushEnv() });
+  assert.deepEqual(mock.state.advancements.owedhawk0001 || [], [], 'the broken plan credited nobody');
+  // someone the app queued but who is no longer attended on TLC is left alone
+  db.prepare(`INSERT INTO tlc_attendance_push (event_id, person_id, tlc_event_id, use_lesson_plans, status) VALUES (?, ?, ?, 1, 'sent')`)
+    .run(ev, absent, EV3);
+
+  // refused while the plan is still broken
+  await assert.rejects(A.reapplyCredit(EV3, { env: pushEnv() }), /fix the plan first/);
+  // fix it, then re-apply
+  await A.fixEventPlans(EV3, { env: pushEnv() });
+  mock.state.toggles = [];
+  const r = await A.reapplyCredit(EV3, { env: pushEnv() });
+  assert.deepEqual(r.recredited, ['Owed Credit']);
+  assert.equal(r.verified, 1);
+  assert.equal(r.nothing_owed, 1, 'already holds everything: untouched');
+  assert.equal(r.not_marked, 1, 'not attended on TLC: never toggled');
+  assert.deepEqual(r.failed, []);
+  // exactly one un-mark (attendance only) then one re-mark with advancement, for that one person
+  assert.deepEqual(mock.state.toggles, [
+    { userId: 'owedhawk0001', eventId: EV3, value: '0', use_lesson_plans: '0' },
+    { userId: 'owedhawk0001', eventId: EV3, value: '1', use_lesson_plans: '1' },
+  ]);
+  assert.deepEqual(mock.state.advancements.owedhawk0001, ['itemhtty1001']);
+  assert.match(rowFor(ev, owed).detail, /advancement re-applied .* \(confirmed on TLC\)/);
+  assert.equal(r.event_start.slice(0, 10), '2026-08-10');
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  A.saveSettings({ plan_check: 'off' });
 });
