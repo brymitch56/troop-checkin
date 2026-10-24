@@ -1080,7 +1080,10 @@ const NO_CREDS = () => portal.t('Trail Life Connect credentials are not configur
 router.post('/tlc-attendance/plans/check', async (req, res) => {
   if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
   if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is running — try again in a minute.' });
-  try { res.json(await attendanceSync.checkPlans()); } catch (e) { res.status(502).json({ error: e.message }); }
+  // how far back to look: a past event's plan can still be repaired (it only
+  // affects pushes not yet sent); capped so one click never walks the whole calendar
+  const back = Math.min(Math.max(Math.round(Number((req.body || {}).back_days) || 7), 1), 120);
+  try { res.json(await attendanceSync.checkPlans({ backDays: back })); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 router.post('/tlc-attendance/plans/fix', async (req, res) => {
   if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });

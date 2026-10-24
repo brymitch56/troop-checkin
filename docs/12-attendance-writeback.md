@@ -209,8 +209,8 @@ broken plan before the push marks anyone: `POST
 level_id, patrol_id, items_id}` — the umbrella replaced by `$.wtIds`, blank
 entries dropped, nothing else changed (`repairBody`). The plan is then read
 back and a repair counts only if TLC no longer reports the problem. Admin →
-Import also has **Check plans** (read-only scan, a week back to two months
-ahead) and a per-event **Fix this plan**; repairs are listed with their dates.
+Import also has **Check plans** (read-only scan from a chosen look-back — 1 week, 1 month or 3 months, capped
+at 120 days — to two months ahead) and a per-event **Fix this plan**; repairs are listed with their dates.
 Warnings always name the event with its date — a troop's weekly meetings share
 one title.
 

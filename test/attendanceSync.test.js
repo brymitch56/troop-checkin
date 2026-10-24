@@ -848,3 +848,15 @@ test('push log: status filter (failed / held / pending / sent), whitelisted', ()
   assert.ok(A.recentRows(100)[0].event_start, 'rows carry the event date for the log');
   db.prepare('DELETE FROM tlc_attendance_push').run();
 });
+
+test('checkPlans: the look-back reaches past events (a past plan can still be repaired)', async () => {
+  const EV2 = 'evlookback01';
+  const past = new Date(Date.now() - 19 * 86400000).toISOString();
+  db.prepare(`INSERT INTO event (source, ical_uid, title, start_at, end_at, tlc_event_id)
+              VALUES ('ical', ?, 'Regular Weekly Meeting', ?, ?, ?)`).run(`feed163264ab00cd-${EV2}-taillookback1`, past, past, EV2);
+  mock.state.lessons = [mkLesson({ id: 'lesbroken005', level_id: ['wt'], patrol_id: [''] })];
+  const week = await A.checkPlans({ env: pushEnv(), backDays: 7 });
+  assert.ok(!week.events.some((e) => e.tlc_event_id === EV2), '19 days ago is outside a 1-week look-back');
+  const month = await A.checkPlans({ env: pushEnv(), backDays: 31 });
+  assert.ok(month.events.some((e) => e.tlc_event_id === EV2 && e.fixable), 'and inside a 1-month one');
+});

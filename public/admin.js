@@ -1919,7 +1919,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'tlca-plans-check') {
     e.target.disabled = true; const label = e.target.textContent; e.target.textContent = 'Checking…';
     try {
-      const r = await jpost('/admin/tlc-attendance/plans/check', {});
+      const r = await jpost('/admin/tlc-attendance/plans/check', { back_days: Number($('tlca-plans-back').value) || 7 });
       toast(r.events.length ? `${r.events.length} event(s) need attention` : `All ${r.checked} event(s) look right`, !!r.events.length);
     } catch (err) { toast(err.message, true); }
     e.target.disabled = false; e.target.textContent = label;
