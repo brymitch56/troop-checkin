@@ -609,7 +609,7 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   const put = await req('PUT', '/api/admin/tlc-attendance/settings',
     { body: { enabled: true, use_lesson_plans: false }, cookie: adminCookie });
   assert.deepEqual(put.json.settings,
-    { enabled: 1, use_lesson_plans: 0, plan_check: 'off', hold_release_hours: 72, plan_fix: 'off' });
+    { enabled: 1, use_lesson_plans: 0, plan_check: 'off', hold_release_hours: 72, plan_fix: 'off', uncovered_levels: 'hold' });
   const got = await req('GET', '/api/admin/tlc-attendance', { cookie: adminCookie });
   assert.equal(got.json.settings.enabled, 1);
   assert.equal(got.json.credentials_configured, true);
@@ -619,6 +619,10 @@ test('HTTP: admin settings/status routes, event override, sign-in enqueues', asy
   const patched = await req('PATCH', `/api/admin/events/${ev}`, { body: { tlc_push: 0 }, cookie: adminCookie });
   assert.equal(patched.json.tlc_push, 0);
   assert.equal((await req('PATCH', `/api/admin/events/${ev}`, { body: { tlc_push: null }, cookie: adminCookie })).json.tlc_push, null);
+  // levels with no plan: hold / push / follow global, nothing else
+  assert.equal((await req('PATCH', `/api/admin/events/${ev}`, { body: { tlc_uncovered: 'push' }, cookie: adminCookie })).json.tlc_uncovered, 'push');
+  assert.equal((await req('PATCH', `/api/admin/events/${ev}`, { body: { tlc_uncovered: '' }, cookie: adminCookie })).json.tlc_uncovered, null);
+  assert.equal((await req('PATCH', `/api/admin/events/${ev}`, { body: { tlc_uncovered: 'skip-everyone' }, cookie: adminCookie })).status, 400);
 
   // events list resolves + reports the TLC link
   const list = await req('GET', '/api/admin/events?include_past=1', { cookie: adminCookie });
@@ -916,4 +920,74 @@ test('reapplyCredit: after a plan fix, re-toggles only attendees still owed cred
   assert.equal(r.event_start.slice(0, 10), '2026-08-10');
   db.prepare('DELETE FROM tlc_attendance_push').run();
   A.saveSettings({ plan_check: 'off' });
+});
+
+// ------------------------------------- levels with no plan at the event ----
+test('outsidePlanLevels: only a level-scoped, healthy plan that omits their level', () => {
+  const nav = { level_id: 'lvlnav000001', patrol_id: 'patnav100001' };
+  const pl = (lessons) => P.parsePlans(lessonPlansHtml(lessons));
+  // a Woodlands-only plan (umbrella saved with its levels, the live shape): a Navigator is outside it
+  assert.equal(P.outsidePlanLevels(pl([mkLesson({ level_id: ['wt', 'lvlfox000001', 'lvlhawk00001'] })]), nav), true);
+  // their level IS in a plan: not outside
+  assert.equal(P.outsidePlanLevels(pl([mkLesson({ level_id: ['lvlnav000001'] })]), nav), false);
+  // any patrol-scoped plan: unknown which levels the patrols belong to, so never "outside"
+  assert.equal(P.outsidePlanLevels(pl([mkLesson({ level_id: ['lvlfox000001'] }), mkLesson({ id: 'les2', patrol_id: ['pathawk10001'] })]), nav), false);
+  // a broken plan is something to fix, not a level with nothing planned
+  assert.equal(P.outsidePlanLevels(pl([mkLesson({ level_id: ['wt'], patrol_id: [''] })]), nav), false);
+  // no plans at all, or nothing known about the member: false (the guard never holds those anyway)
+  assert.equal(P.outsidePlanLevels(pl([]), nav), false);
+  assert.equal(P.outsidePlanLevels(pl([mkLesson({ level_id: ['lvlfox000001'] })]), undefined), false);
+});
+
+test('uncovered levels: Hold parks a Navigator; "push attendance only" (global or per event) sends at once, nothing skipped', async () => {
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  db.prepare('DELETE FROM tlc_advancement_skipped').run();
+  const woodlandsOnly = [mkLesson({ id: 'leswoods0001', level_id: ['wt', 'lvlfox000001', 'lvlhawk00001'] })];
+  const navUser = (hash) => ({ hash, name: 'Navigate, Nora', attended: '', level_id: 'lvlnav000001', patrol_id: 'patnav100001' });
+
+  // 1. default (hold): parked, exactly as before this option existed
+  const nora = mkPerson('Nora', 'Navigate');
+  const ev1 = mkEvent();
+  mock.state.users = [navUser('navnora00001')];
+  mock.state.lessons = woodlandsOnly; mock.state.toggles = []; mock.state.advancements = {};
+  A.saveSettings({ enabled: 1, use_lesson_plans: 1, plan_check: 'hold', plan_fix: 'off' });
+  assert.equal(A.getSettings().uncovered_levels, 'hold', 'hold is the default');
+  A.enqueue(ev1, [nora]);
+  assert.equal((await A.runPush({ manual: true, env: pushEnv() })).held, 1);
+  assert.equal(mock.state.toggles.length, 0);
+
+  // 2. per-event override "push": the same row goes out now, attendance only, nothing skipped
+  db.prepare(`UPDATE event SET tlc_uncovered = 'push' WHERE id = ?`).run(ev1);
+  const r2 = await A.runPush({ manual: true, env: pushEnv() });
+  assert.deepEqual({ sent: r2.sent, held: r2.held, released: r2.released }, { sent: 1, held: 0, released: 0 });
+  assert.equal(rowFor(ev1, nora).hold_reason, null);
+  assert.match(rowFor(ev1, nora).detail, /no activity plan for their level — attendance only/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM tlc_advancement_skipped').get().n, 0);
+
+  // 3. global "push", event following it
+  const ned = mkPerson('Ned', 'Navigate');
+  const ev2 = mkEvent();
+  mock.state.users = [{ ...navUser('navned000001'), name: 'Navigate, Ned' }];
+  A.saveSettings({ uncovered_levels: 'push' });
+  A.enqueue(ev2, [ned]);
+  assert.equal((await A.runPush({ manual: true, env: pushEnv() })).sent, 1);
+
+  // 4. ...but a per-event "hold" still wins over the global push
+  const nat = mkPerson('Nat', 'Navigate');
+  const ev3 = mkEvent();
+  db.prepare(`UPDATE event SET tlc_uncovered = 'hold' WHERE id = ?`).run(ev3);
+  mock.state.users = [{ ...navUser('navnat000001'), name: 'Navigate, Nat' }];
+  A.enqueue(ev3, [nat]);
+  assert.equal((await A.runPush({ manual: true, env: pushEnv() })).held, 1);
+
+  // 5. and a patrol-scoped plan holds even on global push (cannot tell their level is unplanned)
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  const ev4 = mkEvent();
+  mock.state.lessons = [mkLesson({ id: 'lespatrol001', patrol_id: ['pathawk10001'] })];
+  mock.state.users = [{ ...navUser('navnoa000001'), name: 'Navigate, Noa' }];
+  A.enqueue(ev4, [mkPerson('Noa', 'Navigate')]);
+  assert.equal((await A.runPush({ manual: true, env: pushEnv() })).held, 1);
+
+  db.prepare('DELETE FROM tlc_attendance_push').run();
+  A.saveSettings({ uncovered_levels: 'hold', plan_check: 'off' });
 });

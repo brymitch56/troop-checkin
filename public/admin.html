@@ -409,7 +409,17 @@
             <option value="off">Report only</option>
             <option value="auto">Fix automatically on TLC</option>
           </select></label>
+        <label title="Per-event override in the event editor">Levels with no plan at the event
+          <select id="tlca-uncovered">
+            <option value="hold">Hold like any uncovered attendee</option>
+            <option value="push">No advancement expected — push attendance only</option>
+          </select></label>
       </div>
+      <p class="hint left"><b>Levels with no plan</b>: a Navigator at a meeting whose activity plan covers only the
+      Woodlands levels has nothing to earn there. On <b>Hold</b> their push waits for the release window and is then
+      listed as skipped; on <b>push attendance only</b> they are marked attended at once and nothing is listed. This
+      applies only when the plan is set by <i>level</i> and theirs is not in it — a patrol-based or broken plan still
+      holds. If a plan for their level is added afterwards, the event editor's <b>Re-apply credit</b> gives them the credit.</p>
       <p class="hint left"><b>Broken plans</b> are the two shapes that lose credit: the combined
       “Woodlands Trail” level saved <i>without</i> the individual levels, and a patrol list that is only a
       blank entry. Set to <b>Fix automatically</b>, the push rewrites such a plan on Trail Life Connect —

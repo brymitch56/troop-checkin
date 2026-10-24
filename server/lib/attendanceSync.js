@@ -61,7 +61,13 @@ function writeMeta(key, obj) {
 //   auto  repair it (tlcPlans.repairPlans), re-read it, then push
 const PLAN_CHECK_MODES = ['off', 'warn', 'hold'];
 const PLAN_FIX_MODES = ['off', 'auto'];
-const getSettings = () => ({ plan_fix: 'off', ...readMeta(SETTINGS_KEY, {
+// uncovered_levels — an attendee whose LEVEL is not in the event's plan at all
+// (tlcPlans.outsidePlanLevels: a Navigator at a Woodlands-only meeting):
+//   hold  treat like any uncovered attendee (park, release after the window)
+//   push  mark attendance at once, attendance only — nothing was planned for them
+// Per-event override: event.tlc_uncovered (NULL follows this).
+const UNCOVERED_MODES = ['hold', 'push'];
+const getSettings = () => ({ plan_fix: 'off', uncovered_levels: 'hold', ...readMeta(SETTINGS_KEY, {
   enabled: 0, use_lesson_plans: 1, plan_check: 'off', hold_release_hours: 72,
 }) });
 function saveSettings(patch) {
@@ -72,6 +78,7 @@ function saveSettings(patch) {
     s.plan_check = PLAN_CHECK_MODES.includes(patch.plan_check) ? patch.plan_check : 'off';
   }
   if ('plan_fix' in patch) s.plan_fix = PLAN_FIX_MODES.includes(patch.plan_fix) ? patch.plan_fix : 'off';
+  if ('uncovered_levels' in patch) s.uncovered_levels = UNCOVERED_MODES.includes(patch.uncovered_levels) ? patch.uncovered_levels : 'hold';
   if ('hold_release_hours' in patch) {
     const n = Number(patch.hold_release_hours);
     s.hold_release_hours = Number.isFinite(n) && n >= 1 && n <= 24 * 30 ? Math.round(n) : 72;
@@ -619,7 +626,15 @@ async function runPush({ manual = false, env = process.env } = {}) {
           if (pf.warnings.length) planWarnings.set(row.tlc_event_id, { warnings: pf.warnings, plans: pf.plans });
           if (pf.plans) {
             const cov = tlcPlans.coverageFor(pf.plans, m.hash, list.users.get(m.hash));
-            if (cov.applicable && !cov.covered) {
+            const evMode = db.prepare('SELECT tlc_uncovered FROM event WHERE id = ?').get(row.event_id);
+            const uncoveredMode = (evMode && evMode.tlc_uncovered) || settings.uncovered_levels;
+            if (cov.applicable && !cov.covered && uncoveredMode === 'push'
+                && tlcPlans.outsidePlanLevels(pf.plans, list.users.get(m.hash))) {
+              // nothing was planned for their level: attendance now, no hold,
+              // nothing "skipped" (Re-apply credit recovers it if a plan is added)
+              note = portal.t('no activity plan for their level — attendance only');
+              if (row.hold_reason) unholdRow(row.id);
+            } else if (cov.applicable && !cov.covered) {
               if (settings.plan_check === 'hold' && !holdExpired(row, settings.hold_release_hours)) {
                 // Park it. TLC has not seen this person yet, so the one
                 // chance to record their advancement is still intact.
@@ -899,7 +914,7 @@ module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
   enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
-  PLAN_CHECK_MODES, PLAN_FIX_MODES, plansFor, holdExpired, checkPlans, fixEventPlans, reapplyCredit,
+  PLAN_CHECK_MODES, PLAN_FIX_MODES, UNCOVERED_MODES, plansFor, holdExpired, checkPlans, fixEventPlans, reapplyCredit,
   skippedRows, verifySkipped, acknowledgeSkipped,
   tlcIdFromBadge, adoptBadgeTlcId, backfillFromBadges,
   normName, nameKey, parseUserList, matchPerson,

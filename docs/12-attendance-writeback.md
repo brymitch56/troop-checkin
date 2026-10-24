@@ -201,6 +201,20 @@ now holds the plan's items, and `…/ack` refuses unless that verify came back
 A plan read that fails never makes the write-back worse than it was before
 the guard existed: the error is recorded on the row and the push proceeds.
 
+### Levels with no plan at the event (`uncovered_levels`, `event.tlc_uncovered`)
+
+A Navigator at a meeting whose only plan is for the Woodlands levels has
+nothing to earn there, yet under `hold` their push would park for the release
+window and then land in `tlc_advancement_skipped`. With `uncovered_levels`
+`push` (global; per event `tlc_uncovered`, NULL follows the global, default
+`hold`) such a person is marked attended at once with the note "no activity
+plan for their level — attendance only" and nothing is recorded as skipped.
+It applies only when `tlcPlans.outsidePlanLevels` holds: every plan on the
+event is level-scoped, healthy, and none lists their level. A patrol-scoped
+plan (whose patrols' levels the app cannot see) or a broken plan still holds.
+If a plan for their level is added later, the event editor's **Re-apply
+credit** (`reapplyCredit`) recovers it.
+
 ### Which plans count as broken, and repairing them (`plan_fix`)
 
 Only two shapes lose credit (`tlcPlans.planProblems`): the `"wt"` umbrella
