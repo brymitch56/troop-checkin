@@ -1093,6 +1093,16 @@ router.post('/tlc-attendance/plans/fix', async (req, res) => {
   try { res.json(await attendanceSync.fixEventPlans(tid)); } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// After a plan is fixed: un-mark and re-mark the attendees still owed credit
+// so TLC applies the corrected plan (the one place the app un-marks anyone).
+router.post('/tlc-attendance/plans/recredit', async (req, res) => {
+  if (!rosterSync.credentialInfo().source) return res.status(422).json({ error: NO_CREDS() });
+  if (attendanceSync.isRunning()) return res.status(409).json({ error: 'A push is running — try again in a minute.' });
+  const tid = String((req.body || {}).tlc_event_id || '');
+  if (!/^[a-z0-9]{10,14}$/i.test(tid)) return res.status(400).json({ error: 'tlc_event_id is required' });
+  try { res.json(await attendanceSync.reapplyCredit(tid)); } catch (e) { res.status(e.code === 409 ? 409 : 502).json({ error: e.message }); }
+});
+
 router.post('/tlc-attendance/retry', (req, res) => {
   res.json({ ok: true, ...attendanceSync.retryFailed() });
 });
