@@ -154,6 +154,7 @@
         <label>From <input id="rp-from" type="date"></label>
         <label>To <input id="rp-to" type="date"></label>
         <select id="rp-event"><option value="">All events</option></select>
+        <select id="rp-level" aria-label="Level" title="Youth at this level (or combined level) — adults drop out of a level-filtered report"><option value="">All levels</option></select>
         <input id="rp-person" type="search" placeholder="One person (optional)…">
         <span id="rp-person-pick" class="tag off" hidden></span>
       </div>
@@ -336,6 +337,22 @@
       </div>
 
       <div id="sync-pending"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Level groups and order</h3>
+      <p class="hint left">Levels that meet together get one combined name that every level filter offers —
+      the kiosk and on-site screens, Reports, and every Level column. One line per level, in program order
+      (Level sorts follow it); a combined level is <code>Name = Level, Level</code>. Spell levels exactly as
+      the roster does. Levels left out still work and sort after these, A–Z. Leave it empty for no combined
+      levels.</p>
+      <textarea id="lg-text" rows="6" spellcheck="false"
+        placeholder="Fox&#10;Hawk&#10;Mountain Lion&#10;— or —&#10;Woodlands = Fox, Hawk, Mountain Lion&#10;Nav/Adv = Navigator, Adventurer"></textarea>
+      <p id="lg-roster" class="hint left"></p>
+      <p id="lg-error" class="error left"></p>
+      <div class="row wrap">
+        <button id="lg-save" class="btn primary small">Save level groups</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -631,6 +648,7 @@
 <div id="toast" class="toast" hidden></div>
 <script src="portal.js"></script>
 <script src="access-guard.js"></script>
+<script src="level-groups.js"></script>
 <script src="tabletools.js"></script>
 <script src="admin.js"></script>
 </body>

@@ -105,6 +105,10 @@
 }
 .tt-menu .tt-vals label:hover { background: #EEF2EA; }
 .tt-menu .tt-vals label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* combined levels (PiPa, Woodlands): tick their member levels below */
+.tt-menu .tt-groups { margin-bottom: 6px; }
+.tt-menu .tt-groups label { display: flex; align-items: center; gap: 7px; padding: 4px 5px; font-size: 13.5px; border-radius: 6px; cursor: pointer; }
+.tt-menu .tt-groups label:hover { background: #EEF2EA; }
 .tt-menu .tt-actions { display: flex; gap: 6px; margin-top: 7px; }
 .tt-menu .tt-actions .tt-apply { background: var(--pine); color: #fff; border-color: var(--pine); font-weight: 600; }
 
@@ -170,6 +174,10 @@
   border-radius: 8px; font-family: inherit; resize: vertical; margin-bottom: 8px;
 }
 tr.msg-reply { background: #FDF4EC; }
+#lg-text {
+  width: 100%; max-width: 520px; font-size: 15px; padding: 8px; border: 1.5px solid var(--line);
+  border-radius: 8px; font-family: inherit; resize: vertical;
+}
 
 .filters label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
 .filters input[type="date"] { font-size: 15px; padding: 8px; border: 1.5px solid var(--line); border-radius: 8px; background: var(--card); }

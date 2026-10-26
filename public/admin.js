@@ -18,6 +18,10 @@ const fmtDT = (s) => {
 // A date cell: shows the friendly local string, sorts chronologically
 // (tabletools reads data-sort when present).
 const dtCell = (s) => `<td data-sort="${esc(s || '')}">${fmtDT(s)}</td>`;
+// Program-level column: tabletools sorts it in program order and its filter
+// offers the combined levels (PiPa, Woodlands…) — see loadLevelConfig.
+const LEVEL_TH = '<th data-tt-levels>Level</th>';
+const levelTd = (p) => `<td>${esc(p.level || '')}</td>`;
 // Milliseconds for a stored timestamp, by the same naive-UTC rule as fmtDT.
 // 0 when absent, so "unknown" compares as oldest.
 const tsOf = (s) => {
@@ -134,10 +138,21 @@ $('login-form').onsubmit = async (e) => {
 };
 $('logout').onclick = async () => { await jpost('/logout', {}).catch(() => {}); me = null; renderLogin(); };
 
-function enterApp() {
+async function enterApp() {
   $('screen-login').hidden = true; $('screen-app').hidden = false;
   $('logout').textContent = `${me.name} · sign out`;
+  await loadLevelConfig();
   showTab('dash');
+}
+
+// Combined levels + program order (Roster import → Level groups). Every Level
+// column and level filter reads it; a failed fetch just means A–Z, no groups.
+let levelCfg = null;
+let levelMatch = LevelGroups.create(null);
+async function loadLevelConfig() {
+  levelCfg = await api('/level-groups').catch(() => null);
+  levelMatch = LevelGroups.create(levelCfg);
+  if (window.TableTools) window.TableTools.setLevels(levelCfg);
 }
 
 // ----------------------------------------------------------------- tabs ----
@@ -206,8 +221,8 @@ async function loadDash() {
     : 'iCal has not synced yet.';
 
   const open = await api('/onsite');
-  $('dash-open').innerHTML = open.length ? `<table><tr><th>Name</th><th>Patrol</th><th>Event</th><th>In since</th><th data-nofilter></th></tr>` +
-    open.map((r) => `<tr><td>${esc(r.first_name)} ${esc(r.last_name)}</td><td>${esc(r.patrol || '')}</td>
+  $('dash-open').innerHTML = open.length ? `<table><tr><th>Name</th><th>Patrol</th>${LEVEL_TH}<th>Event</th><th>In since</th><th data-nofilter></th></tr>` +
+    open.map((r) => `<tr><td>${esc(r.first_name)} ${esc(r.last_name)}</td><td>${esc(r.patrol || '')}</td>${levelTd(r)}
       <td>${esc(r.event_title)}</td>${dtCell(r.signed_at)}
       <td><button class="btn ghost small" data-close="${r.id}" data-close-name="${esc(r.first_name)} ${esc(r.last_name)}">Admin close</button></td></tr>`).join('') + '</table>'
     : '<p class="hint left">Nobody is on site.</p>';
@@ -285,11 +300,11 @@ async function loadPeople() {
   if ($('pp-status').value) q.set('status', $('pp-status').value);
   loadDupes(); // same-name surfacing rides along with the People tab
   const rows = await api('/admin/people?' + q);
-  $('pp-list').innerHTML = `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th><th>Status</th><th>Badge</th></tr>` +
+  $('pp-list').innerHTML = `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th>${LEVEL_TH}<th>Status</th><th>Badge</th></tr>` +
     rows.map((p) => `<tr data-id="${p.id}">
       <td>${esc(p.last_name)}, ${esc(p.first_name)}${p.nickname ? ` “${esc(p.nickname)}”` : ''}</td>
       <td><span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span></td>
-      <td>${esc(p.member_id || '')}</td><td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>
+      <td>${esc(p.member_id || '')}</td><td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>${levelTd(p)}
       <td>${p.status === 'active' ? '' : `<span class="tag warn">${esc(p.status)}</span>`}</td>
       <td>${p.has_badge ? '✓' : ''}</td></tr>`).join('') + '</table>';
   $('pp-list').onclick = (e) => {
@@ -882,11 +897,11 @@ function adultSmsBlock(p, forms) {
 
 function wardBlock(p) {
   if (!p.wards.length) return '';
-  return `<h3>Authorized for</h3><div class="tbl"><table><tr><th>Youth</th><th>Patrol</th><th>Authorized</th></tr>
+  return `<h3>Authorized for</h3><div class="tbl"><table><tr><th>Youth</th><th>Patrol</th>${LEVEL_TH}<th>Authorized</th></tr>
     ${p.wards.map((w) => `<tr>
       <td><button type="button" class="namelink" data-person="${w.id}"
         title="Open this youth's record">${esc(w.first_name)} ${esc(w.last_name)}</button></td>
-      <td>${esc(w.patrol || '')}</td>
+      <td>${esc(w.patrol || '')}</td>${levelTd(w)}
       <td>${w.authorized ? '✓' : '✗'}${w.is_primary ? ' · primary' : ''}</td></tr>`).join('')}</table></div>`;
 }
 async function guardianAction(p, btn) {
@@ -1085,8 +1100,8 @@ async function loadEventForms(id) {
       <button class="btn ghost small" id="evf-forms-upload">Upload participants export</button>
     </div>
     <div class="tbl">${s.youth.length
-      ? '<table><tr><th>Youth</th><th>Patrol</th><th>Signed</th></tr>' + s.youth.map((y) => `<tr>
-          <td>${esc(y.last_name)}, ${esc(y.first_name)}</td><td>${esc(y.patrol || '')}</td>
+      ? `<table><tr><th>Youth</th><th>Patrol</th>${LEVEL_TH}<th>Signed</th></tr>` + s.youth.map((y) => `<tr>
+          <td>${esc(y.last_name)}, ${esc(y.first_name)}</td><td>${esc(y.patrol || '')}</td>${levelTd(y)}
           <td data-sort="${y.signed}">${y.signed ? '✓' : '<span class="tag warn">not signed</span>'}</td>
         </tr>`).join('') + '</table>'
       : '<p class="hint left">No per-youth data yet — refresh from TLC or upload the export.</p>'}</div>`;
@@ -1243,8 +1258,8 @@ async function openTxn(id) {
       <div><label>Signer</label><div>${esc(t.signer_name || t.signer_name_override || '—')}</div></div>
       <div><label>Flags</label><div>${t.forced ? 'override ' : ''}${t.close_method || ''}${t.voided_by_txn_id ? ` · voided by #${t.voided_by_txn_id}` : ''}</div></div>
     </div>
-    <div class="tbl"><table><tr><th>Person</th><th>Patrol</th><th>Emergency phones</th><th>Open</th></tr>
-      ${t.entries.map((e) => `<tr><td>${esc(e.first_name)} ${esc(e.last_name)}</td><td>${esc(e.patrol || '')}</td>
+    <div class="tbl"><table><tr><th>Person</th><th>Patrol</th>${LEVEL_TH}<th>Emergency phones</th><th>Open</th></tr>
+      ${t.entries.map((e) => `<tr><td>${esc(e.first_name)} ${esc(e.last_name)}</td><td>${esc(e.patrol || '')}</td>${levelTd(e)}
         <td>${esc([e.emerg_phone_1, e.emerg_phone_2].filter(Boolean).join(' / '))}</td>
         <td>${e.open ? 'still on site' : ''}</td></tr>`).join('')}</table></div>
     ${t.signature_path ? `<h3>Signature</h3><img class="sig-view" src="/signatures/${esc(t.signature_path)}" alt="signature">` : ''}
@@ -1347,6 +1362,12 @@ async function loadReports() {
   const events = await api('/admin/events?include_past=1'); // txn/report filters need history
   $('rp-event').innerHTML = '<option value="">All events</option>' +
     events.map((e) => `<option value="${e.id}">${esc(e.title)} · ${fmtDT(e.start_at)}</option>`).join('');
+  // combined levels just above their members, program order; keep the choice
+  const levels = await api('/levels').catch(() => []);
+  const keep = $('rp-level').value;
+  $('rp-level').innerHTML = '<option value="">All levels</option>' +
+    levelMatch.options(levels).map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+  $('rp-level').value = keep;
   renderReportLinks();
   // awaited so loadReports() resolving means the panels are populated and
   // the layout has settled — the dashboard card jumps scroll after this
@@ -1366,12 +1387,12 @@ async function loadExpiring() {
   $('mx-csv').href = `/api/admin/export/expiring.csv?days=${days}`;
   const rows = await api(`/admin/expiring?days=${days}`).catch(() => []);
   $('mx-list').innerHTML = rows.length
-    ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th><th>Expires</th><th>Days left</th></tr>` +
+    ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th>${LEVEL_TH}<th>Expires</th><th>Days left</th></tr>` +
       rows.map((p) => `<tr>
         <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
         <td><span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span></td>
         <td>${esc(p.member_id || '')}</td>
-        <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>
+        <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>${levelTd(p)}
         <td>${esc(p.membership_expires)}</td>
         <td data-sort="${p.days_left}">${p.days_left < 0 ? `<span class="tag warn">expired ${-p.days_left}d ago</span>` : p.days_left}</td>
       </tr>`).join('') + '</table>'
@@ -1391,12 +1412,12 @@ async function loadHealthForms() {
     if (document.activeElement !== $('hf-flag-checkin')) $('hf-flag-checkin').checked = !!f.health_form;
   }).catch(() => {});
   $('hf-list').innerHTML = rows.length
-    ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th>${missing ? '' : '<th>Submitted</th><th>Expires</th><th>Days left</th>'}</tr>` +
+    ? `<table><tr><th>Name</th><th>Type</th><th>Member #</th><th>Patrol / role</th>${LEVEL_TH}${missing ? '' : '<th>Submitted</th><th>Expires</th><th>Days left</th>'}</tr>` +
       rows.map((p) => `<tr>
         <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
         <td><span class="tag ${p.is_youth ? 'youth' : 'adult'}">${p.is_youth ? 'youth' : 'adult'}</span></td>
         <td>${esc(p.member_id || '')}</td>
-        <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>
+        <td>${esc(p.is_youth ? p.patrol || '' : p.role || '')}</td>${levelTd(p)}
         ${missing ? '' : `<td>${esc(p.submitted_on)}</td><td>${esc(p.expires_on || '')}</td>
         <td data-sort="${p.days_left}">${p.days_left < 0 ? `<span class="tag warn">expired ${-p.days_left}d ago</span>` : p.days_left}</td>`}
       </tr>`).join('') + '</table>'
@@ -1426,10 +1447,10 @@ async function loadOptin() {
   $('ov-csv').href = `/api/admin/export/optin.csv?view=${view}`;
   const r = await api(`/admin/optin-report?view=${view}`).catch(() => ({ youth: [], adults: [] }));
   const youthTbl = r.youth.length
-    ? `<table><tr><th>Name</th><th>Patrol</th><th>Authorized guardians</th></tr>` +
+    ? `<table><tr><th>Name</th><th>Patrol</th>${LEVEL_TH}<th>Authorized guardians</th></tr>` +
       r.youth.map((p) => `<tr>
         <td>${esc(p.last_name)}, ${esc(p.first_name)}</td>
-        <td>${esc(p.patrol || '')}</td>
+        <td>${esc(p.patrol || '')}</td>${levelTd(p)}
         <td data-sort="${p.guardian_count}">${p.guardian_count === 0 ? '<span class="tag warn">no guardians linked</span>' : p.guardian_count}</td>
       </tr>`).join('') + '</table>'
     : `<p class="hint left">${view === 'declined' ? 'No families have declined. 🎉' : 'Every youth family has answered. 🎉'}</p>`;
@@ -1468,6 +1489,7 @@ function reportQuery() {
   if ($('rp-from').value) q.set('from', $('rp-from').value);
   if ($('rp-to').value) q.set('to', $('rp-to').value);
   if ($('rp-event').value) q.set('event_id', $('rp-event').value);
+  if ($('rp-level').value) q.set('level', $('rp-level').value);
   if (rpPersonId) q.set('person_id', rpPersonId);
   return q.toString();
 }
@@ -1478,7 +1500,7 @@ function renderReportLinks() {
 }
 let rpTimer;
 document.addEventListener('input', (e) => {
-  if (['rp-from', 'rp-to', 'rp-event'].includes(e.target.id)) renderReportLinks();
+  if (['rp-from', 'rp-to', 'rp-event', 'rp-level'].includes(e.target.id)) renderReportLinks();
   if (e.target.id === 'rp-person') {
     clearTimeout(rpTimer);
     rpPersonId = null; $('rp-person-pick').hidden = true; renderReportLinks();
@@ -1511,9 +1533,9 @@ async function runReport() {
   const q = reportQuery();
   const rows = await api('/admin/report/summary' + (q ? `?${q}` : ''));
   $('rp-result').innerHTML = rows.length
-    ? `<table><tr><th>Name</th><th>Type</th><th>Patrol</th><th>Events</th><th>Sign-ins</th><th>First seen</th><th>Last seen</th></tr>` +
+    ? `<table><tr><th>Name</th><th>Type</th><th>Patrol</th>${LEVEL_TH}<th>Events</th><th>Sign-ins</th><th>First seen</th><th>Last seen</th></tr>` +
       rows.map((r) => `<tr><td>${esc(r.last_name)}, ${esc(r.first_name)}</td>
-        <td><span class="tag ${r.type}">${r.type}</span></td><td>${esc(r.patrol || '')}</td>
+        <td><span class="tag ${r.type}">${r.type}</span></td><td>${esc(r.patrol || '')}</td>${levelTd(r)}
         <td>${r.events_attended}</td><td>${r.sign_ins}</td>
         ${dtCell(r.first_seen)}${dtCell(r.last_seen)}</tr>`).join('') + '</table>'
     : '<p class="hint left">No attendance in that range.</p>';
@@ -2125,12 +2147,39 @@ document.addEventListener('click', async (e) => {
 });
 
 // --------------------------------------------------------------- import ----
+// ------------------------------------------------------- level groups ----
+// The list plus the roster's actual level names beside it, so a misspelled
+// level ("Mountain lions") is obvious before anyone wonders why PiPa is empty.
+async function loadLevelGroupsPanel() {
+  const [cfg, levels] = await Promise.all([api('/admin/level-groups'), api('/levels').catch(() => [])]);
+  if (document.activeElement !== $('lg-text')) $('lg-text').value = cfg.text || '';
+  $('lg-error').textContent = '';
+  const named = new Set((cfg.order || []).map((l) => l.toLowerCase()));
+  const unlisted = levels.filter((l) => !named.has(l.toLowerCase()));
+  const missing = (cfg.order || []).filter((l) => !levels.some((r) => r.toLowerCase() === l.toLowerCase()));
+  $('lg-roster').innerHTML = levels.length
+    ? `Levels on the roster now: <b>${levels.map(esc).join(', ')}</b>` +
+      (unlisted.length && cfg.text ? ` · not in the list (sorted last): ${unlisted.map(esc).join(', ')}` : '') +
+      (missing.length ? ` · <span class="warn-text">in the list but on nobody's record right now: ${missing.map(esc).join(', ')} — fine if no one is at that level, otherwise check the spelling</span>` : '')
+    : 'No youth levels on the roster yet.';
+}
+$('lg-save').onclick = async () => {
+  $('lg-error').textContent = '';
+  try {
+    await jput('/admin/level-groups', { text: $('lg-text').value });
+    await loadLevelConfig();
+    toast('Level groups saved — kiosks pick them up the next time the check-in page is opened or reloaded.');
+    loadLevelGroupsPanel();
+  } catch (e) { $('lg-error').textContent = e.message; }
+};
+
 async function loadImport() {
   $('imp-commit').disabled = true;
   $('imp-result').innerHTML = '';
   loadSync();
   loadTlca();
   loadUnregistered();
+  loadLevelGroupsPanel();
   api('/admin/permission-forms').then((s) => {
     if (document.activeElement !== $('pf-enabled')) $('pf-enabled').checked = !!s.enabled;
     if (document.activeElement !== $('pf-block-default')) $('pf-block-default').value = s.block_default ? '1' : '0';

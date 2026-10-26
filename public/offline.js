@@ -51,6 +51,7 @@
       kv.put(snap.badges, 'badges');
       kv.put(snap.events, 'events');
       kv.put(snap.form_status || [], 'form_status'); // per-event permission forms
+      kv.put(snap.level_groups || null, 'level_groups'); // combined levels + order
       kv.put(snap.taken_at, 'taken_at');
       t.oncomplete = resolve; t.onerror = () => reject(t.error);
     });
@@ -178,14 +179,16 @@
     return rows.filter((r) => r.event_id === eventId);
   }
 
-  // Kiosk filter choices (patrol / level) straight from the snapshot, so the
-  // dropdowns are populated offline exactly as they are online.
+  // Kiosk filter choices (patrol / level / level groups) straight from the
+  // snapshot, so the dropdowns are populated offline exactly as they are
+  // online. Pre-groups snapshots have no level_groups: no groups, A–Z order.
   async function facets() {
     const people = await getAll('people');
     const of = (key) => [...new Set(people
       .filter((p) => p.is_youth && p[key])
       .map((p) => String(p[key])))].sort((a, b) => a.localeCompare(b));
-    return { patrols: of('patrol'), levels: of('level') };
+    const levelGroups = (await kvGet('level_groups')) || { order: [], groups: [] };
+    return { patrols: of('patrol'), levels: of('level'), levelGroups };
   }
 
   window.Offline = {

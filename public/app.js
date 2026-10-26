@@ -303,16 +303,21 @@ resetIdle();
 // server; offline they are derived from the snapshot, so the dropdowns are
 // never empty at a campout. Cached for the session — a roster import is rare
 // and refreshSnapshot() clears it.
+// Combined levels ("PiPa", "Woodlands") ride along: levelMatch is the matcher
+// every client-side level filter and sort uses (public/level-groups.js).
 let facetCache = null;
+let levelMatch = LevelGroups.create(null);
 async function rosterFacets() {
   if (facetCache) return facetCache;
-  const [patrols, levels] = await Promise.all([
+  const [patrols, levels, levelGroups] = await Promise.all([
     api('/patrols').catch(() => null),
     api('/levels').catch(() => null),
+    api('/level-groups').catch(() => null),
   ]);
-  facetCache = (patrols && levels)
-    ? { patrols, levels }
-    : await Offline.facets().catch(() => ({ patrols: [], levels: [] }));
+  facetCache = (patrols && levels && levelGroups)
+    ? { patrols, levels, levelGroups }
+    : await Offline.facets().catch(() => ({ patrols: [], levels: [], levelGroups: null }));
+  levelMatch = LevelGroups.create(facetCache.levelGroups);
   return facetCache;
 }
 
@@ -329,9 +334,16 @@ function fillFilterSelect(sel, values, current, allLabel) {
     sel.appendChild(o);
   };
   add('', allLabel);
-  opts.forEach((v) => add(v, v));
+  opts.forEach((v) => (typeof v === 'object' ? add(v.value, v.label) : add(v, v)));
   sel.value = current || '';
   sel.classList.toggle('active', !!current);
+}
+// Level dropdown: each combined level just above its members, program order.
+// A remembered choice no longer on the roster stays visible (see above).
+function fillLevelSelect(sel, levels, current) {
+  const opts = levelMatch.options(levels);
+  if (current && !opts.some((o) => o.value === current)) opts.push({ value: current, label: current });
+  fillFilterSelect(sel, opts, current, 'All levels');
 }
 
 // ------------------------------------------------------- station mode ----
@@ -341,7 +353,7 @@ function fillFilterSelect(sel, values, current, allLabel) {
 async function renderKioskFilters() {
   const { patrols, levels } = await rosterFacets();
   fillFilterSelect($('kiosk-patrol'), patrols, state.station, 'All patrols');
-  fillFilterSelect($('kiosk-level'), levels, state.stationLevel, 'All levels');
+  fillLevelSelect($('kiosk-level'), levels, state.stationLevel);
   $('kiosk-filter-note').hidden = !state.station && !state.stationLevel;
 }
 function setStationScope(key, storageKey, value) {
@@ -363,7 +375,7 @@ $('kiosk-level').onchange = (e) => setStationScope('stationLevel', 'station-leve
 // of them because the device is scoped to a patrol.
 const stationFilter = (rows) => rows.filter((p) => !p.is_youth
   || ((!state.station || (p.patrol || '') === state.station)
-    && (!state.stationLevel || (p.level || '') === state.stationLevel)));
+    && levelMatch.matches(p.level, state.stationLevel)));
 
 const eventsCurrent = () =>
   api('/events/current').catch((e) => { if (e.status) throw e; return Offline.currentEvents(); });
@@ -1069,7 +1081,7 @@ const scopeLabel = () => [
   state.level ? `level ${state.level}` : null,
 ].filter(Boolean).join(' + ');
 const matchesScope = (p, patrol, level) =>
-  (!patrol || (p.patrol || '') === patrol) && (!level || (p.level || '') === level);
+  (!patrol || (p.patrol || '') === patrol) && levelMatch.matches(p.level, level);
 
 async function refreshOnsiteCount() {
   const rows = await api('/onsite' + onsiteQuery(state.station, state.stationLevel)).catch(async (e) => {
@@ -1254,12 +1266,13 @@ async function onsiteRowsOffline() {
 }
 
 // On-site sort (open-house request 2026-08-30): default LAST NAME within each
-// event group; Sign-in time / Patrol / First name selectable; remembered per
+// event group; Sign-in time / Patrol / Level / First name selectable; remembered per
 // device like the station patrol. Client-side so it works offline — offline
 // rows have no signed_at, so the time sort falls back to name order instead
 // of scrambling.
 const ONSITE_SORTS = [
-  ['last', 'Last name'], ['time', 'Sign-in time'], ['patrol', 'Patrol'], ['first', 'First name'],
+  ['last', 'Last name'], ['time', 'Sign-in time'], ['patrol', 'Patrol'], ['level', 'Level'],
+  ['first', 'First name'],
 ];
 let onsiteSort = localStorage.getItem('onsite-sort') || 'last';
 function onsiteComparator(key) {
@@ -1272,6 +1285,8 @@ function onsiteComparator(key) {
     if (!a.patrol !== !b.patrol) return a.patrol ? -1 : 1;
     return (a.patrol || '').localeCompare(b.patrol || '') || byName(a, b);
   };
+  // program order (the admin's level list), no level (adults, visitors) last
+  if (key === 'level') return (a, b) => levelMatch.compare(a.level, b.level) || byName(a, b);
   if (key === 'time') return (a, b) => {
     const ta = a.signed_at ? new Date(a.signed_at).getTime() : null;
     const tb = b.signed_at ? new Date(b.signed_at).getTime() : null;
@@ -1360,7 +1375,7 @@ async function renderOnsite() {
   const rows = scoped.filter(matchesWho);
   const { patrols, levels } = await rosterFacets();
   fillFilterSelect($('onsite-patrol'), patrols, state.patrol, 'All patrols');
-  fillFilterSelect($('onsite-level'), levels, state.level, 'All levels');
+  fillLevelSelect($('onsite-level'), levels, state.level);
   $('onsite-who').value = state.who || '';
   $('onsite-who').classList.toggle('active', !!state.who);
   syncOnsiteBroadcasts();
@@ -1406,7 +1421,7 @@ async function renderOnsite() {
         : '';
       el.innerHTML = `<span>${r.nickname || r.first_name} ${r.last_name}
           ${r.is_youth ? '' : '<span class="adult-tag">adult</span>'}</span>
-        <span class="since">${r.patrol || ''}${since}</span>`;
+        <span class="since">${[r.patrol, r.level].filter(Boolean).join(' · ')}${since}</span>`;
       el.onclick = () => showEmergencyInfo(r.id, r); // tap → emergency contacts + Add to checkout
       div.appendChild(el);
     }

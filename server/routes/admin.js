@@ -9,6 +9,7 @@ const multer = require('multer');
 const { db, DATA_DIR } = require('../db');
 const auth = require('../auth');
 const icalSync = require('../lib/icalSync');
+const levelGroups = require('../lib/levelGroups');
 
 const PHOTO_DIR = path.join(DATA_DIR, 'photos');
 fs.mkdirSync(PHOTO_DIR, { recursive: true });
@@ -71,7 +72,7 @@ router.get('/people/:id', (req, res) => {
       WHERE pg.youth_id = ? AND g.status != 'merged'
       ORDER BY pg.is_primary DESC, g.last_name`).all(p.id) : [];
   const wards = !p.is_youth ? db.prepare(
-    `SELECT y.id, y.first_name, y.last_name, y.patrol, pg.authorized, pg.is_primary
+    `SELECT y.id, y.first_name, y.last_name, y.patrol, y.level, pg.authorized, pg.is_primary
        FROM person_guardian pg JOIN person y ON y.id = pg.youth_id
       WHERE pg.guardian_id = ? AND y.status != 'merged'
       ORDER BY y.last_name`).all(p.id) : [];
@@ -505,7 +506,7 @@ router.get('/events/:id/form-status', (req, res) => {
   const ev = db.prepare('SELECT * FROM event WHERE id = ?').get(req.params.id);
   if (!ev) return res.status(404).json({ error: 'No such event.' });
   const youth = db.prepare(
-    `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol,
+    `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol, p.level,
             fs.signed, fs.fetched_at, fs.source
        FROM event_form_status fs JOIN person p ON p.id = fs.person_id
       WHERE fs.event_id = ?
@@ -602,7 +603,7 @@ router.get('/txns/:id', (req, res) => {
       WHERE t.id = ?`).get(req.params.id);
   if (!t) return res.status(404).json({ error: 'No such transaction.' });
   t.entries = db.prepare(
-    `SELECT tp.*, p.first_name, p.last_name, p.is_youth, p.patrol
+    `SELECT tp.*, p.first_name, p.last_name, p.is_youth, p.patrol, p.level
        FROM txn_person tp JOIN person p ON p.id = tp.person_id
       WHERE tp.txn_id = ?`).all(t.id);
   res.json(t);
@@ -1245,24 +1246,30 @@ router.get('/export/push-log.csv', (req, res) => {
     rows);
 });
 
-// Attendance detail — filterable by event, person, and date range (records
-// are kept forever; 3+ year lookback is just a wider from/to).
-const attendanceFilters = (q) => [
-  q.event_id || null, q.event_id || null,
-  q.person_id || null, q.person_id || null,
-  q.from || null, q.from || null,
-  q.to || null, q.to || null,
-];
+// Attendance detail — filterable by event, person, level (one level or a
+// combined one like PiPa), and date range (records are kept forever; 3+ year
+// lookback is just a wider from/to).
+const attendanceFilters = (q) => {
+  const level = levelGroups.sqlParam(q.level);
+  return [
+    q.event_id || null, q.event_id || null,
+    q.person_id || null, q.person_id || null,
+    q.from || null, q.from || null,
+    q.to || null, q.to || null,
+    level, level,
+  ];
+};
 const ATTENDANCE_WHERE = `
       WHERE (? IS NULL OR t.event_id = ?)
         AND (? IS NULL OR tp.person_id = ?)
         AND (? IS NULL OR datetime(t.signed_at) >= datetime(?))
-        AND (? IS NULL OR datetime(t.signed_at) <= datetime(?, '+1 day'))`;
+        AND (? IS NULL OR datetime(t.signed_at) <= datetime(?, '+1 day'))
+        AND (? IS NULL OR ${levelGroups.LEVEL_SQL})`;
 
 router.get('/export/attendance.csv', (req, res) => {
   const rows = db.prepare(
     `SELECT e.title, p.last_name, p.first_name, CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END,
-            p.patrol, t.direction, t.signed_at,
+            p.patrol, p.level, t.direction, t.signed_at,
             COALESCE(sg.first_name || ' ' || sg.last_name, t.signer_name_override, ''),
             st.name, tp.emerg_phone_1, tp.emerg_phone_2,
             CASE WHEN t.forced = 1 THEN 'yes' ELSE '' END,
@@ -1276,7 +1283,7 @@ router.get('/export/attendance.csv', (req, res) => {
       ${ATTENDANCE_WHERE}
       ORDER BY datetime(t.signed_at)`).raw().all(...attendanceFilters(req.query));
   sendCsv(res, 'attendance.csv',
-    ['event', 'last_name', 'first_name', 'type', 'patrol', 'direction', 'signed_at',
+    ['event', 'last_name', 'first_name', 'type', 'patrol', 'level', 'direction', 'signed_at',
      'signer', 'staff', 'emerg_phone_1', 'emerg_phone_2', 'override', 'close_method', 'voided'],
     rows);
 });
@@ -1284,7 +1291,7 @@ router.get('/export/attendance.csv', (req, res) => {
 // Per-person rollup over a date range: events attended, first/last seen.
 const SUMMARY_SQL = `
   SELECT p.id, p.last_name, p.first_name,
-         CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END AS type, p.patrol,
+         CASE p.is_youth WHEN 1 THEN 'youth' ELSE 'adult' END AS type, p.patrol, p.level,
          COUNT(DISTINCT CASE WHEN t.direction = 'in' THEN t.event_id END) AS events_attended,
          SUM(CASE WHEN t.direction = 'in' THEN 1 ELSE 0 END) AS sign_ins,
          MIN(t.signed_at) AS first_seen, MAX(t.signed_at) AS last_seen
@@ -1302,7 +1309,7 @@ router.get('/export/summary.csv', (req, res) => {
   const rows = db.prepare(SUMMARY_SQL).raw().all(...attendanceFilters(req.query))
     .map((r) => r.slice(1)); // drop id column
   sendCsv(res, 'attendance-summary.csv',
-    ['last_name', 'first_name', 'type', 'patrol', 'events_attended', 'sign_ins', 'first_seen', 'last_seen'],
+    ['last_name', 'first_name', 'type', 'patrol', 'level', 'events_attended', 'sign_ins', 'first_seen', 'last_seen'],
     rows);
 });
 
@@ -1396,12 +1403,12 @@ router.get('/notifications', (req, res) => {
 
 router.get('/export/open.csv', (req, res) => {
   const rows = db.prepare(
-    `SELECT e.title, p.last_name, p.first_name, p.patrol, t.signed_at
+    `SELECT e.title, p.last_name, p.first_name, p.patrol, p.level, t.signed_at
        FROM txn_person tp JOIN txn t ON t.id = tp.txn_id
        JOIN person p ON p.id = tp.person_id JOIN event e ON e.id = t.event_id
       WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
       ORDER BY datetime(t.signed_at)`).raw().all();
-  sendCsv(res, 'open-signins.csv', ['event', 'last_name', 'first_name', 'patrol', 'signed_in_at'], rows);
+  sendCsv(res, 'open-signins.csv', ['event', 'last_name', 'first_name', 'patrol', 'level', 'signed_in_at'], rows);
 });
 
 router.get('/export/overrides.csv', (req, res) => {
@@ -1449,10 +1456,10 @@ router.get('/export/expiring.csv', (req, res) => {
   const days = expiringDays(req.query);
   const rows = require('../lib/membership').expiringPeople(days).map((p) => [
     p.last_name, p.first_name, p.is_youth ? 'youth' : 'adult', p.member_id || '',
-    p.is_youth ? p.patrol || '' : p.role || '', p.membership_expires, p.days_left,
+    p.is_youth ? p.patrol || '' : p.role || '', p.level || '', p.membership_expires, p.days_left,
   ]);
   sendCsv(res, `membership-expiring-${days}d.csv`,
-    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'membership_expires', 'days_left'],
+    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'level', 'membership_expires', 'days_left'],
     rows);
 });
 
@@ -1477,12 +1484,12 @@ router.get('/export/health-forms.csv', (req, res) => {
   const missing = req.query.view === 'missing';
   const rows = healthRows(req.query).map((p) => [
     p.last_name, p.first_name, p.is_youth ? 'youth' : 'adult', p.member_id || '',
-    p.is_youth ? p.patrol || '' : p.role || '',
+    p.is_youth ? p.patrol || '' : p.role || '', p.level || '',
     ...(missing ? [] : [p.submitted_on, p.expires_on, p.days_left]),
   ]);
   const name = `${formKind(req.query)}-form-${missing ? 'missing' : `expiring-${expiringDays(req.query)}d`}.csv`;
   sendCsv(res, name,
-    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role',
+    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'level',
      ...(missing ? [] : ['submitted_on', 'expires_on', 'days_left'])],
     rows);
 });
@@ -1504,16 +1511,27 @@ router.get('/export/optin.csv', (req, res) => {
   const r = optinRows(req.query);
   const rows = [
     ...r.youth.map((p) => [p.last_name, p.first_name, 'youth', p.member_id || '',
-      p.patrol || '', p.guardian_count]),
+      p.patrol || '', p.level || '', p.guardian_count]),
     ...r.adults.map((p) => [p.last_name, p.first_name, 'adult', p.member_id || '',
-      p.role || '', '']),
+      p.role || '', '', '']),
   ];
   sendCsv(res, `optin-${req.query.view === 'declined' ? 'declined' : 'missing'}.csv`,
-    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'authorized_guardians'],
+    ['last_name', 'first_name', 'type', 'member_number', 'patrol_or_role', 'level', 'authorized_guardians'],
     rows);
 });
 
 // check-in badge switch (default OFF — see lib/healthForms.js)
+// Combined levels + program order (lib/levelGroups.js). A list that doesn't
+// parse is refused whole, with every problem listed.
+router.get('/level-groups', (req, res) => {
+  res.json(levelGroups.get());
+});
+router.put('/level-groups', (req, res) => {
+  const r = levelGroups.save((req.body || {}).text);
+  if (r.errors) return res.status(400).json({ error: r.errors.join(' '), errors: r.errors });
+  res.json(r);
+});
+
 router.get('/checkin-flags', (req, res) => {
   res.json(healthForms.getCheckinFlags());
 });

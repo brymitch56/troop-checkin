@@ -14,6 +14,10 @@
      Cells can override with data-sort="<value>" (used for dates so the
      display string stays human while sorting stays chronological).
    - Columns can opt out with <th data-nofilter> (e.g. an actions column).
+   - A program-level column (<th data-tt-levels>) sorts in program order and
+     its filter menu offers the combined levels ("PiPa", "Woodlands") as
+     checkboxes that tick their member levels — see setLevels() and
+     public/level-groups.js.
    - Nothing is destroyed: filtered rows are hidden, never removed, so a
      re-render or a click handler bound to a row keeps working. */
 
@@ -37,6 +41,11 @@
     if (!isNaN(da) && !isNaN(db) && /[0-9]/.test(a) && /[0-9]/.test(b)) return da - db;
     return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
   }
+
+  // level-group matcher for data-tt-levels columns (alphabetical until set)
+  let levels = null;
+  const levelCompare = (a, b) => (levels ? levels.compare(a, b) : compareValues(a, b));
+  const isLevelCol = (th) => !!th && th.dataset.ttLevels !== undefined;
 
   function closeMenus() {
     document.querySelectorAll('.tt-menu').forEach((m) => m.remove());
@@ -69,8 +78,9 @@
         r.classList.toggle('tt-hidden', !show);
       }
       if (state.sort != null) {
+        const cmp = isLevelCol(headRow.cells[state.sort]) ? levelCompare : compareValues;
         const sorted = rows.slice().sort((x, y) =>
-          state.dir * compareValues(cellText(x, state.sort), cellText(y, state.sort)));
+          state.dir * cmp(cellText(x, state.sort), cellText(y, state.sort)));
         const tb = sorted[0] && sorted[0].parentNode;
         if (tb) sorted.forEach((r) => tb.appendChild(r));
       }
@@ -128,9 +138,16 @@
       if (wasOpen) return;
       th.classList.add('tt-open');
 
+      const levelCol = isLevelCol(th);
       const values = [...new Set(bodyRows().map((r) => cellText(r, col)))]
-        .sort((a, b) => compareValues(a, b));
+        .sort(levelCol ? levelCompare : compareValues);
       const chosen = state.filters.get(col) || new Set();
+      // combined levels with at least one member in this column
+      const groups = levelCol && levels
+        ? levels.groups.filter((g) => g.levels.some((l) => values.includes(l))) : [];
+      const groupHtml = groups.length ? `<div class="tt-groups">${groups.map((g, n) => `
+          <label><input type="checkbox" data-tt-group="${n}">
+            <span><b>${escapeHtml(g.name)}</b> (${escapeHtml(g.levels.join(' + '))})</span></label>`).join('')}</div>` : '';
 
       const menu = document.createElement('div');
       menu.className = 'tt-menu';
@@ -140,6 +157,7 @@
           <button data-tt-sort="desc">↓ Sort Z–A</button>
         </div>
         <input class="tt-search" type="search" placeholder="Search values…" aria-label="Search values">
+        ${groupHtml}
         <div class="tt-vals">${values.map((v, n) => `
           <label><input type="checkbox" value="${escapeHtml(v)}" ${chosen.has(v) ? 'checked' : ''}>
             <span>${v === '' ? '<em>(blank)</em>' : escapeHtml(v)}</span></label>`).join('')}</div>
@@ -154,6 +172,19 @@
       menu.style.left = `${Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - menu.offsetWidth - 12)}px`;
 
       const boxes = () => [...menu.querySelectorAll('.tt-vals input[type=checkbox]')];
+      // a group box ticks/unticks its member levels, and shows ticked when
+      // every member present in this column is
+      const groupBoxes = () => [...menu.querySelectorAll('input[data-tt-group]')];
+      const memberBoxes = (g) => boxes().filter((b) => g.levels.includes(b.value));
+      const syncGroups = () => groupBoxes().forEach((gb) => {
+        const m = memberBoxes(groups[Number(gb.dataset.ttGroup)]);
+        gb.checked = m.length > 0 && m.every((b) => b.checked);
+      });
+      groupBoxes().forEach((gb) => (gb.onchange = () => {
+        memberBoxes(groups[Number(gb.dataset.ttGroup)]).forEach((b) => (b.checked = gb.checked));
+      }));
+      boxes().forEach((b) => b.addEventListener('change', syncGroups));
+      syncGroups();
       menu.querySelector('.tt-search').oninput = (e) => {
         const q = e.target.value.toLowerCase();
         boxes().forEach((b) => {
@@ -164,9 +195,11 @@
         state.sort = col; state.dir = b.dataset.ttSort === 'asc' ? 1 : -1;
         closeMenus(); apply();
       }));
-      menu.querySelector('[data-tt-all]').onclick = () =>
+      menu.querySelector('[data-tt-all]').onclick = () => {
         boxes().forEach((b) => { if (b.parentElement.style.display !== 'none') b.checked = true; });
-      menu.querySelector('[data-tt-none]').onclick = () => boxes().forEach((b) => (b.checked = false));
+        syncGroups();
+      };
+      menu.querySelector('[data-tt-none]').onclick = () => { boxes().forEach((b) => (b.checked = false)); syncGroups(); };
       menu.querySelector('[data-tt-apply]').onclick = () => {
         const picked = new Set(boxes().filter((b) => b.checked).map((b) => b.value));
         // all (or none) checked = no filter on this column
@@ -192,5 +225,10 @@
   const escapeHtml = (v) => String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-  window.TableTools = { enhance };
+  // cfg = { order, groups } from /api/level-groups (null = alphabetical, no groups)
+  function setLevels(cfg) {
+    levels = window.LevelGroups ? window.LevelGroups.create(cfg) : null;
+  }
+
+  window.TableTools = { enhance, setLevels };
 })();

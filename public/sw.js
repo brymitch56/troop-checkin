@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v88'; // v88: levels with no plan — hold or push attendance only; event-editor Re-apply credit
+const VERSION = 'tc-v89'; // v89: level groups (PiPa, Woodlands…) + program-order level sorts; Level columns in admin tables
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the
@@ -17,7 +17,7 @@ const SHELL = [
   '/', '/index.html', '/styles.css', '/theme.css', '/app.js', '/offline.js', '/portal.js',
   '/manifest.webmanifest', '/vendor/jsqr.min.js',
   '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/favicon.ico',
-  '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/guide.html',
+  '/admin.css', '/admin.js', '/access-guard.js', '/tabletools.js', '/level-groups.js', '/guide.html',
 ];
 
 self.addEventListener('install', (e) => {
