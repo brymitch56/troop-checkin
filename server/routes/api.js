@@ -8,6 +8,7 @@ const { db, SIG_DIR, UPLOAD_DIR } = require('../db');
 const auth = require('../auth');
 const roster = require('../lib/rosterImport');
 const corrections = require('../lib/onsiteCorrections');
+const levelGroups = require('../lib/levelGroups');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -573,7 +574,9 @@ router.get('/roster-snapshot', (req, res) => {
     `SELECT event_id, person_id, signed, fetched_at FROM event_form_status
       WHERE event_id IN (${events.map(() => '?').join(',')})`
   ).all(...events.map((e) => e.id)) : [];
-  res.json({ taken_at: now, people, links, badges, events, form_status });
+  // combined levels + program order, so the kiosk level filters match offline too
+  const { order, groups } = levelGroups.get();
+  res.json({ taken_at: now, people, links, badges, events, form_status, level_groups: { order, groups } });
 });
 
 // who's still here
@@ -582,7 +585,7 @@ router.get('/onsite', (req, res) => {
   // neither, so any filter narrows the list to matching youth — the kiosk
   // says so rather than looking like people vanished.
   const patrol = req.query.patrol ? String(req.query.patrol) : null;
-  const level = req.query.level ? String(req.query.level) : null;
+  const level = levelGroups.sqlParam(req.query.level);
   const rows = db.prepare(
     `SELECT p.id, p.first_name, p.last_name, p.nickname, p.patrol, p.level, p.is_youth,
             e.id AS event_id, e.title AS event_title, t.signed_at, t.id AS in_txn_id
@@ -592,7 +595,7 @@ router.get('/onsite', (req, res) => {
        JOIN event e ON e.id = t.event_id
       WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL
         AND (? IS NULL OR p.patrol = ?)
-        AND (? IS NULL OR p.level = ?)
+        AND (? IS NULL OR ${levelGroups.LEVEL_SQL})
       ORDER BY datetime(e.start_at), p.patrol, p.last_name, p.first_name`
   ).all(patrol, patrol, level, level);
   res.json(rows);
@@ -647,7 +650,7 @@ const onsiteYouthRows = (patrol, level, eventId = null) => db.prepare(
      JOIN event e ON e.id = t.event_id
     WHERE tp.open = 1 AND t.voided_by_txn_id IS NULL AND p.is_youth = 1
       AND (? IS NULL OR p.patrol = ?)
-      AND (? IS NULL OR p.level = ?)
+      AND (? IS NULL OR ${levelGroups.LEVEL_SQL})
       AND (? IS NULL OR e.id = ?)`
 ).all(patrol, patrol, level, level, eventId, eventId);
 
@@ -660,7 +663,7 @@ const onsiteYouthRows = (patrol, level, eventId = null) => db.prepare(
 function onsiteScope(body) {
   const b = body || {};
   const patrol = b.patrol ? String(b.patrol) : null;
-  const level = b.level ? String(b.level) : null;
+  const level = levelGroups.sqlParam(b.level);
   const eventId = b.event_id != null && b.event_id !== '' ? Number(b.event_id) : null;
   const rows = onsiteYouthRows(patrol, level, eventId);
   if (eventId == null) {
@@ -731,7 +734,7 @@ router.post('/message-onsite', express.json(), async (req, res) => {
   if (!message) return res.status(400).json({ error: 'Type the message first.' });
   if (message.length > 300) return res.status(400).json({ error: 'Keep the message under 300 characters.' });
   const patrol = b.patrol ? String(b.patrol) : null;
-  const level = b.level ? String(b.level) : null;
+  const level = levelGroups.sqlParam(b.level);
   let rows;
   let onsiteEvent = null; // the one event an on-site broadcast is scoped to
   if (b.scope === 'attended') {
@@ -745,7 +748,7 @@ router.post('/message-onsite', express.json(), async (req, res) => {
          JOIN event e ON e.id = t.event_id
         WHERE t.event_id = ? AND t.direction = 'in' AND t.voided_by_txn_id IS NULL
           AND p.is_youth = 1 AND (? IS NULL OR p.patrol = ?)
-          AND (? IS NULL OR p.level = ?)`
+          AND (? IS NULL OR ${levelGroups.LEVEL_SQL})`
     ).all(b.event_id, patrol, patrol, level, level);
   } else {
     const scope = onsiteScope(b);
@@ -852,13 +855,21 @@ router.get('/patrols', (req, res) => {
 
 // Program levels for the kiosk filters — the same shape as /patrols. Levels
 // come from the roster verbatim (Trail Life "Navigators", AHG "Explorer", …),
-// so the list is whatever this troop's export actually contains.
+// so the list is whatever this troop's export actually contains. Program
+// order (the admin's level-groups list), then alphabetical.
 router.get('/levels', (req, res) => {
   res.json(db.prepare(
     `SELECT DISTINCT level FROM person
       WHERE is_youth = 1 AND status = 'active' AND level IS NOT NULL AND level != ''
       ORDER BY level`
-  ).all().map((r) => r.level));
+  ).all().map((r) => r.level).sort(levelGroups.matcher().compare));
+});
+
+// Combined levels + program order for every level filter and sort (kiosk,
+// on-site, admin tables). Also in the offline snapshot.
+router.get('/level-groups', (req, res) => {
+  const { order, groups } = levelGroups.get();
+  res.json({ order, groups });
 });
 
 // -------------------------------------------------- roster import (admin) ----

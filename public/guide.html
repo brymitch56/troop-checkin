@@ -209,7 +209,7 @@
 
 <section id="onsite">
   <h3>The "On site" screen &amp; texting guardians</h3>
-  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, narrowed by the <b>Patrol</b> and <b>Level</b> dropdowns (they start on whatever this device is scoped to, and you can change either without changing the device's scope) and sortable with the <b>Sort</b> pills — <b>Last name</b> (default), <b>Sign-in time</b>, <b>Patrol</b>, or <b>First name</b>; the device remembers your choice. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. If two events overlap, the card's <b>Event</b> section can <b>Move</b> the sign-in to the other event (logged under the wrong one) or <b>Also sign in</b> to it; a person signed into both is signed out of both at once. The card's <b>Add to checkout</b> button puts that person in the cart for sign-out and takes you straight back to the cart; add anyone else the usual way (scan, search, or back to On site), then sign. From this screen (once SMS is set up):</p>
+  <p>The <b>On site: n</b> pill shows the live headcount; tap it for the full list grouped by event, narrowed by the <b>Patrol</b> and <b>Level</b> dropdowns (they start on whatever this device is scoped to, and you can change either without changing the device's scope) and sortable with the <b>Sort</b> pills — <b>Last name</b> (default), <b>Sign-in time</b>, <b>Patrol</b>, <b>Level</b> (program order), or <b>First name</b>; the device remembers your choice. <b>Tap any person</b> for their emergency card: the phone numbers captured at sign-in plus their guardians (relationship, primary flag, tap-to-call) — it works offline too, straight from the cached roster. If two events overlap, the card's <b>Event</b> section can <b>Move</b> the sign-in to the other event (logged under the wrong one) or <b>Also sign in</b> to it; a person signed into both is signed out of both at once. The card's <b>Add to checkout</b> button puts that person in the cart for sign-out and takes you straight back to the cart; add anyone else the usual way (scan, search, or back to On site), then sign. From this screen (once SMS is set up):</p>
   <ul>
     <li><b>🔔 Text guardians</b> — one message per guardian listing all their youth still on site ("please pick up"). A guardian with three kids on site gets <em>one</em> text, not three. Which guardians: by default the <b>primary</b> guardian of each youth; an admin can switch the troop to <b>all opted-in guardians</b> (Admin → Messages), in which case every parent who signed their own consent gets it and either one's <b>Y</b> closes the pickup. The results screen lists exactly who was <em>not</em> contacted and why (no consent, no mobile, STOPped) so you can phone those families instead.</li>
     <li><b>✉️ Message</b> — a custom broadcast ("bus is 20 minutes late"): to guardians of everyone still on site, or to everyone who attended the current event (even if already picked up). On events that track adult attendance, an <b>"Also text opted-in adults"</b> checkbox appears — off every time until you tick it — which additionally texts attending adults who signed their own consent form. The dialog also lets you choose, per message, <b>Primary guardian only</b> or <b>All opted-in guardians</b> (it starts on the troop's admin-set default).</li>
@@ -220,7 +220,7 @@
 
 <section id="station">
   <h3>Station mode (per-patrol / per-level devices)</h3>
-  <p>The <b>Patrol</b> and <b>Level</b> dropdowns under the search box scope this device: name search and the on-site view show only youth matching what you pick. Use either alone or both together (e.g. Level "Navigators" across all patrols, or one patrol within a level) — handy when each patrol leader carries a sign-out phone, or when a level meets in its own room. <b>Badge scans always work regardless of scope</b>, and <b>adults and visitors always stay visible</b> (they have no patrol or level), so nobody gets stuck at the door. Each dropdown sticks per device until you set it back to "All".</p>
+  <p>The <b>Patrol</b> and <b>Level</b> dropdowns under the search box scope this device: name search and the on-site view show only youth matching what you pick. Use either alone or both together (e.g. Level "Navigators" across all patrols, or one patrol within a level). Combined levels the admin set up — e.g. <b>Woodlands</b> for Fox + Hawk + Mountain Lion — appear in the Level dropdown just above their members and match all of them — handy when each patrol leader carries a sign-out phone, or when a level meets in its own room. <b>Badge scans always work regardless of scope</b>, and <b>adults and visitors always stay visible</b> (they have no patrol or level), so nobody gets stuck at the door. Each dropdown sticks per device until you set it back to "All".</p>
 </section>
 
 <section id="offline">
@@ -333,12 +333,13 @@
 <section id="reports">
   <h3>Reports, renewals &amp; CSV exports</h3>
   <ul>
-    <li><b>Attendance summary</b>: pick a date range, event, and/or one person → events attended, sign-in counts, first/last seen. Records are kept forever, so a 3-year lookback is just a wider range. Detail + summary CSVs.</li>
+    <li><b>Attendance summary</b>: pick a date range, event, level (a combined level like Woodlands included), and/or one person → patrol, level, events attended, sign-in counts, first/last seen. Records are kept forever, so a 3-year lookback is just a wider range. Detail + summary CSVs.</li>
     <li><b>Membership renewals</b>: everyone (youth <em>and</em> registered adults) whose membership has expired or expires within 30/60/90 days, most-urgent first — with a CSV for chasing renewals. Already-lapsed members are listed too.</li>
     <li><b>Health &amp; medical forms</b>: who has no health form on file, and whose form has expired or expires within 30/60/90 days. Forms are treated as valid <b>12 months from the submission date</b> recorded in Trail Life Connect (imported from the export's "Health Form" column). The <b>High Risk</b> (High Adventure) clearance is tracked as its own separate form. Youth and registered adults (visitors and pickup-only designees don't count). An optional switch in this panel adds a kiosk badge at sign-in for missing/expired health forms (informational, never blocks — off by default).</li>
     <li><b>Messaging opt-in</b>: youth families that never returned the messaging form, and families that declined (a family with one yes-parent and one stop-parent is messageable and appears in neither). Adults are listed separately by their own consent.</li>
     <li><b>SMS notification log</b>: every pickup alert with its status (sent, replied-Y, failed).</li>
     <li>Dashboard quick CSVs: open sign-ins, overrides, visitors.</li>
+    <li><b>Level columns</b>: every people list here shows Level next to Patrol. Click the Level header to sort in program order, or to filter — combined levels are tick-boxes at the top of the filter list that tick all their members at once.</li>
   </ul>
 </section>
 
@@ -353,6 +354,7 @@
     <li>Re-import as often as you like — it's idempotent. Blank cells never wipe existing data; your hand-edited (🔒) fields and guardian edits are never touched.</li>
     <li>People missing from the new file are marked inactive (never deleted) — scoped to the classes in the file, so a youth-only export leaves adults alone. Visitors are never deactivated. Returning members reactivate automatically.</li>
     <li>Membership expiration dates come in from the export's "Membership Exp." column automatically.</li>
+    <li><b>Level groups and order</b> (this tab): units that meet together get one combined level — one line per level in program order, and <code>Woodlands = Fox, Hawk, Mountain Lion</code> for a combined one. Every Level dropdown, filter and sort uses it. Spell levels exactly as the export does; the panel lists the roster's levels beside it. Empty = no combined levels, A–Z order.</li>
     <li>Every upload is archived, and the import log shows who imported what, when, with counts. The
     <b>Import history</b> and the <b>TLC push log</b> both take a date range and a higher row limit, and
     export to CSV — nothing ages out of reach.</li>
@@ -430,7 +432,7 @@
     <tr><td>Handle "signer not on the list"</td><td>Pick "Other adult…" or confirm the staff override — it's recorded for review</td></tr>
     <tr><td>Check in a first-time visitor</td><td>+ Visitor → youth name + parent name, phone &amp; email (all required) → <b>Add visitor</b> → they're in the cart</td></tr>
     <tr><td>Check in visiting siblings</td><td>+ Visitor → first child + parent → <b>Add + another youth</b> → next child's name only (same parent) → repeat → Add visitor on the last one</td></tr>
-    <tr><td>See who's still here</td><td>Tap the On site pill (narrow with the Patrol / Level dropdowns; sort by last name, sign-in time, patrol, or first name)</td></tr>
+    <tr><td>See who's still here</td><td>Tap the On site pill (narrow with the Patrol / Level dropdowns — combined levels included; sort by last name, sign-in time, patrol, level, or first name)</td></tr>
     <tr><td>Show only one level (or patrol) on this phone</td><td>Kiosk → the <b>Level</b> / <b>Patrol</b> dropdowns under the search box — sticks per device; scans and adults are never hidden</td></tr>
     <tr><td>Text families at pickup time</td><td>On site screen → 🔔 Text guardians (opt-in families only)</td></tr>
     <tr><td>Announce "we're running late"</td><td>On site screen → ✉️ Message → type it → send</td></tr>
