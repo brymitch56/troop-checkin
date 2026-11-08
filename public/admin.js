@@ -973,6 +973,10 @@ function openEvent(e) {
       <div><label>Location</label><input id="evf-loc" value="${esc(e?.location || '')}"></div>
       <div><label>Starts</label><input id="evf-start" type="datetime-local" value="${toLocal(e?.start_at)}"></div>
       <div><label>Ends</label><input id="evf-end" type="datetime-local" value="${toLocal(e?.end_at)}"></div>
+      <div><label title="When this event overlaps another, the kiosk picks whichever one is nearest its sign-in or sign-out time. Set a side event (a conference inside a meeting) to pick by hand so the main event is chosen.">Kiosk event selection</label>
+        <select id="evf-autosel">
+        <option value="1" ${e?.auto_select !== 0 ? 'selected' : ''}>Auto-select during its time window</option>
+        <option value="0" ${e?.auto_select === 0 ? 'selected' : ''}>Pick by hand only — never auto-selected</option></select></div>
       <div><label>Adult attendance
           ${e?.track_adults_source === 'manual' ? '<span class="tag off" title="Hand-set — the global default will not change this">manual</span>' : ''}</label>
         <select id="evf-adults">
@@ -1026,6 +1030,7 @@ function openEvent(e) {
       start_at: new Date($('evf-start').value).toISOString(),
       end_at: new Date($('evf-end').value).toISOString(),
       requires_high_adventure_form: $('evf-haform').value === '1',
+      auto_select: $('evf-autosel').value === '1',
       notify_after_min: $('evf-notify').value === '' ? null : Number($('evf-notify').value),
     };
     // permission requirement: only a manual choice takes the flag over from
@@ -1265,11 +1270,14 @@ async function openTxn(id) {
     ${t.signature_path ? `<h3>Signature</h3><img class="sig-view" src="/signatures/${esc(t.signature_path)}" alt="signature">` : ''}
     <div class="row wrap">
       ${!t.voided_by_txn_id && !t.client_uuid.startsWith('void-') ? '<button class="btn ghost small" id="tx-void">Void (append-only correction)</button>' : ''}
+      ${!t.voided_by_txn_id && !t.client_uuid.startsWith('void-') && t.entries.length ? '<button class="btn ghost small" id="tx-move">Move to another event…</button>' : ''}
       <button class="btn ghost small" id="tx-close">Close</button>
-    </div>`;
+    </div>
+    <div id="tx-move-box" hidden></div>`;
   d.hidden = false;
   $('txn-modal').hidden = false;
   $('tx-close').onclick = closeTxnModal;
+  if ($('tx-move')) $('tx-move').onclick = () => openTxnMove(t);
   if ($('tx-void')) $('tx-void').onclick = async () => {
     if (!confirm('Void this transaction? A correcting record is added; nothing is deleted.')) return;
     try { await jpost(`/admin/txns/${id}/void`, {}); toast('Voided'); closeTxnModal(); renderTxns(); }
@@ -1277,6 +1285,53 @@ async function openTxn(id) {
   };
 }
 function closeTxnModal() { $('txn-modal').hidden = true; $('tx-detail').hidden = true; }
+
+// Move visits to the right event after the fact (the On-site screen's Move,
+// for when nobody caught it at the door). Each checked person's whole visit —
+// sign-in and sign-out — moves; the attendance push follows it.
+async function openTxnMove(t) {
+  const box = $('tx-move-box');
+  const events = await api('/admin/events?include_past=1');
+  // events near this one are the likely targets: within two days either side
+  const at = new Date(t.signed_at).getTime(), DAY = 86400000;
+  const near = events
+    .filter((e) => e.id !== t.event_id
+      && new Date(e.end_at).getTime() >= at - 2 * DAY && new Date(e.start_at).getTime() <= at + 2 * DAY)
+    .sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
+  box.innerHTML = `
+    <h3>Move to another event</h3>
+    <p class="hint left">Each checked person's whole visit (sign-in and sign-out) is re-filed under the event you
+      pick, with the same times, signer and signature. Their attendance push moves with it. If the push to the
+      portal was already <b>sent</b> for ${esc(t.event_title)}, the app cannot un-mark it there — you will be told
+      to do that by hand.</p>
+    <div>${t.entries.map((e) => `<label class="check"><input type="checkbox" data-move-person="${e.person_id}" checked>
+      ${esc(e.first_name)} ${esc(e.last_name)}</label>`).join('')}</div>
+    ${near.length
+      ? `<label>Move to <select id="tx-move-event">${near.map((e) =>
+          `<option value="${e.id}">${esc(e.title)} · ${esc(fmtDT(e.start_at))}</option>`).join('')}</select></label>
+         <div class="row wrap"><button class="btn primary small" id="tx-move-go">Move</button></div>`
+      : '<p class="hint left">No other events within two days of this one.</p>'}`;
+  box.hidden = false;
+  if (!$('tx-move-go')) return;
+  $('tx-move-go').onclick = async () => {
+    const person_ids = [...box.querySelectorAll('[data-move-person]')].filter((c) => c.checked)
+      .map((c) => Number(c.dataset.movePerson));
+    if (!person_ids.length) { toast('Check at least one person', true); return; }
+    const sel = $('tx-move-event');
+    const label = sel.options[sel.selectedIndex].textContent;
+    if (!confirm(`Move ${person_ids.length} visit(s) to ${label}?`)) return;
+    try {
+      const r = await jpost(`/admin/txns/${t.id}/move`, { event_id: Number(sel.value), person_ids });
+      const lines = r.results.map((x) => (x.ok
+        ? `✅ ${x.name}${x.open ? ' (still on site — push queues at sign-out)' : ''}` +
+          (x.push && x.push.already_sent ? ` — already marked attended on the portal for ${t.event_title}: un-mark it there by hand` : '')
+        : `❌ ${x.name}: ${x.error}`));
+      if (r.results.some((x) => !x.ok || (x.push && x.push.already_sent))) alert(lines.join('\n'));
+      else toast(`Moved ${r.moved} visit(s)`);
+      closeTxnModal(); renderTxns();
+    } catch (err) { toast(err.message, true); }
+  };
+}
 
 // ------------------------------------------------------------- messages ----
 let msgTimer = null;
@@ -1752,6 +1807,13 @@ async function loadTlca() {
     bits.push(`❌ Paused since ${fmtDT(s.state.auth_failed_at)} — the TLC login was rejected. ` +
       'Re-save the credentials above (or press Push now after fixing the account).');
   }
+  if (s.state.code_required_at) {
+    // the push waits here instead of texting a fresh code on every sweep; it
+    // resumes by itself once another job proves the stored session good again
+    bits.push(`<b class="error">⏸ Push paused since ${fmtDT(s.state.code_required_at)}</b> — the portal asked for a ` +
+      'sign-in code. Nothing is sent until it resumes. It resumes on its own after the next successful roster ' +
+      'sync, or right away when you press <b>Connect</b> under the portal sign-in above (or re-save the credentials).');
+  }
   if (s.state.last_run) {
     bits.push(`Last push ${fmtDT(s.state.last_run)}: ` + (s.state.last_status === 'ok'
       ? '✅ ok' : `⚠ ${esc(s.state.last_error || s.state.last_status || '')}`));
@@ -1760,7 +1822,8 @@ async function loadTlca() {
     (s.queue.held ? `<b>${s.queue.held} held</b> · ` : '') +
     (s.queue.failed ? `<b class="error">${s.queue.failed} failed</b> ` +
       '<button id="tlca-show-failed" class="btn ghost small">Show them</button> ' +
-      '<button id="tlca-retry" class="btn ghost small">Retry failed</button>' : '0 failed'));
+      '<button id="tlca-retry" class="btn ghost small">Retry failed</button>' : '0 failed') +
+    (s.queue.dismissed ? ` · ${s.queue.dismissed} dismissed` : ''));
   $('tlca-status').innerHTML = bits.join('<br>');
   $('tlca-push').disabled = !!s.running || !s.credentials_configured || !s.queue.pending;
 
@@ -1846,13 +1909,31 @@ function renderSkipped(rows) {
       </tr>`).join('') + '</table></div>';
 }
 function renderPushLog(rows) {
+  // failed rows get a Dismiss button (non-members the portal will never know);
+  // dismissed rows show who/why and can be put back
+  const statusCell = (r) => {
+    if (r.status === 'sent') return '✅ sent';
+    if (r.status === 'failed' && r.dismissed_at) return '🚫 dismissed';
+    if (r.status === 'failed') return '❌ failed';
+    return r.hold_reason ? '⏸ held' : '⏳ pending';
+  };
+  const actionCell = (r) => {
+    if (r.status !== 'failed') return '';
+    if (r.dismissed_at) {
+      return `<span class="hint">${esc(fmtDT(r.dismissed_at))}${r.dismissed_by_name ? ' by ' + esc(r.dismissed_by_name) : ''}` +
+        `${r.dismiss_note ? ' — ' + esc(r.dismiss_note) : ''}</span> ` +
+        `<button class="btn ghost small" data-push-undismiss="${r.id}">Restore</button>`;
+    }
+    return `<button class="btn ghost small" data-push-dismiss="${r.id}" ` +
+      'title="Stop listing this as failed — e.g. a non-member who is not on the portal">Dismiss</button>';
+  };
+  const anyFailed = rows.some((r) => r.status === 'failed');
   $('tlca-log').innerHTML = rows.length
-    ? `<table><tr><th>When</th><th>Person</th><th>Event</th><th>Status</th><th>Detail</th></tr>` +
-      rows.map((r) => `<tr>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
+    ? `<table><tr><th>When</th><th>Person</th><th>Event</th><th>Status</th><th>Detail</th>${anyFailed ? '<th></th>' : ''}</tr>` +
+      rows.map((r) => `<tr${r.dismissed_at ? ' class="muted-row"' : ''}>${dtCell(r.sent_at || r.created_at)}<td>${esc(r.person_name)}</td>
         <td data-sort="${esc(r.event_start || '')}">${esc(r.event_title)}${r.event_start ? `<br><span class="hint">${esc(fmtEvDay(r.event_start))}</span>` : ''}</td>
-        <td>${r.status === 'sent' ? '✅ sent' : r.status === 'failed' ? '❌ failed'
-          : r.hold_reason ? '⏸ held' : '⏳ pending'}</td>
-        <td>${esc(r.detail || r.hold_reason || '')}</td></tr>`).join('') + '</table>'
+        <td>${statusCell(r)}</td>
+        <td>${esc(r.detail || r.hold_reason || '')}</td>${anyFailed ? `<td>${actionCell(r)}</td>` : ''}</tr>`).join('') + '</table>'
     : ($('pl-status').value || $('pl-from').value || $('pl-to').value
       ? '<p class="hint left">Nothing matches these filters.</p>'
       : '<p class="hint left">Nothing queued yet — sign-ins appear here once the push is enabled (or an event is set to “Always push”).</p>');
@@ -1999,6 +2080,19 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.id === 'tlca-retry') {
     try { const r = await jpost('/admin/tlc-attendance/retry', {}); toast(`${r.retried} row(s) queued again`); loadTlca(); }
+    catch (err) { toast(err.message, true); }
+  }
+  const dId = e.target.dataset && e.target.dataset.pushDismiss;
+  if (dId) {
+    const note = prompt(Portal.t('Dismiss this failed push?\n\nUse this for someone the portal will never know (a non-member). ' +
+      'It stops counting as failed and Retry failed skips it. You can restore it from the log.\n\nOptional note:'), '');
+    if (note === null) return; // cancelled
+    try { await jpost('/admin/tlc-attendance/dismiss', { ids: [Number(dId)], note: note.trim() || null }); toast('Dismissed'); loadTlca(); }
+    catch (err) { toast(err.message, true); }
+  }
+  const uId = e.target.dataset && e.target.dataset.pushUndismiss;
+  if (uId) {
+    try { await jpost(`/admin/tlc-attendance/${uId}/undismiss`, {}); toast('Restored to failed'); loadTlca(); }
     catch (err) { toast(err.message, true); }
   }
   // Skipped-advancement log: verify against TLC, then clear.

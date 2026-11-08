@@ -93,6 +93,7 @@
   function suggestEvent(matching, now) {
     let best = null, score = Infinity;
     for (const e of matching) {
+      if (e.auto_select === 0) continue; // pick-by-hand event (migration 021)
       const start = new Date(e.start_at), end = new Date(e.end_at);
       const s = Math.abs((now < start ? start : end) - now);
       if (s < score) { best = e; score = s; }

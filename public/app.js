@@ -385,7 +385,9 @@ async function pickEventAuto() {
   // end; overlaps resolved toward the nearest sign-in/sign-out rush). The
   // pill always lets staff switch to any other event.
   const { matching, suggested_id } = await eventsCurrent();
-  const pick = matching.find((e) => e.id === suggested_id) || (matching.length === 1 ? matching[0] : null);
+  // an event set to "pick by hand" (auto_select 0) is never chosen for staff
+  const auto = matching.filter((e) => e.auto_select !== 0);
+  const pick = auto.find((e) => e.id === suggested_id) || (auto.length === 1 ? auto[0] : null);
   if (pick) setEvent(pick);
   else if (state.event == null) openEventPicker();
 }
@@ -410,7 +412,7 @@ async function openEventPicker() {
     b.onclick = () => { setEvent(ev); closeModal(); };
     parent.appendChild(b);
   };
-  matching.forEach((ev) => add(wrap, ev, 'now'));
+  matching.forEach((ev) => add(wrap, ev, ev.auto_select === 0 ? 'now · pick by hand' : 'now'));
   upcoming.forEach((ev) => add(wrap, ev));
   if (!matching.length && !upcoming.length) {
     wrap.innerHTML = '<p class="hint">Nothing current or upcoming — create one below.</p>';

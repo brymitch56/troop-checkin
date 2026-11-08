@@ -401,7 +401,8 @@ router.patch('/events/:id', (req, res) => {
   for (const f of ['title', 'location', 'description', 'start_at', 'end_at']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
   }
-  for (const f of ['all_day', 'requires_high_adventure_form']) {
+  // auto_select: 0 = the kiosk never picks this event on its own (overlaps)
+  for (const f of ['all_day', 'requires_high_adventure_form', 'auto_select']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
   }
   // adult tracking: a hand-set value goes 'manual' (the global bulk-apply
@@ -645,6 +646,50 @@ router.post('/txns/:id/void', (req, res) => {
   const voidTxnId = run();
   require('../lib/webhook').emitTxnVoided(t.id, voidTxnId); // after commit; no-op unless enabled
   res.json({ ok: true, void_txn_id: voidTxnId });
+});
+
+// Move visits to another event after the fact — someone signed into the
+// wrong one of two overlapping events and nobody caught it on site. Body:
+// { event_id, person_ids? } (default: everyone on this txn). Each person's
+// whole visit moves (lib/onsiteCorrections.moveVisit); then the TLC/AHGFamily
+// push follows it and integrations hear about both events. One person failing
+// does not undo the others — each result is reported.
+router.post('/txns/:id/move', (req, res) => {
+  const corrections = require('../lib/onsiteCorrections');
+  const attendanceSync = require('../lib/attendanceSync');
+  const webhook = require('../lib/webhook');
+  const t = db.prepare('SELECT * FROM txn WHERE id = ?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'No such transaction.' });
+  const b = req.body || {};
+  const eventId = Number(b.event_id);
+  if (!Number.isInteger(eventId)) return res.status(400).json({ error: 'Pick the event to move to.' });
+  const onTxn = db.prepare('SELECT person_id FROM txn_person WHERE txn_id = ?').all(t.id).map((r) => r.person_id);
+  const ids = Array.isArray(b.person_ids) && b.person_ids.length ? b.person_ids.map(Number) : onTxn;
+  const results = [];
+  for (const pid of ids) {
+    const p = db.prepare('SELECT first_name, last_name FROM person WHERE id = ?').get(pid);
+    const name = p ? `${p.first_name} ${p.last_name}` : `#${pid}`;
+    let r;
+    try { r = corrections.moveVisit(pid, t.id, eventId, req.staff.staff_id); }
+    catch (e) {
+      if (e instanceof corrections.CorrectionError) { results.push({ person_id: pid, name, error: e.message }); continue; }
+      throw e;
+    }
+    let push = null;
+    try { push = attendanceSync.requeueMoved(pid, r.from_event_id, eventId, { closed: !r.open }); }
+    catch (e) { console.error('[tlc-attendance] requeue after move failed:', e.message); }
+    // after commit: the new event gains the visit; a fully emptied source
+    // txn is voided, so the old event is re-read too
+    webhook.emitTxnCreated(r.in_txn_id);
+    if (r.out_txn_id) webhook.emitTxnCreated(r.out_txn_id);
+    for (const [voided, marker] of r.voided) webhook.emitTxnVoided(voided, marker);
+    results.push({ person_id: pid, name, ok: true, ...r, push });
+  }
+  const moved = results.filter((x) => x.ok).length;
+  if (!moved) {
+    return res.status(409).json({ error: results.map((x) => `${x.name}: ${x.error}`).join(' · ') || 'Nobody to move.', results });
+  }
+  res.json({ ok: true, moved, results });
 });
 
 // Close a lingering open sign-in without a guardian present (audited).
@@ -1115,6 +1160,18 @@ router.post('/tlc-attendance/plans/recredit', async (req, res) => {
 
 router.post('/tlc-attendance/retry', (req, res) => {
   res.json({ ok: true, ...attendanceSync.retryFailed() });
+});
+
+// Dismiss failed pushes that will never land (a non-member who is not on the
+// portal). Body: { ids: [..], note? }. Only failed rows are touched.
+router.post('/tlc-attendance/dismiss', (req, res) => {
+  const b = req.body || {};
+  const ids = Array.isArray(b.ids) ? b.ids : (b.id != null ? [b.id] : []);
+  if (!ids.length) return res.status(400).json({ error: 'Pick at least one failed push to dismiss.' });
+  res.json({ ok: true, ...attendanceSync.dismissFailed(ids, req.staff.staff_id, b.note || null) });
+});
+router.post('/tlc-attendance/:id/undismiss', (req, res) => {
+  res.json({ ok: true, ...attendanceSync.undismiss(req.params.id) });
 });
 
 // Admin helper behind the person editor's "Find TLC id" button: reads one

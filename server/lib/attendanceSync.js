@@ -184,18 +184,22 @@ function queueSummary() {
   const count = (sql) => { try { return db.prepare(sql).get().c; } catch { return 0; } };
   const held = count(
     `SELECT COUNT(*) c FROM tlc_attendance_push WHERE status = 'pending' AND hold_reason IS NOT NULL`);
+  // dismissed failures (migration 021) keep status 'failed' but are done with
+  const dismissed = count(
+    `SELECT COUNT(*) c FROM tlc_attendance_push WHERE status = 'failed' AND dismissed_at IS NOT NULL`);
   return {
     // held rows stay 'pending' so the sweep re-evaluates them for free —
     // report them separately so the UI never calls them merely queued
-    pending: g('pending') - held, held, sent: g('sent'), failed: g('failed'),
+    pending: g('pending') - held, held, sent: g('sent'), failed: g('failed') - dismissed, dismissed,
     skipped_open: count(
       'SELECT COUNT(*) c FROM tlc_advancement_skipped WHERE acknowledged_at IS NULL'),
   };
 }
 
-// status: null = everything; 'failed' | 'sent' | 'pending' (queued, not held) | 'held'
+// status: null = everything; 'failed' | 'sent' | 'pending' (queued, not held) | 'held' | 'dismissed'
 const STATUS_FILTER = {
-  failed: "q.status = 'failed'",
+  failed: "q.status = 'failed' AND q.dismissed_at IS NULL",
+  dismissed: "q.status = 'failed' AND q.dismissed_at IS NOT NULL",
   sent: "q.status = 'sent'",
   pending: "q.status = 'pending' AND q.hold_reason IS NULL",
   held: "q.status = 'pending' AND q.hold_reason IS NOT NULL",
@@ -204,11 +208,13 @@ function recentRows(limit = 30, from = null, to = null, status = null) {
   return db.prepare(
     `SELECT q.id, q.status, q.detail, q.attempts, q.created_at, q.sent_at,
             q.tlc_event_id, q.tlc_user_id, q.hold_reason, q.hold_since,
+            q.dismissed_at, q.dismiss_note, ds.name AS dismissed_by_name,
             p.first_name || ' ' || p.last_name AS person_name,
             e.title AS event_title, e.start_at AS event_start
        FROM tlc_attendance_push q
        JOIN person p ON p.id = q.person_id
        JOIN event e  ON e.id = q.event_id
+       LEFT JOIN staff ds ON ds.id = q.dismissed_by
       WHERE (? IS NULL OR datetime(q.created_at) >= datetime(?))
         AND (? IS NULL OR datetime(q.created_at) <= datetime(?))
         AND ${Object.hasOwn(STATUS_FILTER, status) ? STATUS_FILTER[status] : '1'}
@@ -218,8 +224,48 @@ function recentRows(limit = 30, from = null, to = null, status = null) {
 
 function retryFailed() {
   return { retried: db.prepare(
-    `UPDATE tlc_attendance_push SET status = 'pending', detail = NULL WHERE status = 'failed'`
+    `UPDATE tlc_attendance_push SET status = 'pending', detail = NULL
+      WHERE status = 'failed' AND dismissed_at IS NULL`
   ).run().changes };
+}
+
+// Dismiss failed pushes that will never succeed — typically a non-member who
+// is not on the portal at all. Only FAILED rows qualify: a pending or held
+// row is still going to be tried, and a sent one is done. The row and its
+// error stay for the audit trail; undismiss puts it back in the failed list.
+function dismissFailed(ids, staffId, note = null) {
+  const list = (Array.isArray(ids) ? ids : [ids]).map(Number).filter(Number.isInteger);
+  if (!list.length) return { dismissed: 0 };
+  const upd = db.prepare(
+    `UPDATE tlc_attendance_push
+        SET dismissed_at = datetime('now'), dismissed_by = ?, dismiss_note = ?
+      WHERE id = ? AND status = 'failed' AND dismissed_at IS NULL`);
+  let dismissed = 0;
+  db.transaction(() => {
+    for (const id of list) dismissed += upd.run(staffId || null, note ? String(note).slice(0, 500) : null, id).changes;
+  })();
+  return { dismissed };
+}
+// After Admin → Transactions moved a visit to another event: the push queued
+// for the wrong event goes (unless it was already SENT — the app never
+// un-marks the portal, so that one is reported for a human to undo), and a
+// finished visit is queued for the right event with the same advancement
+// answer the original carried.
+function requeueMoved(personId, fromEventId, toEventId, { closed = true } = {}) {
+  const row = db.prepare('SELECT * FROM tlc_attendance_push WHERE event_id = ? AND person_id = ?').get(fromEventId, personId);
+  const alreadySent = !!row && row.status === 'sent';
+  if (row && !alreadySent) db.prepare('DELETE FROM tlc_attendance_push WHERE id = ?').run(row.id);
+  let queued = 0;
+  if (closed) {
+    queued = enqueue(toEventId, [{ person_id: personId, advancement: row ? !!row.use_lesson_plans : true }]).queued || 0;
+  }
+  return { already_sent: alreadySent, removed: row && !alreadySent ? 1 : 0, queued };
+}
+function undismiss(id) {
+  return { restored: db.prepare(
+    `UPDATE tlc_attendance_push SET dismissed_at = NULL, dismissed_by = NULL, dismiss_note = NULL
+      WHERE id = ? AND dismissed_at IS NOT NULL`
+  ).run(Number(id)).changes };
 }
 
 // ------------------------------------------------------ name matching ------
@@ -534,6 +580,17 @@ function recordPlanFixes(tlcEventId, fixed, failed) {
   patchState({ plan_fixes: log });
 }
 
+// True when the stored portal session was proven good AFTER the push parked
+// itself on a sign-in code — the code latch no longer describes reality.
+function codeLatchStale(state = getState()) {
+  if (!state.code_required_at) return false;
+  let info;
+  try { info = require('./portalSession').sessionInfo(); } catch { return false; }
+  if (!info || !info.connected || !info.last_ok_at) return false;
+  const ok = Date.parse(info.last_ok_at), latched = Date.parse(state.code_required_at);
+  return Number.isFinite(ok) && Number.isFinite(latched) && ok > latched;
+}
+
 // ----------------------------------------------------------- the push ------
 let running = false;
 const isRunning = () => running;
@@ -546,6 +603,15 @@ async function runPush({ manual = false, env = process.env } = {}) {
   const state = getState();
   if (!manual && state.auth_failed_at) {
     return { skipped: true, reason: portal.t('Paused after a failed TLC login — re-save credentials or use Push now.') };
+  }
+  if (state.code_required_at && codeLatchStale(state)) {
+    // Another job (the roster fetch, the permission sync) has since used the
+    // stored portal session successfully, so a sign-in now rides that session
+    // and cannot text a code. Before this check the latch outlived the
+    // problem: one bad sign-in parked every later sign-out until someone
+    // happened to press Connect, while the roster sync kept working.
+    patchState({ code_required_at: null });
+    state.code_required_at = null;
   }
   if (state.code_required_at) {
     return { skipped: true, reason: portal.t('Paused until the TLC sign-in code is entered — Admin → Roster import → Connect.') };
@@ -913,7 +979,7 @@ function scheduleSweep(intervalMs = 10 * 60 * 1000) {
 module.exports = {
   getSettings, saveSettings, getState, clearAuthFailure,
   tlcEventIdFromUid, resolveTlcEventId, pushEnabledFor,
-  enqueue, queueSummary, recentRows, retryFailed, lookupCandidates,
+  enqueue, queueSummary, recentRows, retryFailed, dismissFailed, undismiss, requeueMoved, codeLatchStale, lookupCandidates,
   PLAN_CHECK_MODES, PLAN_FIX_MODES, UNCOVERED_MODES, plansFor, holdExpired, checkPlans, fixEventPlans, reapplyCredit,
   skippedRows, verifySkipped, acknowledgeSkipped,
   tlcIdFromBadge, adoptBadgeTlcId, backfillFromBadges,
