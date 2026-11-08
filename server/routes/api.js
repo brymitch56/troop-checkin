@@ -244,9 +244,12 @@ const WINDOW_BEFORE = '-30 minutes';
 const WINDOW_AFTER = '+60 minutes';
 
 function suggestEvent(matching, now = new Date()) {
-  if (!matching.length) return null;
+  // auto_select = 0 (migration 021): listed under "Now", never suggested —
+  // staff pick it by hand from the event pill
+  const candidates = matching.filter((e) => e.auto_select !== 0);
+  if (!candidates.length) return null;
   let best = null, bestScore = Infinity;
-  for (const e of matching) {
+  for (const e of candidates) {
     const start = new Date(e.start_at), end = new Date(e.end_at);
     const action = now < start ? start : end; // arriving → start; else → end
     const score = Math.abs(action - now);
@@ -309,7 +312,10 @@ router.post('/events', express.json(), (req, res) => {
         permission_block != null ? (permission_block ? 1 : 0)
           : require('../lib/permissionSync').getSettings().block_default,
         permission_block != null ? 'manual' : null);
-  res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(Number(r.lastInsertRowid)));
+  const id = Number(r.lastInsertRowid);
+  // omitted = auto-select (the column default); only an explicit false opts out
+  if ((req.body || {}).auto_select === false) db.prepare('UPDATE event SET auto_select = 0 WHERE id = ?').run(id);
+  res.json(db.prepare('SELECT * FROM event WHERE id = ?').get(id));
 });
 
 // ---------------------------------------------------------------- txns ----

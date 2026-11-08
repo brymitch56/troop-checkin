@@ -237,6 +237,94 @@ function closeLinked(personId, chosenInTxnId, out) {
   return closed;
 }
 
+// ------------------------------------------------- admin: move a visit -----
+/**
+ * Admin → Transactions: re-file one person's whole visit (sign-in and, if
+ * they have left, its sign-out) under another event — the after-the-fact
+ * version of the On-site move, for when nobody caught it at the door.
+ *
+ * Same shape as move(): new txns in the target event carry the original
+ * time, signer, signature and recording staff; the person's txn_person rows
+ * are re-pointed onto them; each step is a txn_correction 'move' row (who
+ * moved it is the correction's staff_id). A source txn left holding nobody
+ * is voided with a marker txn, exactly like Admin → Void, so integrations
+ * see that event change; a group txn that still holds others stays as it is.
+ *
+ * Returns { in_txn_id, out_txn_id, from_event_id, voided: [[voidedId, markerId]], open }
+ * — the caller owns the TLC queue and webhooks (after commit).
+ */
+function moveVisit(personId, txnId, eventId, staffId) {
+  const person = db.prepare('SELECT * FROM person WHERE id = ?').get(personId);
+  if (!person) fail(404, 'No such person.');
+  const t = db.prepare('SELECT * FROM txn WHERE id = ?').get(txnId);
+  if (!t) fail(404, 'No such transaction.');
+  const own = db.prepare('SELECT * FROM txn_person WHERE txn_id = ? AND person_id = ?').get(t.id, personId);
+  if (!own) fail(400, `${person.first_name} is not on transaction #${t.id}.`);
+  if (t.voided_by_txn_id) fail(409, `Transaction #${t.id} is voided — nothing to move.`);
+  if (String(t.client_uuid || '').startsWith('void-')) fail(400, 'That is a void marker, not a sign-in or sign-out.');
+
+  // the visit's sign-in: this txn, or the one this sign-out closed
+  const src = t.direction === 'in' ? t : db.prepare('SELECT * FROM txn WHERE id = ?').get(own.in_txn_id);
+  if (!src || src.direction !== 'in' || src.voided_by_txn_id || src.close_method) {
+    fail(409, 'Could not find the live sign-in for this visit.');
+  }
+  const inRow = db.prepare('SELECT * FROM txn_person WHERE txn_id = ? AND person_id = ?').get(src.id, personId);
+  if (!inRow) fail(409, 'Could not find the live sign-in for this visit.');
+  const out = db.prepare(
+    `SELECT t.* FROM txn t JOIN txn_person tp ON tp.txn_id = t.id
+      WHERE tp.person_id = ? AND tp.in_txn_id = ? AND t.direction = 'out'
+        AND t.voided_by_txn_id IS NULL AND t.client_uuid NOT LIKE 'void-%'
+      ORDER BY datetime(t.signed_at), t.id LIMIT 1`).get(personId, src.id);
+
+  const event = db.prepare('SELECT * FROM event WHERE id = ?').get(eventId);
+  if (!event) fail(400, 'Pick the event to move to.');
+  if (event.id === src.event_id) fail(400, 'That is the event they are already in.');
+  if (!person.is_youth && !event.track_adults) fail(422, `${event.title} does not track adult attendance.`);
+  const already = db.prepare(
+    `SELECT 1 FROM txn t JOIN txn_person tp ON tp.txn_id = t.id
+      WHERE tp.person_id = ? AND t.event_id = ? AND t.direction = 'in'
+        AND t.voided_by_txn_id IS NULL AND t.close_method IS NULL LIMIT 1`).get(personId, event.id);
+  if (already) fail(409, `${person.first_name} already has a sign-in at ${event.title} — void one of them instead.`);
+
+  const writeOutLike = (o, inId) => Number(db.prepare(
+    `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id, signer_person_id,
+                      signer_name_override, signature_path, close_method, forced)
+     VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?)`
+  ).run(`admin-move-${o.id}-${event.id}-${personId}-${Date.now()}`, event.id, o.signed_at, o.staff_id,
+    o.signer_person_id, o.signer_name_override, o.signature_path, o.close_method, o.forced).lastInsertRowid);
+  const voidIfEmpty = (txn) => {
+    const left = db.prepare('SELECT COUNT(*) c FROM txn_person WHERE txn_id = ?').get(txn.id).c;
+    if (left) return null;
+    const v = db.prepare(
+      `INSERT INTO txn (client_uuid, event_id, direction, signed_at, staff_id, close_method)
+       VALUES (?, ?, ?, ?, ?, 'admin_close')`
+    ).run(`void-move-${txn.id}-${Date.now()}`, txn.event_id, txn.direction, new Date().toISOString(), staffId);
+    const vid = Number(v.lastInsertRowid);
+    db.prepare('UPDATE txn SET voided_by_txn_id = ? WHERE id = ?').run(vid, txn.id);
+    return [txn.id, vid];
+  };
+
+  return db.transaction(() => {
+    // the recording staff stays the original's; who MOVED it is the correction row
+    const newIn = writeSignInLike(src, event, src.staff_id, 'admin-move', { forcePermission: false });
+    db.prepare('UPDATE txn_person SET txn_id = ? WHERE txn_id = ? AND person_id = ?').run(newIn, src.id, personId);
+    logCorrection('move', personId, src.id, newIn, staffId);
+    let newOut = null;
+    if (out) {
+      newOut = writeOutLike(out, newIn);
+      db.prepare('UPDATE txn_person SET txn_id = ?, in_txn_id = ? WHERE txn_id = ? AND person_id = ?')
+        .run(newOut, newIn, out.id, personId);
+      logCorrection('move', personId, out.id, newOut, staffId);
+    }
+    const voided = [voidIfEmpty(src), out ? voidIfEmpty(out) : null].filter(Boolean);
+    return {
+      in_txn_id: newIn, out_txn_id: newOut, from_event_id: src.event_id,
+      event_id: event.id, event_title: event.title, voided, open: !!inRow.open,
+    };
+  })();
+}
+
 module.exports = {
   CorrectionError, optionsFor, move, copy, remove, closeLinked, linkedOpens, opensAreOneGroup, linkedTxnIds,
+  moveVisit,
 };
