@@ -91,7 +91,7 @@ function optionsFor(personId) {
   const now = new Date().toISOString();
   const current = db.prepare(
     `SELECT id, title, start_at, end_at, track_adults FROM event
-      WHERE datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?)
+      WHERE hidden = 0 AND datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?)
       ORDER BY datetime(start_at)`
   ).all(WINDOW_BEFORE, now, WINDOW_AFTER, now);
   const targets = current

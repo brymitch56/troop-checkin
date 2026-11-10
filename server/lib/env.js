@@ -51,6 +51,9 @@ module.exports = {
   get TROOP_ID() { return process.env.TROOP_ID || 'NY-0000'; },
   get TROOP_NAME() { return process.env.TROOP_NAME || 'Troop Check-In'; },
   get ICAL_URL() { return process.env.ICAL_URL || ''; },
+  // ICAL_URL may list several feeds (e.g. unit + area + region + national),
+  // separated by whitespace or commas; they are merged into one calendar.
+  get ICAL_URLS() { return (process.env.ICAL_URL || '').split(/[\s,]+/).filter(Boolean); },
   get SMS_ENABLED() { return process.env.SMS_ENABLED === 'true'; },
   get TWILIO_ACCOUNT_SID() { return process.env.TWILIO_ACCOUNT_SID || ''; },
   get TWILIO_AUTH_TOKEN() { return process.env.TWILIO_AUTH_TOKEN || ''; },

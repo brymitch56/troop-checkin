@@ -937,16 +937,25 @@ async function loadEvents() {
   api('/admin/adult-tracking').then((s) => {
     if (document.activeElement !== $('ev-adults-default')) $('ev-adults-default').value = s.default ? '1' : '0';
   }).catch(() => {});
-  const rows = await api('/admin/events' + ($('ev-past').checked ? '?include_past=1' : ''));
+  const all = await api('/admin/events' + ($('ev-past').checked ? '?include_past=1' : ''));
+  const nHidden = all.filter((e) => e.hidden).length;
+  $('ev-hidden-n').textContent = nHidden ? `(${nHidden})` : '';
+  const rows = $('ev-hidden').checked ? all : all.filter((e) => !e.hidden);
   $('ev-list').innerHTML = `<table><tr><th>Title</th><th>Starts</th><th>Ends</th><th>Source</th><th>Adults</th><th>Txns</th><th data-nofilter></th></tr>` +
     rows.map((e) => `<tr data-id="${e.id}">
-      <td>${esc(e.title)}${e.removed_from_feed ? ' <span class="tag warn">gone from feed</span>' : ''}</td>
+      <td>${esc(e.title)}${e.removed_from_feed ? ' <span class="tag warn">gone from feed</span>' : ''}${e.hidden ? ' <span class="tag off" title="Not shown on the check-in screens">hidden</span>' : ''}</td>
       ${dtCell(e.start_at)}${dtCell(e.end_at)}
       <td>${e.source}${e.is_past ? ' <span class="tag off">past</span>' : ''}</td>
       <td>${e.track_adults ? '✓ tracked' : '—'}${e.track_adults_source === 'manual' ? ' <span class="tag off" title="Hand-set — the global default will not change this">manual</span>' : ''}</td><td>${e.txn_count}</td>
-      <td>${e.txn_count === 0 ? `<button class="btn ghost small" data-del="${e.id}">delete</button>` : ''}</td></tr>`).join('') + '</table>';
+      <td><button class="btn ghost small" data-hide="${e.id}" data-hidden="${e.hidden ? 1 : 0}">${e.hidden ? 'show' : 'hide'}</button>${e.txn_count === 0 ? ` <button class="btn ghost small" data-del="${e.id}">delete</button>` : ''}</td></tr>`).join('') + '</table>';
   enhanceTable('ev-list');
   $('ev-list').onclick = async (ev) => {
+    const hide = ev.target.closest('button[data-hide]');
+    if (hide) {
+      try { await jpatch(`/admin/events/${hide.dataset.hide}`, { hidden: hide.dataset.hidden !== '1' }); loadEvents(); }
+      catch (e) { toast(e.message, true); }
+      return;
+    }
     const del = ev.target.closest('button[data-del]');
     if (del) {
       if (!confirm('Delete this event?')) return;
@@ -1129,6 +1138,7 @@ async function loadEventForms(id) {
 function closeEventModal() { $('event-modal').hidden = true; $('ev-detail').hidden = true; }
 $('ev-new').onclick = () => openEvent(null);
 $('ev-past').onchange = loadEvents;
+$('ev-hidden').onchange = loadEvents;
 
 // ---------------------------------------------------------------- staff ----
 async function loadStaff() {

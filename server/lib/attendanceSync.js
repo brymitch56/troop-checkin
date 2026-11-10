@@ -464,7 +464,7 @@ async function lookupCandidates({ personId, eventId = null, env = process.env })
     // default: the TLC-linked event nearest to now — most likely to carry a
     // full troop roster and to be the one the operator is thinking about
     for (const r of db.prepare(
-      `SELECT * FROM event ORDER BY ABS(julianday(start_at) - julianday('now')) LIMIT 200`).all()) {
+      `SELECT * FROM event WHERE hidden = 0 ORDER BY ABS(julianday(start_at) - julianday('now')) LIMIT 200`).all()) {
       if (resolveTlcEventId(r)) { event = r; break; }
     }
   }
@@ -767,7 +767,7 @@ async function runPush({ manual = false, env = process.env } = {}) {
 // with problems; "Fix" repairs one event's plans on TLC and reads them back.
 async function checkPlans({ env = process.env, backDays = 7, aheadDays = 60 } = {}) {
   const events = db.prepare(
-    `SELECT * FROM event WHERE source = 'ical' AND removed_from_feed = 0
+    `SELECT * FROM event WHERE source = 'ical' AND removed_from_feed = 0 AND hidden = 0
         AND datetime(start_at) BETWEEN datetime('now', ?) AND datetime('now', ?)
       ORDER BY start_at`).all(`-${backDays} days`, `+${aheadDays} days`);
   const session = await tlcSession(env);

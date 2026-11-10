@@ -50,7 +50,7 @@ router.get('/events', (req, res) => {
   }
   const rows = db.prepare(
     `SELECT ${EVENT_COLS} FROM event
-      WHERE local_date(start_at) BETWEEN ? AND ?
+      WHERE hidden = 0 AND local_date(start_at) BETWEEN ? AND ?
       ORDER BY start_at, id LIMIT ${EVENT_LIMIT}`
   ).all(from, to);
   res.json(rows);
