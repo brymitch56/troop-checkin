@@ -2,7 +2,7 @@
 // App-shell cache. Transactions queue in IndexedDB (offline.js) — the SW only
 // guarantees the shell loads offline; /api stays network-only on purpose.
 // Bump VERSION on deploy so clients pick up new assets.
-const VERSION = 'tc-v90'; // v90: admin Move visits, push dismiss + paused banner, pick-by-hand events. v89: level groups (PiPa, Woodlands…) + program-order level sorts; Level columns in admin tables
+const VERSION = 'tc-v91'; // v91: extra calendar feeds (area/region/national) + hide events. v90: admin Move visits, push dismiss + paused banner, pick-by-hand events. v89: level groups (PiPa, Woodlands…) + program-order level sorts; Level columns in admin tables
 // NOTE: /admin.html is deliberately NOT precached. It sits behind Cloudflare
 // Access, which answers a SW fetch from a device with no Access session with
 // a cross-origin 302 the fetch spec rejects — one rejected entry aborts the

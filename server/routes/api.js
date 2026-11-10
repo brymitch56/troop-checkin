@@ -269,7 +269,7 @@ router.get('/events/current', (req, res) => {
   const now = new Date().toISOString();
   const matching = db.prepare(
     `SELECT * FROM event
-      WHERE datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?)
+      WHERE hidden = 0 AND datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?)
       ORDER BY datetime(start_at)`
   ).all(WINDOW_BEFORE, now, WINDOW_AFTER, now);
   // local_date() (see server/db.js) instead of date(x,'localtime'): SQLite's
@@ -277,13 +277,13 @@ router.get('/events/current', (req, res) => {
   // with JavaScript local time on every platform.
   const upcoming = db.prepare(
     `SELECT * FROM event
-      WHERE NOT (datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?))
+      WHERE hidden = 0 AND NOT (datetime(start_at, ?) <= datetime(?) AND datetime(end_at, ?) >= datetime(?))
         AND local_date(end_at) >= local_date('now')
       ORDER BY datetime(start_at) LIMIT 20`
   ).all(WINDOW_BEFORE, now, WINDOW_AFTER, now);
   const past = db.prepare(
     `SELECT * FROM event
-      WHERE local_date(end_at) < local_date('now')
+      WHERE hidden = 0 AND local_date(end_at) < local_date('now')
       ORDER BY datetime(start_at) DESC LIMIT 20`
   ).all();
   res.json({ matching, upcoming, past, suggested_id: suggestEvent(matching) });
@@ -570,7 +570,7 @@ router.get('/roster-snapshot', (req, res) => {
   const now = new Date().toISOString();
   const events = db.prepare(
     `SELECT * FROM event
-      WHERE datetime(end_at) >= datetime(?, '-12 hours')
+      WHERE hidden = 0 AND datetime(end_at) >= datetime(?, '-12 hours')
         AND datetime(start_at) <= datetime(?, '+7 days')
       ORDER BY datetime(start_at)`
   ).all(now, now);

@@ -40,7 +40,7 @@ function eventAwareExpiry(role, hours) {
   if (role !== 'door') return dflt;
   const row = db.prepare(
     `SELECT MAX(datetime(end_at)) m FROM event
-      WHERE datetime(start_at) <= datetime('now', '+1 day')
+      WHERE hidden = 0 AND datetime(start_at) <= datetime('now', '+1 day')
         AND datetime(end_at) >= datetime('now')`
   ).get();
   if (!row || !row.m) return dflt;

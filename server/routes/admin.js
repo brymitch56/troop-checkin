@@ -402,7 +402,8 @@ router.patch('/events/:id', (req, res) => {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] || null); }
   }
   // auto_select: 0 = the kiosk never picks this event on its own (overlaps)
-  for (const f of ['all_day', 'requires_high_adventure_form', 'auto_select']) {
+  // hidden: 1 = left off the kiosk, snapshot and integration lists (admin still sees it)
+  for (const f of ['all_day', 'requires_high_adventure_form', 'auto_select', 'hidden']) {
     if (f in b) { sets.push(`${f} = ?`); vals.push(b[f] ? 1 : 0); }
   }
   // adult tracking: a hand-set value goes 'manual' (the global bulk-apply

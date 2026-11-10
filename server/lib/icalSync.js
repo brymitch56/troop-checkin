@@ -80,7 +80,7 @@ function applyFeed(vevents) {
   let added = 0, updated = 0, flagged = 0, deleted = 0, merged = 0;
   const hasHistory = (row) => history.some((q) => q.get(row.id));
   // "bare" = nothing attached and nothing a person set by hand: safe to fold away
-  const isBare = (row) => !attached.some((q) => q.get(row.id)) && !MANUAL.some((c) => row[c] === 'manual');
+  const isBare = (row) => !attached.some((q) => q.get(row.id)) && !MANUAL.some((c) => row[c] === 'manual') && !row.hidden;
   const feedPortalIds = new Map();
   for (const e of vevents) { const p = portalIdOf(e.uid); if (p) feedPortalIds.set(p, (feedPortalIds.get(p) || 0) + 1); }
   const rowsForPortalId = (pid) => db.prepare(
@@ -131,10 +131,10 @@ function applyFeed(vevents) {
         // feed never touches track_adults again (app-owned, like the forms)
         db.prepare(
           `INSERT INTO event (source, ical_uid, title, location, description, start_at, end_at, all_day,
-                              track_adults, track_adults_source)
-           VALUES ('ical', ?, ?, ?, ?, ?, ?, ?, ?, 'auto')`
+                              track_adults, track_adults_source, hidden)
+           VALUES ('ical', ?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?)`
         ).run(e.uid, title, location, description, startAt, endAt, allDay,
-              require('./adultTracking').getSettings().default);
+              require('./adultTracking').getSettings().default, e.fromExtraFeed ? 1 : 0);
         added++;
       } else {
         const changed = ex.ical_uid !== e.uid || ex.start_at !== startAt ||
@@ -159,30 +159,80 @@ function applyFeed(vevents) {
   return { added, updated, flagged, deleted, merged, feed_events: vevents.length };
 }
 
-async function syncIcal(url = env.ICAL_URL) {
-  if (!url) throw new Error('ICAL_URL is not configured — set it in .env.');
-  const data = await ical.async.fromURL(url);
-  const vevents = Object.values(data).filter(
-    (e) => e.type === 'VEVENT' && e.uid && e.start && e.end
-  );
+// ---- several feeds, one calendar ---------------------------------------------
+// A unit can subscribe to more than its own feed (its area, region, national
+// office). They are fetched, merged and applied as ONE feed: applying them one
+// at a time would read each feed's events as "gone" from the others and
+// delete them. Feeds are identified in meta by a hash, never by URL — the URL
+// holds the subscriber's private calendar token.
+const crypto = require('crypto');
+const feedKey = (url) => crypto.createHash('sha256').update(url).digest('hex').slice(0, 16);
+const stampOf = (e) => new Date(e.lastmodified || e.dtstamp || 0).getTime() || 0;
+
+// The same portal event can sit in two feeds (a unit event the area also
+// lists). Keep one copy per (portal id or uid, start): the most recently
+// edited one, so a stale copy in one feed never shadows an edit in another.
+function mergeFeeds(feeds) {
+  const byKey = new Map(), inFirst = new Set();
+  feeds.forEach((list, i) => {
+    for (const e of list) {
+      const key = `${portalIdOf(e.uid) || e.uid}|${iso(e.start)}`;
+      if (i === 0) inFirst.add(key);
+      const prev = byKey.get(key);
+      if (!prev || stampOf(e) > stampOf(prev)) byKey.set(key, e);
+    }
+  });
+  // fromExtraFeed: only in an additional feed — such events start hidden
+  return [...byKey].map(([key, e]) => Object.assign(e, { fromExtraFeed: !inFirst.has(key) }));
+}
+
+const readMeta = (key) => {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
+  try { return row ? JSON.parse(row.value) : null; } catch { return null; }
+};
+const writeMeta = (key, value) => db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, JSON.stringify(value));
+
+async function syncIcal(urls = env.ICAL_URLS) {
+  const list = (Array.isArray(urls) ? urls : String(urls || '').split(/[\s,]+/)).filter(Boolean);
+  if (!list.length) throw new Error('ICAL_URL is not configured — set it in .env.');
+  // Every feed must load, or nothing is applied: a feed that failed to load
+  // would otherwise read as "all its events were cancelled".
+  const feeds = [];
+  for (let i = 0; i < list.length; i++) {
+    let data;
+    try { data = await ical.async.fromURL(list[i]); }
+    catch (e) {
+      throw new Error(`Calendar feed ${i + 1} of ${list.length} could not be loaded — nothing was changed ` +
+        `(${String(e && e.message || e).replace(/https?:\/\/\S+/g, '<feed url>')})`);
+    }
+    feeds.push(Object.values(data).filter((e) => e.type === 'VEVENT' && e.uid && e.start && e.end));
+  }
   // A feed with NO events is a portal hiccup, not a troop that cancelled its
   // whole calendar: on 2026-10-20 AHGfamily served one empty (but valid) feed
   // during a change on its side, and applying it deleted every event without
   // sign-ins and flagged the rest "gone from feed". Refuse it; the next sync
   // retries, and a refused sync never updates last_ical_sync, so the daily
-  // freshness check notices if it keeps happening.
-  if (!vevents.length) {
-    const upcoming = db.prepare(`SELECT COUNT(*) n FROM event WHERE source = 'ical' AND removed_from_feed = 0
-                                   AND datetime(end_at) > datetime('now')`).get().n;
-    if (upcoming) {
-      throw new Error(`Calendar feed returned no events while ${upcoming} upcoming event(s) are listed — ` +
+  // freshness check notices if it keeps happening. With several feeds, the
+  // same holds per feed: one that had events last time and now has none is
+  // refused while anything upcoming is listed.
+  const upcoming = db.prepare(`SELECT COUNT(*) n FROM event WHERE source = 'ical' AND removed_from_feed = 0
+                                 AND datetime(end_at) > datetime('now')`).get().n;
+  const lastCounts = readMeta('ical_feed_counts') || {};
+  if (upcoming) {
+    const allEmpty = feeds.every((f) => !f.length);
+    const emptied = list.map((u, i) => (!feeds[i].length && lastCounts[feedKey(u)] > 0 ? i + 1 : 0)).filter(Boolean);
+    if (allEmpty || emptied.length) {
+      const which = list.length > 1 && !allEmpty ? ` (feed ${emptied.join(', ')} of ${list.length})` : '';
+      throw new Error(`Calendar feed returned no events${which} while ${upcoming} upcoming event(s) are listed — ` +
         'not applied (looks like a portal outage). Nothing was changed; the next sync will try again.');
     }
   }
+  const vevents = mergeFeeds(feeds);
   const result = applyFeed(vevents);
-  db.prepare(`INSERT INTO meta (key, value) VALUES ('last_ical_sync', ?)
-              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-    .run(JSON.stringify({ at: new Date().toISOString(), ...result }));
+  if (list.length > 1) result.feeds = feeds.map((f) => f.length);
+  writeMeta('ical_feed_counts', Object.fromEntries(list.map((u, i) => [feedKey(u), feeds[i].length])));
+  writeMeta('last_ical_sync', { at: new Date().toISOString(), ...result });
   require('./webhook').emitIcalSynced(result); // integration webhook — counts only; off by default
   return result;
 }
@@ -198,4 +248,4 @@ function scheduleNightly() {
   return timer;
 }
 
-module.exports = { syncIcal, applyFeed, scheduleNightly, deleteEventUnlessHistory };
+module.exports = { syncIcal, applyFeed, mergeFeeds, scheduleNightly, deleteEventUnlessHistory };
